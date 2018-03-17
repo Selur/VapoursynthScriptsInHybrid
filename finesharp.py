@@ -1,7 +1,7 @@
 # finesharp.py - finesharp module for VapourSynth
 # Original author: Didee (http://forum.doom9.org/showthread.php?t=166082)
 # Requirement: VapourSynth r33 or later
-# Rev: 2016-08-21
+# Rev: 2017-12-16
 
 import vapoursynth as vs
 
