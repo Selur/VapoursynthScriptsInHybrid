@@ -3,9 +3,13 @@ import vapoursynth as vs
 added opencl-option to support TCannyCL
 """
 
-def _sharpen(clip, strength, planes):
+def _sharpen(clip, strength, planes, opencl=False):
     core = vs.get_core()
-    blur = core.tcanny.TCanny(clip, sigma=strength, mode=-1, planes=planes)
+    if opencl is True:
+      blur = core.tcanny.TCannyCL(clip, sigma=strength, mode=-1, planes=planes)
+    else:
+      blur = core.tcanny.TCanny(clip, sigma=strength, mode=-1, planes=planes)
+    
     return core.std.Expr([clip, blur], "x x + y -")
 
 
@@ -54,7 +58,7 @@ def mcdegrainsharp(clip, frames=2, bblur=0.3, csharp=0.3, bsrch=True, thsad=400,
         planes = plane
     
     if opencl is True:
-      c2 = core.tcanny.TCanny(clip, sigma=bblur, mode=-1, planes=planes)
+      c2 = core.tcanny.TCannyCL(clip, sigma=bblur, mode=-1, planes=planes)
     else:
       c2 = core.tcanny.TCanny(clip, sigma=bblur, mode=-1, planes=planes)
 
@@ -63,7 +67,7 @@ def mcdegrainsharp(clip, frames=2, bblur=0.3, csharp=0.3, bsrch=True, thsad=400,
     else:
         super_a = core.mv.Super(clip, pel=2, sharp=1)
 
-    super_rend = core.mv.Super(_sharpen(clip, csharp, planes=planes),
+    super_rend = core.mv.Super(_sharpen(clip, csharp, planes=planes, opencl=opencl),
                                pel=2, sharp=1, levels=1)
 
     mvbw3 = core.mv.Analyse(super_a, isb=True, delta=3,
