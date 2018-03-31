@@ -41,11 +41,19 @@ Functions:
     GMSD
     SSIM
     SSIM_downsample
+    LocalStatisticsMatching
+    LocalStatistics
+    TextSub16
+    TMinBlur
+    mdering
+    BMAFilter
+    LLSURE
 '''
 
 import functools
 import math
 import vapoursynth as vs
+from vapoursynth import core
 import havsfunc as haf
 import mvsfunc as mvf
 
@@ -81,7 +89,6 @@ def LDMerge(flt_h, flt_v, src, mrad=0, show=0, planes=None, convknl=1, conv_div=
 
     """
 
-    core = vs.get_core()
     funcName = 'LDMerge'
 
     if not isinstance(src, vs.VideoNode):
@@ -165,7 +172,6 @@ def Compare(src, flt, power=1.5, chroma=False, mode=2):
 
     """
 
-    core = vs.get_core()
     funcName = 'Compare'
 
     if not isinstance(src, vs.VideoNode):
@@ -265,7 +271,6 @@ def ExInpand(input, mrad=0, mode='rectangle', planes=None):
 
     """
 
-    core = vs.get_core()
     funcName = 'ExInpand'
 
     if not isinstance(input, vs.VideoNode):
@@ -347,7 +352,6 @@ def InDeflate(input, msmooth=0, planes=None):
 
     """
 
-    core = vs.get_core()
     funcName = 'InDeFlate'
 
     if not isinstance(input, vs.VideoNode):
@@ -395,7 +399,6 @@ def MultiRemoveGrain(input, mode=0, loop=1):
 
     """
 
-    core = vs.get_core()
     funcName = 'MultiRemoveGrain'
 
     if not isinstance(input, vs.VideoNode):
@@ -442,7 +445,6 @@ def GradFun3(src, thr=None, radius=None, elast=None, mask=None, mode=None, ampo=
 
     """
 
-    core = vs.get_core()
     funcName = 'GradFun3'
 
     if not isinstance(src, vs.VideoNode):
@@ -619,7 +621,6 @@ def GF3_smoothgrad_multistage(src, ref, radius, thr, elast, planes):
 
 
 def GF3_smoothgrad_multistage_3(src, radius, thr, elast, planes):
-    core = vs.get_core()
 
     ref = SmoothGrad(src, radius=radius // 3, thr=thr * 0.8, elast=elast)
     last = BoxFilter(src, radius=radius, planes=planes)
@@ -629,7 +630,6 @@ def GF3_smoothgrad_multistage_3(src, radius, thr, elast, planes):
 
 
 def GF3_dfttest(src, ref, radius, thr, elast, planes):
-    core = vs.get_core()
 
     hrad = max(radius * 3 // 4, 1)
     last = core.dfttest.DFTTest(src, sigma=hrad * thr * thr * 32, sbsize=hrad * 4,
@@ -640,7 +640,6 @@ def GF3_dfttest(src, ref, radius, thr, elast, planes):
 
 
 def GF3_bilateral_multistage(src, ref, radius, thr, elast, planes):
-    core = vs.get_core()
 
     last = core.bilateral.Bilateral(src, ref=ref, sigmaS=radius / 2, sigmaR=thr / 255, planes=planes, algorithm=0) # The use of "thr" may be wrong
 
@@ -650,7 +649,6 @@ def GF3_bilateral_multistage(src, ref, radius, thr, elast, planes):
 
 
 def Build_gf3_range_mask(src, radius=1):
-    core = vs.get_core()
 
     last = src
 
@@ -691,7 +689,6 @@ def AnimeMask(input, shift=0, expr=None, mode=1, resample_args=None):
 
     """
 
-    core = vs.get_core()
     funcName = 'AnimeMask'
 
     if not isinstance(input, vs.VideoNode):
@@ -747,7 +744,6 @@ def AnimeMask2(input, r=1.2, expr=None, mode=1):
 
     """
 
-    core = vs.get_core()
     funcName = 'AnimeMask2'
 
     if not isinstance(input, vs.VideoNode):
@@ -806,7 +802,6 @@ def PolygonExInpand(input, shift=0, shape=0, mixmode=0, noncentral=False, step=1
 
     """
 
-    core = vs.get_core()
     funcName = 'PolygonExInpand'
 
     if not isinstance(input, vs.VideoNode):
@@ -913,7 +908,6 @@ def Luma(input, plane=0, power=4):
 
     """
 
-    core = vs.get_core()
     funcName = 'Luma'
 
     if not isinstance(input, vs.VideoNode):
@@ -942,7 +936,6 @@ def ediaa(a):
 
     """
 
-    core = vs.get_core()
     funcName = 'ediaa'
 
     if not isinstance(a, vs.VideoNode):
@@ -967,7 +960,6 @@ def nnedi3aa(a):
 
     """
 
-    core = vs.get_core()
     funcName = 'nnedi3aa'
 
     if not isinstance(a, vs.VideoNode):
@@ -975,8 +967,8 @@ def nnedi3aa(a):
 
     bits = a.format.bits_per_sample
 
-    last = core.znedi3.nnedi3(a, field=1, dh=True).std.Transpose()
-    last = core.znedi3.nnedi3(last, field=1, dh=True).std.Transpose()
+    last = core.nnedi3.nnedi3(a, field=1, dh=True).std.Transpose()
+    last = core.nnedi3.nnedi3(last, field=1, dh=True).std.Transpose()
     last = core.fmtc.resample(last, a.width, a.height, [-0.5, -0.5 * (1 << a.format.subsampling_w)], [-0.5, -0.5 * (1 << a.format.subsampling_h)], kernel='spline36')
 
     if last.format.bits_per_sample == bits:
@@ -992,7 +984,6 @@ def maa(input):
 
     """
 
-    core = vs.get_core()
     funcName = 'maa'
 
     if not isinstance(input, vs.VideoNode):
@@ -1065,7 +1056,6 @@ def SharpAAMcmod(orig, dark=0.2, thin=10, sharp=150, smooth=-1, stabilize=False,
 
     """
 
-    core = vs.get_core()
     funcName = 'SharpAAMcmod'
 
     if not isinstance(orig, vs.VideoNode):
@@ -1172,7 +1162,6 @@ def TEdge(input, min=0, max=65535, planes=None, rshift=0):
 
     """
 
-    core = vs.get_core()
     funcName = 'TEdge'
 
     if not isinstance(input, vs.VideoNode):
@@ -1212,7 +1201,6 @@ def Sort(input, order=1, planes=None, mode='max'):
 
     """
 
-    core = vs.get_core()
     funcName = 'Sort'
 
     if not isinstance(input, vs.VideoNode):
@@ -1281,7 +1269,6 @@ def Soothe_mod(input, source, keep=24, radius=1, scenechange=32, use_misc=True):
 
     """
 
-    core = vs.get_core()
     funcName = 'Soothe_mod'
 
     if not isinstance(input, vs.VideoNode):
@@ -1347,7 +1334,6 @@ def TemporalSoften(input, radius=4, scenechange=15):
 
     """
 
-    core = vs.get_core()
     funcName = 'TemporalSoften'
 
     if not isinstance(input, vs.VideoNode):
@@ -1361,7 +1347,7 @@ def TemporalSoften(input, radius=4, scenechange=15):
         else:
             raise AttributeError('module \"havsfunc\" has no attribute \"SCDetect\"!')
 
-    return core.misc.AverageFrames(input, [1 for i in range(2 * radius + 1)], scenechange=scenechange)
+    return core.misc.AverageFrames(input, [1] * (2 * radius + 1), scenechange=scenechange)
 
 
 def FixTelecinedFades(input, mode=0, threshold=[0.0], color=[0.0], full=None, planes=None):
@@ -1402,7 +1388,6 @@ def FixTelecinedFades(input, mode=0, threshold=[0.0], color=[0.0], full=None, pl
 
     """
 
-    core = vs.get_core()
     funcName = 'FixTelecinedFades'
 
     # set parameters
@@ -1485,8 +1470,8 @@ def FixTelecinedFades(input, mode=0, threshold=[0.0], color=[0.0], full=None, pl
         topField = core.std.SelectEvery(separated, 2, [0])
         bottomField = core.std.SelectEvery(separated, 2, [1])
 
-        topAvg = f[0].props.PlaneStatsAverage
-        bottomAvg = f[1].props.PlaneStatsAverage
+        topAvg = f[0].props['PlaneStatsAverage']
+        bottomAvg = f[1].props['PlaneStatsAverage']
 
         if color != 0:
             if isFloat:
@@ -1567,7 +1552,6 @@ def TCannyHelper(input, t_h=8.0, t_l=1.0, plane=0, returnAll=False, **canny_args
 
     """
 
-    core = vs.get_core()
     funcName = 'TCannyHelper'
 
     if not isinstance(input, vs.VideoNode):
@@ -1609,7 +1593,6 @@ def MergeChroma(clip1, clip2, weight=1.0):
 
     """
 
-    core = vs.get_core()
     funcName = 'MergeChroma'
 
     if not isinstance(clip1, vs.VideoNode):
@@ -1641,7 +1624,7 @@ def MergeChroma(clip1, clip2, weight=1.0):
         return output
 
 
-def firniture(clip, width, height, kernel='binomial7', taps=None, gamma=False, **resample_args):
+def firniture(clip, width, height, kernel='binomial7', taps=None, gamma=False, transfer='709', **resample_args):
     '''5 new interpolation kernels (via fmtconv)
 
     Proposed by *.mp4 guy (https://forum.doom9.org/showthread.php?t=166080)
@@ -1670,9 +1653,8 @@ def firniture(clip, width, height, kernel='binomial7', taps=None, gamma=False, *
 
     '''
 
-    import nnedi3_resample as nnrs
+    #import nnedi3_resample as nnrs
 
-    core = vs.get_core()
     funcName = 'firniture'
 
     if not isinstance(clip, vs.VideoNode):
@@ -1690,16 +1672,13 @@ def firniture(clip, width, height, kernel='binomial7', taps=None, gamma=False, *
     if taps is None:
         taps = int(kernel[-1])
 
-    if clip.format.bits_per_sample != 16:
-        clip = mvf.Depth(clip, 16)
-
     if gamma:
-        clip = nnrs.GammaToLinear(clip)
+        clip = core.resize.Bicubic(clip, transfer_s="linear")
 
     clip = core.fmtc.resample(clip, width, height, kernel='impulse', impulse=impulseCoefficents[kernel], kovrspl=2, taps=taps, **resample_args)
 
     if gamma:
-        clip = nnrs.LinearToGamma(clip)
+        clip = core.resize.Bicubic(clip, transfer_s=transfer)
 
     return clip
 
@@ -1742,7 +1721,6 @@ def BoxFilter(input, radius=16, radius_v=None, planes=None, fmtc_conv=0, radius_
 
     '''
 
-    core = vs.get_core()
     funcName = 'BoxFilter'
 
     if not isinstance(input, vs.VideoNode):
@@ -1844,7 +1822,6 @@ def SmoothGrad(input, radius=9, thr=0.25, ref=None, elast=3.0, planes=None, **li
 
     '''
 
-    core = vs.get_core()
     funcName = 'SmoothGrad'
 
     if not isinstance(input, vs.VideoNode):
@@ -1878,7 +1855,6 @@ def DeFilter(input, fun, iter=10, planes=None, **fun_args):
 
     '''
 
-    core = vs.get_core()
     funcName = 'DeFilter'
 
     if not isinstance(input, vs.VideoNode):
@@ -1933,7 +1909,6 @@ def ColorBarsHD(clip=None, width=1288, height=720):
 
     '''
 
-    core = vs.get_core()
     funcName = 'ColorBarsHD'
     from mt_lutspa import lutspa
 
@@ -2058,7 +2033,6 @@ def SeeSaw(clp, denoised=None, NRlimit=2, NRlimit2=None, Sstr=1.5, Slimit=None, 
 
     """
 
-    core = vs.get_core()
     funcName = 'SeeSaw'
 
     if not isinstance(clp, vs.VideoNode) or clp.format.color_family not in [vs.GRAY, vs.YUV, vs.YCOCG]:
@@ -2157,7 +2131,6 @@ def SeeSaw_sharpen2(clp, strength, power, zp, lodmp, hidmp, rgmode):
 
     """
 
-    core = vs.get_core()
     funcName = 'SeeSaw_sharpen2'
 
     if not isinstance(clp, vs.VideoNode) or clp.format.color_family not in [vs.GRAY, vs.YUV, vs.YCOCG]:
@@ -2196,7 +2169,6 @@ def SeeSaw_SootheSS(sharp, orig, sootheT=25, sootheS=0):
 
     """
 
-    core = vs.get_core()
     funcName = 'SeeSaw_SootheSS'
 
     if not isinstance(sharp, vs.VideoNode) or sharp.format.color_family not in [vs.GRAY, vs.YUV, vs.YCOCG]:
@@ -2256,7 +2228,6 @@ def abcxyz(clp, rad=3.0, ss=1.5):
 
     """
 
-    core = vs.get_core()
     funcName = 'abcxyz'
 
     if not isinstance(clp, vs.VideoNode) or clp.format.color_family not in [vs.GRAY, vs.YUV, vs.YCOCG]:
@@ -2310,7 +2281,6 @@ def Sharpen(clip, amountH=1.0, amountV=None, planes=None):
 
     """
 
-    core = vs.get_core()
     funcName = 'Sharpen'
 
     if not isinstance(clip, vs.VideoNode):
@@ -2367,7 +2337,6 @@ def Blur(clip, amountH=1.0, amountV=None, planes=None):
 
     """
 
-    core = vs.get_core()
     funcName = 'Blur'
 
     if not isinstance(clip, vs.VideoNode):
@@ -2440,7 +2409,6 @@ def BlindDeHalo3(clp, rx=3.0, ry=3.0, strength=125, lodamp=0, hidamp=0, sharpnes
 
     """
 
-    core = vs.get_core()
     funcName = 'BlindDeHalo3'
 
     if not isinstance(clp, vs.VideoNode):
@@ -2542,7 +2510,6 @@ def dfttestMC(input, pp=None, mc=2, mdg=False, planes=None, sigma=None, sbsize=N
 
     """
 
-    core = vs.get_core()
     funcName = 'dfttestMC'
 
     if not isinstance(input, vs.VideoNode) or input.format.color_family not in [vs.GRAY, vs.YUV, vs.YCOCG]:
@@ -2634,14 +2601,12 @@ def dfttestMC(input, pp=None, mc=2, mdg=False, planes=None, sigma=None, sbsize=N
 
 def TurnLeft(clip):
     """Avisynth's internel function TurnLeft()"""
-    core = vs.get_core()
 
     return core.std.Transpose(clip).std.FlipVertical()
 
 
 def TurnRight(clip):
     """Avisynth's internel function TurnRight()"""
-    core = vs.get_core()
 
     return core.std.FlipVertical(clip).std.Transpose()
 
@@ -2692,8 +2657,7 @@ def BalanceBorders(c, cTop=0, cBottom=0, cLeft=0, cRight=0, thresh=128, blur=999
         last = muf.BalanceBorders(last, 3, 3, 2, 2, thresh=8, blur=4)  # Slightly changes the "main problem area"
 
     """
-
-    core = vs.get_core()
+    
     funcName = 'BalanceBorders'
 
     if not isinstance(c, vs.VideoNode):
@@ -2735,7 +2699,6 @@ def BalanceBorders(c, cTop=0, cBottom=0, cLeft=0, cRight=0, thresh=128, blur=999
 
 def BalanceTopBorder(c, cTop, thresh, blur):
     """BalanceBorders()'s helper function"""
-    core = vs.get_core()
 
     cWidth = c.width
     cHeight = c.height
@@ -2795,7 +2758,6 @@ def DisplayHistogram(clip, factor=None):
 
     """
 
-    core = vs.get_core()
     funcName = 'DisplayHistogram'
 
     if not isinstance(clip, vs.VideoNode):
@@ -2873,7 +2835,7 @@ def GuidedFilter(input, guidance=None, radius=4, regulation=0.01, regulation_mod
             2: Gradient Domain Guided Image Filter [4]
             Default is 0.
 
-        use_gauss: Whether to use gaussian guided filter [1]. This replaces mean filter with gaussian filter.
+        use_gauss: (bool) Whether to use gaussian guided filter [1]. This replaces mean filter with gaussian filter.
             Guided filter is rotationally asymmetric and slightly biases to the x/y-axis because a box window is used in the filter design.
             The problem can be solved by using a gaussian weighted window instead. The resulting kernels are rotationally symmetric.
             The authors of [1] suggest that in practice the original guided filter is always good enough.
@@ -2885,7 +2847,7 @@ def GuidedFilter(input, guidance=None, radius=4, regulation=0.01, regulation_mod
             This method subsamples the filtering input image and the guidance image,
             computes the local linear coefficients, and upsamples these coefficients.
             The upsampled coefficients are adopted on the original guidance image to produce the output.
-            This method reduces the time complexity from O(N) to O(N^2) for a subsampling ratio s.
+            This method reduces the time complexity from O(N) to O(N/s^2) for a subsampling ratio s.
             Default is True if the version number of VapourSynth is less than 39, otherwise is False.
 
         subsampling_ratio: (float) Only works when fast=True.
@@ -2913,7 +2875,6 @@ def GuidedFilter(input, guidance=None, radius=4, regulation=0.01, regulation_mod
 
     """
 
-    core = vs.get_core()
     funcName = 'GuidedFilter'
 
     if not isinstance(input, vs.VideoNode):
@@ -2973,18 +2934,18 @@ def GuidedFilter(input, guidance=None, radius=4, regulation=0.01, regulation_mod
 
     # Edge-Aware Weighting, equation (5) in [3], or equation (9) in [4].
     def FLT(n, f, clip, core, eps0):
-        frameMean = f.props.PlaneStatsAverage
+        frameMean = f.props['PlaneStatsAverage']
 
         return core.std.Expr(clip, ['x {eps0} + {avg} *'.format(avg=frameMean, eps0=eps0)])
 
 
     # Compute the optimal value of a of Gradient Domain Guided Image Filter, equation (12) in [4]
     def FLT2(n, f, cov_Ip, weight_in, weight, var_I, core, eps):
-        frameMean = f.props.PlaneStatsAverage
-        frameMin = f.props.PlaneStatsMin
+        frameMean = f.props['PlaneStatsAverage']
+        frameMin = f.props['PlaneStatsMin']
 
         alpha = frameMean
-        kk = -4 / (frameMin - alpha)
+        kk = -4 / (frameMin - alpha - 1e-6) # Add a small num to prevent divided by 0
 
         return core.std.Expr([cov_Ip, weight_in, weight, var_I], ['x {eps} 1 1 1 {kk} y {alpha} - * exp + / - * z / + a {eps} z / + /'.format(eps=eps, kk=kk, alpha=alpha)])
 
@@ -3072,7 +3033,6 @@ def GuidedFilterColor(input, guidance, radius=4, regulation=0.01, use_gauss=Fals
 
     """
 
-    core = vs.get_core()
     funcName = 'GuidedFilterColor'
 
     if not isinstance(input, vs.VideoNode) or input.format.num_planes > 1:
@@ -3247,7 +3207,6 @@ def GMSD(clip1, clip2, plane=None, downsample=True, c=0.0026, show_map=False, **
 
     """
 
-    core = vs.get_core()
     funcName = 'GMSD'
 
     if not isinstance(clip1, vs.VideoNode):
@@ -3293,7 +3252,7 @@ def GMSD(clip1, clip2, plane=None, downsample=True, c=0.0026, show_map=False, **
         map_mean = core.std.PlaneAverage(quality_map, plane=[0], prop='PlaneStatsAverage')
 
     def _PlaneSDFrame(n, f, clip):
-        mean = f.props.PlaneStatsAverage
+        mean = f.props['PlaneStatsAverage']
         expr = "x {mean} - dup *".format(mean=mean)
         return core.std.Expr(clip, expr)
     SDclip = core.std.FrameEval(quality_map, functools.partial(_PlaneSDFrame, clip=quality_map), map_mean)
@@ -3305,7 +3264,7 @@ def GMSD(clip1, clip2, plane=None, downsample=True, c=0.0026, show_map=False, **
 
     def _PlaneGMSDTransfer(n, f):
         fout = f[0].copy()
-        fout.props.PlaneGMSD = math.sqrt(f[1].props.PlaneStatsAverage)
+        fout.props['PlaneGMSD'] = math.sqrt(f[1].props['PlaneStatsAverage'])
         return fout
     output_clip = quality_map if show_map else clip1_src
     output_clip = core.std.ModifyFrame(output_clip, [output_clip, SDclip], selector=_PlaneGMSDTransfer)
@@ -3362,7 +3321,6 @@ def SSIM(clip1, clip2, plane=None, downsample=True, k1=0.01, k2=0.03, fun=None, 
 
     """
 
-    core = vs.get_core()
     funcName = 'SSIM'
 
     if not isinstance(clip1, vs.VideoNode):
@@ -3430,7 +3388,7 @@ def SSIM(clip1, clip2, plane=None, downsample=True, k1=0.01, k2=0.03, fun=None, 
 
     def _PlaneSSIMTransfer(n, f):
         fout = f[0].copy()
-        fout.props.PlaneSSIM = f[1].props.PlaneStatsAverage
+        fout.props['PlaneSSIM'] = f[1].props['PlaneStatsAverage']
         return fout
     output_clip = ssim_map if show_map else clip1_src
     output_clip = core.std.ModifyFrame(output_clip, [output_clip, map_mean], selector=_PlaneSSIMTransfer)
@@ -3443,8 +3401,6 @@ def IQA_downsample(clip):
 
     The “clip” is first filtered by a 2x2 average filter, and then down-sampled by a factor of 2.
     """
-
-    core = vs.get_core()
 
     return core.std.Convolution(clip, [1, 1, 0, 1, 1, 0, 0, 0, 0]).resize.Point(clip.width // 2, clip.height // 2, src_left=-1, src_top=-1)
 
@@ -3494,8 +3450,6 @@ def SSIM_downsample(clip, w, h, smooth=1, kernel='Bicubic', use_fmtc=False, epsi
 
     funcName = 'SSIM_downsample'
 
-    core = vs.get_core()
-
     if not isinstance(clip, vs.VideoNode):
         raise TypeError(funcName + ': \"clip\" must be a clip!')
 
@@ -3535,3 +3489,459 @@ def SSIM_downsample(clip, w, h, smooth=1, kernel='Bicubic', use_fmtc=False, epsi
     out = mvf.Depth(d, depth=bits, sample=sampleType, **depth_args)
 
     return out
+
+
+def LocalStatisticsMatching(src, ref, radius=1, return_all=False, **depth_args):
+    """Local statistics matcher
+
+    Match the local statistics (mean, variance) of "src" with "ref".
+
+    All the internal calculations are done at 32-bit float.
+
+    Args:
+        src, ref: Inputs.
+
+        radius: (int or function) If it is an integer, it specifies the radius of mean filter.
+            It can also be a custom function.
+            Default is 1.
+
+        depth_args: (dict) Additional arguments passed to mvf.Depth().
+            Default is {}.
+
+    """
+
+    funcName = 'LocalStatisticsMatching'
+
+    if not isinstance(src, vs.VideoNode):
+        raise TypeError(funcName + ': \"src\" must be a clip!')
+    if not isinstance(ref, vs.VideoNode):
+        raise TypeError(funcName + ': \"ref\" must be a clip!')
+
+    bits = src.format.bits_per_sample
+    sampleType = src.format.sample_type
+    epsilon = 1e-7 # small positive number to avoid dividing by 0
+
+    src, src_mean, src_var = LocalStatistics(src, radius=radius, **depth_args)
+    _, ref_mean, ref_var = LocalStatistics(ref, radius=radius, **depth_args)
+
+    flt = core.std.Expr([src, src_mean, src_var, ref_mean, ref_var], ['x y - z sqrt {} + / b sqrt * a +'.format(epsilon)])
+
+    flt = mvf.Depth(flt, depth=bits, sample=sampleType, **depth_args)
+
+    if return_all:
+        return flt, src_mean, src_var, ref_mean, ref_var
+    else:
+        return flt
+
+
+def LocalStatistics(clip, radius=1, **depth_args):
+    """Local statistics calculator
+
+    The local mean and variance will be returned.
+
+    All the internal calculations are done at 32-bit float.
+
+    Args:
+        clip: Inputs.
+
+        radius: (int or function) If it is an integer, it specifies the radius of mean filter.
+            It can also be a custom function.
+            Default is 1.
+
+        depth_args: (dict) Additional arguments passed to mvf.Depth().
+            Default is {}.
+
+    Returns:
+        A list containing three clips (source, mean, variance) in 32bit float.
+
+    """
+
+    funcName = 'LocalStatistics'
+
+    if not isinstance(clip, vs.VideoNode):
+        raise TypeError(funcName + ': \"clip\" must be a clip!')
+
+    Expectation = radius if callable(radius) else functools.partial(BoxFilter, radius=radius+1)
+
+    clip = mvf.Depth(clip, depth=32, sample=vs.FLOAT, **depth_args)
+
+    mean = Expectation(clip)
+    var = Expectation(core.std.Expr([clip, mean], ['x y - dup *']))
+
+    return clip, mean, var
+
+
+def TextSub16(src, file, mod=False, tv_range=True, matrix=None, dither=None, **vsfilter_args):
+    """TextSub16 for VapourSynth
+
+    Author: mawen1250 (http://nmm.me/109)
+
+    Unofficial description:
+        Generate mask in YUV and use it to mask high-precision subtitles overlayed in RGB.
+
+    Args:
+        src: Input clip, must be of YUV color family.
+
+        file: Path to subtitle.
+
+        mod: (bool) Whether to use VSFilterMod. If not, VSFilter will be used.
+            Default is False.
+
+        tv_range: (bool) Define if input clip is of tv range(limited range).
+            Default is True.
+
+        matrix: (int|str) Color matrix of input clip.
+            Default is None, guessed according to the color family and size of input clip.
+
+        dither: (str) Dithering method of vszimg.
+            The following dithering methods are available: "none", "ordered", "random", "error_diffusion".
+            Default is "error_diffusion".
+
+        vsfilter_args: (dict) Additional arguments passed to subtitle plugin.
+            Default is {}.
+
+    Requirments:
+        1. VSFilter (https://github.com/HomeOfVapourSynthEvolution/VSFilter)
+        2. VSFilterMod (https://github.com/HomeOfVapourSynthEvolution/VSFilterMod)
+
+    """
+
+    funcName = 'TextSub16'
+
+    if not isinstance(src, vs.VideoNode) or src.format.color_family != vs.YUV:
+        raise TypeError(funcName + ': \"src\" must be a YUV clip!')
+
+    matrix = mvf.GetMatrix(src, matrix, True)
+    css = src.format.name[3:6]
+    sw = src.width
+    sh = src.height
+    
+    if dither is None:
+        dither = 'error_diffusion'
+
+    if src.format.id != vs.YUV420P8:
+        src8 = core.resize.Bicubic(src, format=vs.YUV420P8, range_in=tv_range)
+    else:
+        src8 = src
+
+    src16 = mvf.Depth(src, depth=16, sample=vs.INTEGER, fulls=tv_range, dither='none')
+
+    if mod:
+        src8sub = core.vsfm.TextSubMod(src8, file=file, **vsfilter_args)
+    else:
+        src8sub = core.vsf.TextSub(src8, file=file, **vsfilter_args)
+
+    submask = core.std.Expr([src8, src8sub], ['x y = 0 255 ?']).resize.Bilinear(format=vs.YUV444P8, range=True, range_in=True)
+    submaskY = mvf.GetPlane(submask, 0)
+    submaskU = mvf.GetPlane(submask, 1)
+    submaskV = mvf.GetPlane(submask, 2)
+    submask = mvf.Max(mvf.Max(submaskY, submaskU), submaskV).std.Inflate()
+    submaskY = core.resize.Bilinear(submask, format=vs.GRAY16, range_in=True, range=True)
+    if css == '444':
+        submaskC = submaskY
+    elif css == '422':
+        submaskC = core.resize.Bilinear(submask, sw // 2, sh, format=vs.GRAY16, range_in=True, range=True, src_left=-0.5)
+    elif css == '420':
+        submaskC = core.resize.Bilinear(submask, sw // 2, sh // 2, format=vs.GRAY16, range_in=True, range=True, src_left=-0.5)
+    else:
+        raise TypeError(funcName + 'the subsampling of \"src\" must be 444/422/420!')
+
+    submask = core.std.ShufflePlanes([submaskY, submaskC], [0, 0, 0], vs.YUV)
+
+    last = core.resize.Bicubic(src16, format=vs.RGB24, matrix_in_s=matrix, range=tv_range, dither_type=dither)
+
+    if mod:
+        last = core.vsfm.TextSubMod(last, file=file, **vsfilter_args)
+    else:
+        last = core.vsf.TextSub(last, file=file, **vsfilter_args)
+
+    sub16 = core.resize.Bicubic(last, format=src16.format.id, matrix_s=matrix, range=tv_range, dither_type=dither)
+
+    return core.std.MaskedMerge(src16, sub16, submask, planes=[0, 1, 2])
+
+
+def TMinBlur(clip, r=1, thr=2):
+    """Thresholded MinBlur
+
+    Use another MinBlur with larger radius to guide the smoothing effect of current MinBlur.
+
+    For detailed motivation and description (in Chinese), see:
+    https://gist.github.com/WolframRhodium/1e3ae9276d70aa1ddc93ea833cdce9c6#file-05-minblurmod-md
+
+    Args:
+        clip: Input clip.
+
+        r: (int) Radius of MinBlur() filter.
+            Default is 1.
+
+        thr: (float) Threshold in 8 bits scale.
+            If it is larger than 255, the output will be identical to original MinBlur().
+            Default is 2.
+
+    """
+
+    funcName = 'TMinBlur'
+
+    if not isinstance(clip, vs.VideoNode) or clip.format.sample_type != vs.INTEGER:
+        raise TypeError(funcName + ': \"clip\" must be an integer clip!')
+
+    thr = scale(thr, clip.format.bits_per_sample)
+
+    pre1 = haf.MinBlur(clip, r=r)
+    pre2 = haf.MinBlur(clip, r=r+1)
+
+    return core.std.Expr([clip, pre1, pre2], ['y z - abs {thr} <= y x ?'.format(thr=thr)])
+
+
+def mdering(clip, thr=2):
+    """A simple light and bright DCT ringing remover
+
+    It is a special instance of TMinBlur (r=1 and only filter the bright part) for higher performance.
+    Post-processing is needed to reduce degradation of flat and texture areas.
+
+    Args:
+        clip: Input clip.
+
+        thr: (float) Threshold in 8 bits scale.
+            Default is 2.
+
+    """
+
+    funcName = 'mdering'
+
+    if not isinstance(clip, vs.VideoNode) or clip.format.sample_type != vs.INTEGER:
+        raise TypeError(funcName + ': \"clip\" must be an integer clip!')
+
+    bits = clip.format.bits_per_sample
+    thr = scale(thr, bits)
+
+    rg11_1 = core.rgvs.RemoveGrain(clip, 11)
+    rg11_2 = core.std.Convolution(rg11_1, [1]*9)
+    rg4_1 = core.std.Median(clip)
+
+    if bits <= 12:
+        rg4_2 = core.ctmf.CTMF(clip, radius=2)
+    else:
+        rg4_2 = core.fmtc.bitdepth(clip, bits=12, dmode=1).ctmf.CTMF(radius=2).fmtc.bitdepth(bits=bits)
+        rg4_2 = mvf.LimitFilter(clip, rg4_2, thr=0.0625, elast=2)
+
+    minblur_1 = core.std.Expr([clip, rg11_1, rg4_1], ['x y - x z - xor x x y - abs x z - abs < y z ? ?'])
+    minblur_2 = core.std.Expr([clip, rg11_2, rg4_2], ['x y - x z - xor x x y - abs x z - abs < y z ? ?'])
+    dering = core.std.Expr([clip, minblur_1, minblur_2], ['y z - abs {thr} <= y x <= and y x ?'.format(thr=thr)])
+
+    return dering
+
+
+def BMAFilter(clip, guidance=None, radius=1, lamda=1e-2, epsilon=1e-5, mode=3, **depth_args):
+    """Edge-Aware BMA Filter
+
+    Edge-aware BMA filter is a family of edge-aware filters proposed based on optimal parameter estimation and Bayesian model averaging (BMA).
+    The problem of filtering a pixel in a local pixel patch is formulated as an optimal estimation problem,
+    and multiple estimates of the same pixel are combined using BMA.
+    Filters in this family differs from different settings of cost functions and log-likelihood and log-prior functions.
+
+    However, only four of six BMA filters are implemented.
+    The implementation is modified to allow the filtering to be guided by another source, like GuidedFilter().
+
+    Most of the internal calculations are done at 32-bit float, except median filtering with radius larger than 1 is done at integer.
+
+    Args:
+        clip: Input clip.
+
+        guidance: (clip) Guidance clip used to compute the coefficient of the translation on "clip".
+            It must has the same clip properties as 'clip'.
+            If it is None, it will be set to 'clip', with duplicate calculations being omitted.
+            Default is None.
+
+        radius: (int) The radius of box filter and median filter.
+            Default is 1.
+
+        lamda: (float) A criterion for judging whether a patch has high variance and should be preserved, or is flat and should be smoothed.
+            It only takes effects when `mode` is 3 or 4.
+            The limit of filter of `mode` 3 [resp. 4] as `lamda` approaches infinity is filter of `mode` 1 [resp. 2].
+            Default is 0.01.
+
+        epsilon: (float) Small number to avoid divide by 0.
+            Default is 0.00001.
+
+        mode: (1~4): Number of different BMA filters.
+            1: l2-norm based cost function, constant prior and gaussian likelihood.
+            2: l1-norm based cost function, constant prior and laplacian likelihood.
+            3: 'hit-or-miss' cost function, gaussian prior and gaussian likelihood.
+            4: 'hit-or-miss' cost function, gaussian prior and laplacian likelihood.
+            Default is 3.
+
+        depth_args: (dict) Additional arguments passed to mvf.Depth().
+            Default is {}.
+
+    Ref:
+        [1] Deng, G. (2016). Edge-aware BMA filters. IEEE Transactions on Image Processing, 25(1), 439-454.
+        [2] https://www.researchgate.net/publication/284391731_Edge-aware_BMA_filters
+
+    """
+
+    funcName = 'BMAFilter'
+
+    if guidance is None:
+        guidance = clip
+    else:
+        if not isinstance(guidance, vs.VideoNode):
+            raise TypeError(funcName + ': \"guidance\" must be a clip!')
+        if clip.format.id != guidance.format.id:
+            raise TypeError(funcName + ': \"guidance\" must be of the same format as \"clip\"!')
+        if clip.width != guidance.width or clip.height != guidance.height:
+            raise TypeError(funcName + ': \"guidance\" must be of the same size as \"clip\"!')
+
+    bits = clip.format.bits_per_sample
+    sampleType = clip.format.sample_type
+    clip_src = clip
+    clip = mvf.Depth(clip, depth=32, **depth_args)
+    guidance = mvf.Depth(guidance, depth=32, **depth_args) if guidance != clip_src else clip
+
+    if mode in (1, 3):
+        Filter = functools.partial(BoxFilter, radius=radius+1)
+    elif mode in (2, 4):
+        def Filter(clip):
+            bits = clip.format.bits_per_sample
+            if radius == 1:
+                clip = core.std.Median(clip)
+            else:
+                clip = mvf.Depth(clip, depth=min(bits, 12), **depth_args)
+                clip = core.ctmf.CTMF(clip, radius=radius)
+            return mvf.Depth(clip, 32, **depth_args)
+
+    Expectation = functools.partial(BoxFilter, radius=radius+1)
+
+    if mode in (1, 2):
+        mean_guidance = Expectation(guidance)
+        corr_guidance = Expectation(core.std.Expr([guidance], ['x dup *']))
+        unscaled_alpha = core.std.Expr([corr_guidance, mean_guidance], ['1 x y dup * - {epsilon} + /'.format(epsilon=epsilon)]) # Eqn. 10
+        alpha_scale = Expectation(unscaled_alpha)
+
+        if mode == 1:
+            mean_clip = Filter(clip) if clip != guidance else mean_guidance
+            res = Expectation(core.std.Expr([unscaled_alpha, mean_clip], ['x y *'])) # Eqn. 11
+        else: # mode == 2
+            median_clip = Filter(clip_src)
+            res = Expectation(core.std.Expr([unscaled_alpha, median_clip], ['x y *'])) # Eqn. 12
+
+        res = core.std.Expr([res, alpha_scale], ['x y /'])
+    elif mode in (3, 4):
+        mean_guidance = Expectation(guidance)
+
+        guidance_square = core.std.Expr([guidance], ['x dup *'])
+        var_guidance = core.std.Expr([Expectation(guidance_square), mean_guidance], ['x y dup * -'])
+        unscaled_alpha = core.std.Expr([var_guidance], ['1 x {epsilon} + /'.format(epsilon=epsilon)]) # Eqn. 10
+        alpha_scale = Expectation(unscaled_alpha)
+        beta = core.std.Expr([var_guidance], ['1 x {epsilon} + {lamda} * 1 + /'.format(epsilon=epsilon, lamda=1/lamda)]) # Eqn. 18
+        tmp1 = core.std.Expr([unscaled_alpha, beta], ['x y *'])
+
+        if mode == 3:
+            mean_clip = Filter(clip) if clip != guidance else mean_guidance
+            tmp2 = Expectation(core.std.Expr([tmp1, mean_clip], ['x y *'])) # Eqn. 19, left
+        else: # mode == 4
+            median_clip = Filter(clip_src)
+            tmp2 = Expectation(core.std.Expr([tmp1, median_clip], ['x y *'])) # Eqn. 25, left
+
+        tmp3 = Expectation(tmp1) # Eqn. 19 / 25, right
+        res = core.std.Expr([tmp2, alpha_scale, tmp3, clip], ['x y / 1 z y / - a * +']) # Eqn.19 / 25
+    else:
+        raise ValueError(funcName + '\"mode\" must be in [1, 2, 3, 4]!')
+
+    return mvf.Depth(res, depth=bits, sample=sampleType, **depth_args)
+
+
+def LLSURE(clip, guidance=None, radius=2, sigma=0, epsilon=1e-5, **depth_args):
+    """Local Linear SURE-Based Edge-Preserving Image Filtering
+
+    LLSURE is based on a local linear model and using the principle of Stein’s unbiased risk estimate (SURE) 
+    as an estimator for the mean squared error from the noisy image.
+    Multiple estimates are aggregated using Variance-based Weighted Average (WAV).
+
+    Most of the internal calculations are done at 32-bit float, except median filtering with radius larger than 1 is done at integer.
+
+    Args:
+        clip: Input clip.
+
+        guidance: (clip) Guidance clip used to compute the coefficient of the translation on "clip".
+            It must has the same clip properties as 'clip'.
+            If it is None, it will be set to 'clip', with duplicate calculations being omitted.
+            It is not recommended to use such feature since there might be severe numerical precision problem in this implementation.
+            Default is None.
+
+        radius: (int) The radius of box filter and median filter.
+            Default is 2.
+
+        sigma: (float or clip) Estimation of noise variance.
+            If it is 0, it is automatically calculated using MAD (median absolute deviation).
+            If it is smaller than 0, the result is MAD multiplied by the absolute value of "sigma".
+            Default is 0.
+
+        epsilon: (float) Small number to avoid divide by 0.
+            Default is 0.00001.
+
+        depth_args: (dict) Additional arguments passed to mvf.Depth().
+            Default is {}.
+
+    Ref:
+        [1] Qiu, T., Wang, A., Yu, N., & Song, A. (2013). LLSURE: local linear SURE-based edge-preserving image filtering. IEEE Transactions on Image Processing, 22(1), 80-90.
+
+    """
+
+    funcName = 'LLSURE'
+
+    if guidance is None:
+        guidance = clip
+    else:
+        if not isinstance(guidance, vs.VideoNode):
+            raise TypeError(funcName + ': \"guidance\" must be a clip!')
+        if clip.format.id != guidance.format.id:
+            raise TypeError(funcName + ': \"guidance\" must be of the same format as \"clip\"!')
+        if clip.width != guidance.width or clip.height != guidance.height:
+            raise TypeError(funcName + ': \"guidance\" must be of the same size as \"clip\"!')
+
+    bits = clip.format.bits_per_sample
+    sampleType = clip.format.sample_type
+
+    Expectation = functools.partial(BoxFilter, radius=radius+1)
+
+    clip_src = clip
+    clip = mvf.Depth(clip, depth=32, sample=vs.FLOAT, **depth_args)
+    guidance = mvf.Depth(guidance, depth=32, **depth_args) if guidance != clip_src else clip
+
+    mean_guidance = Expectation(guidance)
+    guidance_square = core.std.Expr([guidance], ['x dup *'])
+    var_guidance = core.std.Expr([Expectation(guidance_square), mean_guidance], ['x y dup * -'])
+    inv_var = core.std.Expr([var_guidance], ['1 x {epsilon} + /'.format(epsilon=epsilon)])
+    normalized_w = Expectation(inv_var)
+    
+    if not isinstance(sigma, vs.VideoNode):
+        if sigma <= 0:
+            absolute_deviation = core.std.Expr([guidance, mean_guidance], ['x y - abs'])
+
+            if radius == 1:
+                sigma_tmp = core.std.Median(absolute_deviation)
+            else:
+                absolute_deviation = core.fmtc.bitdepth(absolute_deviation, bits=12, dmode=1, fulls=True, fulld=True)
+                sigma_tmp = core.ctmf.CTMF(absolute_deviation, radius=radius)
+                sigma_tmp = mvf.Depth(sigma_tmp, depth=32, sample=vs.FLOAT, fulls=True, fulld=True)
+
+            sigma = sigma_tmp if sigma == 0 else core.std.Expr([sigma_tmp], ['x {sigma} *'.format(sigma=-sigma)])
+        else:
+            sigma = core.std.BlankClip(clip, color=[sigma**2] * clip.format.num_planes)
+
+    if guidance == clip:
+        a_star = core.std.Expr([var_guidance, sigma, inv_var], ['x y - 0 max z *']) # Eqn. 10 (a)
+        b_star = core.std.Expr([a_star, mean_guidance], ['1 x - y *']) # Eqn. 10 (b)
+    else: # Joint LLSURE
+        mean_clip = Expectation(clip)
+        corr_clip_guidance = Expectation(core.std.Expr([clip, guidance], ['x y *']))
+        cov_clip_guidance = core.std.Expr([corr_clip_guidance, mean_clip, mean_guidance], ['x y z * -'])
+        a_star = core.std.Expr([cov_clip_guidance, sigma, inv_var], ['x 0 > 1 -1 ? x abs y - 0 max * z *']) # Eqn. 20 (a)
+        b_star = core.std.Expr([mean_clip, cov_clip_guidance, sigma, inv_var, mean_guidance], ['x y z - a * b * -']) # Eqn. 20 (b)
+
+    bar_a = Expectation(core.std.Expr([a_star, inv_var], ['x y *']))
+    bar_b = Expectation(core.std.Expr([b_star, inv_var], ['x y *']))
+    res = core.std.Expr([bar_a, guidance, bar_b, normalized_w], ['x y * z + a {epsilon} + /'.format(epsilon=epsilon)]) # Eqn. 17 / 21
+
+    return mvf.Depth(res, depth=bits, sample=sampleType, **depth_args)
