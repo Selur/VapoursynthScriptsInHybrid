@@ -966,9 +966,12 @@ def nnedi3aa(a):
         raise TypeError(funcName + ': \"a\" must be a clip!')
 
     bits = a.format.bits_per_sample
-
-    last = core.nnedi3.nnedi3(a, field=1, dh=True).std.Transpose()
-    last = core.nnedi3.nnedi3(last, field=1, dh=True).std.Transpose()
+    if hasattr('znedi3'):
+      last = core.znedi3.nnedi3(a, field=1, dh=True).std.Transpose()
+      last = core.znedi3.nnedi3(last, field=1, dh=True).std.Transpose()
+    else:
+      last = core.nnedi3.nnedi3(a, field=1, dh=True).std.Transpose()
+      last = core.nnedi3.nnedi3(last, field=1, dh=True).std.Transpose()
     last = core.fmtc.resample(last, a.width, a.height, [-0.5, -0.5 * (1 << a.format.subsampling_w)], [-0.5, -0.5 * (1 << a.format.subsampling_h)], kernel='spline36')
 
     if last.format.bits_per_sample == bits:

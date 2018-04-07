@@ -622,7 +622,10 @@ def JIVTC(src, pattern, thr=10, draft=False, ivtced=None, bobber=None, show=Fals
 
     ivtced = defivtc if ivtced is None else ivtced
     if bobber is None:
-        bobbed = core.yadifmod.Yadifmod(ivtced, edeint=core.nnedi3.nnedi3(ivtced, 2), order=0, mode=1)
+        if hasattr('znedi3'):
+          bobbed = core.yadifmod.Yadifmod(ivtced, edeint=core.znedi3.nnedi3(ivtced, 2), order=0, mode=1)
+        else:
+          bobbed = core.yadifmod.Yadifmod(ivtced, edeint=core.nnedi3.nnedi3(ivtced, 2), order=0, mode=1)
     else:
         bobbed = bobber(ivtced)
 

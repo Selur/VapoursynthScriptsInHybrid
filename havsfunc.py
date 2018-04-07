@@ -80,7 +80,10 @@ def daa(c, nsize=None, nns=None, qual=None, pscrn=None, int16_prescreener=None, 
         myNNEDI3 = core.nnedi3cl.NNEDI3CL
         nnedi3_args = dict(nsize=nsize, nns=nns, qual=qual, pscrn=pscrn)
     else:
-        myNNEDI3 = core.znedi3.nnedi3
+        if hasattr('znedi3'):
+          myNNEDI3 = core.znedi3.nnedi3
+        else:
+          myNNEDI3 = core.nnedi3.nnedi3
         nnedi3_args = dict(nsize=nsize, nns=nns, qual=qual, pscrn=pscrn, int16_prescreener=int16_prescreener, int16_predictor=int16_predictor, exp=exp)
 
     nn = myNNEDI3(c, field=3, **nnedi3_args)
@@ -119,14 +122,23 @@ def santiag(c, strh=1, strv=1, type='nnedi3', nsize=None, nns=None, qual=None, p
             cshift = [cshift, cshift * (1 << c.format.subsampling_h)]
         return Resize(c, fw, fh, sy=cshift, dmode=1)
 
-    def santiag_stronger(c, strength, type):
+    def santiag_stronger(c, strength, type):    
         if opencl:
             myNNEDI3 = core.nnedi3cl.NNEDI3CL
-            myEEDI3 = core.eedi3m.EEDI3CL
+            if hasattr('eedi3m'):
+              myEEDI3 = core.eedi3m.EEDI3CL
+            else:
+              myEEDI3 = core.eedim.eedi3
             nnedi3_args = dict(nsize=nsize, nns=nns, qual=qual, pscrn=pscrn)
         else:
-            myNNEDI3 = core.znedi3.nnedi3
-            myEEDI3 = core.eedi3m.EEDI3
+            if hasattr('znedi3'):
+              myNNEDI3 = core.znedi3.nnedi3
+            else:
+              myNNEDI3 = core.nnedi3.nnedi3
+            if hasattr('eedi3m'):
+              myEEDI3 = core.eedi3m.EEDI3
+            else:
+              myEEDI3 = core.eedi3.eedi3
             nnedi3_args = dict(nsize=nsize, nns=nns, qual=qual, pscrn=pscrn, int16_prescreener=int16_prescreener, int16_predictor=int16_predictor, exp=exp)
 
         strength = max(strength, 0)
@@ -1394,16 +1406,26 @@ def QTGMC(Input, Preset='Slower', TR0=None, TR1=None, TR2=None, Rep0=None, Rep1=
 # separately with that method (only really useful for EEDIx). The function is used as main algorithm starting point and for first two source-match stages
 def QTGMC_Interpolate(Input, InputType, EdiMode, NNSize, NNeurons, EdiQual, EdiMaxD, pscrn, int16_prescreener, int16_predictor, exp, alpha, beta, gamma, nrad, vcheck,
                       Fallback=None, ChromaEdi='', TFF=None, opencl=False):
+                      
     if opencl:
-        myNNEDI3 = core.nnedi3cl.NNEDI3CL
+      myNNEDI3 = core.nnedi3cl.NNEDI3CL
+      if hasattr('eedi3m'):
         myEEDI3 = core.eedi3m.EEDI3CL
-        nnedi3_args = dict(nsize=NNSize, nns=NNeurons, qual=EdiQual, pscrn=pscrn)
+      else:
+        myEEDI3 = core.eedim.eedi3
+      nnedi3_args = dict(nsize=NNSize, nns=NNeurons, qual=EdiQual, pscrn=pscrn)
     else:
+      if hasattr('znedi3'):
         myNNEDI3 = core.znedi3.nnedi3
+      else:
+        myNNEDI3 = core.nnedi3.nnedi3
+      if hasattr('eedi3m'):
         myEEDI3 = core.eedi3m.EEDI3
-        nnedi3_args = dict(nsize=NNSize, nns=NNeurons, qual=EdiQual, pscrn=pscrn, int16_prescreener=int16_prescreener, int16_predictor=int16_predictor, exp=exp)
-    eedi3_args = dict(alpha=alpha, beta=beta, gamma=gamma, nrad=nrad, mdis=EdiMaxD, vcheck=vcheck)
-
+      else:
+        myEEDI3 = core.eedi3.eedi3
+      nnedi3_args = dict(nsize=NNSize, nns=NNeurons, qual=EdiQual, pscrn=pscrn, int16_prescreener=int16_prescreener, int16_predictor=int16_predictor, exp=exp)
+    eedi3_args = dict(alpha=alpha, beta=beta, gamma=gamma, nrad=nrad, mdis=EdiMaxD, vcheck=vcheck)              
+  
     isGray = (Input.format.color_family == vs.GRAY)
     if isGray:
         ChromaEdi = ''

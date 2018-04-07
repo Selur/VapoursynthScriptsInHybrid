@@ -6,7 +6,10 @@ def nnedi3_rpow2(clip,rfactor,correct_shift="fmtconv",nsize=0,nns=3,qual=None,et
 	core = vs.get_core()
 	
 	def edi(clip,field,dh):
-		return core.znedi3.nnedi3(clip=clip,field=field,dh=dh,nsize=nsize,nns=nns,qual=qual,etype=etype,pscrn=pscrn,opt=opt,int16_prescreener=int16_prescreener,int16_predictor=int16_predictor,exp=exp)
+    if hasattr(core, 'znedi3'):  
+      return core.znedi3.nnedi3(clip=clip,field=field,dh=dh,nsize=nsize,nns=nns,qual=qual,etype=etype,pscrn=pscrn,opt=opt,int16_prescreener=int16_prescreener,int16_predictor=int16_predictor,exp=exp)
+    else:
+      return core.nnedi3.nnedi3(clip=clip,field=field,dh=dh,nsize=nsize,nns=nns,qual=qual,etype=etype,pscrn=pscrn,opt=opt,int16_prescreener=int16_prescreener,int16_predictor=int16_predictor,exp=exp)
 	
 	return edi_rpow2(clip=clip,rfactor=rfactor,correct_shift=correct_shift,edi=edi)
 
@@ -22,7 +25,10 @@ def eedi3_rpow2(clip,rfactor,correct_shift="fmtconv",alpha=None,beta=None,gamma=
 	core = vs.get_core()
 	
 	def edi(clip,field,dh):
-		return core.eedi3.eedi3(clip=clip,field=field,dh=dh,alpha=alpha,beta=beta,gamma=gamma,nrad=nrad,mdis=mdis,hp=hp,ucubic=ucubic,cost3=cost3,vcheck=vcheck,vthresh0=vthresh0,vthresh1=vthresh1,vthresh2=vthresh2,sclip=sclip)
+    if hasattr('eedi3m'):
+      return core.eedi3m.EEDI3(clip=clip,field=field,dh=dh,alpha=alpha,beta=beta,gamma=gamma,nrad=nrad,mdis=mdis,hp=hp,ucubic=ucubic,cost3=cost3,vcheck=vcheck,vthresh0=vthresh0,vthresh1=vthresh1,vthresh2=vthresh2,sclip=sclip)
+    else:
+      return core.eedi3.eedi3(clip=clip,field=field,dh=dh,alpha=alpha,beta=beta,gamma=gamma,nrad=nrad,mdis=mdis,hp=hp,ucubic=ucubic,cost3=cost3,vcheck=vcheck,vthresh0=vthresh0,vthresh1=vthresh1,vthresh2=vthresh2,sclip=sclip)
 	
 	return edi_rpow2(clip=clip,rfactor=rfactor,correct_shift=correct_shift,edi=edi)
 
