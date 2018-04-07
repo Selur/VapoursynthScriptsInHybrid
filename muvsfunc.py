@@ -966,7 +966,7 @@ def nnedi3aa(a):
         raise TypeError(funcName + ': \"a\" must be a clip!')
 
     bits = a.format.bits_per_sample
-    if hasattr('znedi3'):
+    if hasattr(core, 'znedi3'):
       last = core.znedi3.nnedi3(a, field=1, dh=True).std.Transpose()
       last = core.znedi3.nnedi3(last, field=1, dh=True).std.Transpose()
     else:

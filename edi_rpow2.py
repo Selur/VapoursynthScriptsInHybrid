@@ -25,7 +25,7 @@ def eedi3_rpow2(clip,rfactor,correct_shift="fmtconv",alpha=None,beta=None,gamma=
 	core = vs.get_core()
 	
 	def edi(clip,field,dh):
-    if hasattr('eedi3m'):
+    if hasattr(core, 'eedi3m'):
       return core.eedi3m.EEDI3(clip=clip,field=field,dh=dh,alpha=alpha,beta=beta,gamma=gamma,nrad=nrad,mdis=mdis,hp=hp,ucubic=ucubic,cost3=cost3,vcheck=vcheck,vthresh0=vthresh0,vthresh1=vthresh1,vthresh2=vthresh2,sclip=sclip)
     else:
       return core.eedi3.eedi3(clip=clip,field=field,dh=dh,alpha=alpha,beta=beta,gamma=gamma,nrad=nrad,mdis=mdis,hp=hp,ucubic=ucubic,cost3=cost3,vcheck=vcheck,vthresh0=vthresh0,vthresh1=vthresh1,vthresh2=vthresh2,sclip=sclip)
