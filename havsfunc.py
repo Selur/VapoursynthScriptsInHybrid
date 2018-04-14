@@ -72,13 +72,13 @@ Utility functions:
 
 
 # Anti-aliasing with contra-sharpening by Didée
-def daa(c, nsize=None, nns=None, qual=None, pscrn=None, int16_prescreener=None, int16_predictor=None, exp=None, opencl=False):
+def daa(c, nsize=None, nns=None, qual=None, pscrn=None, int16_prescreener=None, int16_predictor=None, exp=None, opencl=False, device=None):
     if not isinstance(c, vs.VideoNode):
         raise TypeError('daa: This is not a clip')
 
     if opencl:
         myNNEDI3 = core.nnedi3cl.NNEDI3CL
-        nnedi3_args = dict(nsize=nsize, nns=nns, qual=qual, pscrn=pscrn)
+        nnedi3_args = dict(nsize=nsize, nns=nns, qual=qual, pscrn=pscrn, device=device)
     else:
         myNNEDI3 = core.znedi3.nnedi3 if hasattr(core, 'znedi3') else core.nnedi3.nnedi3
         nnedi3_args = dict(nsize=nsize, nns=nns, qual=qual, pscrn=pscrn, int16_prescreener=int16_prescreener, int16_predictor=int16_predictor, exp=exp)
@@ -105,7 +105,7 @@ def daa(c, nsize=None, nns=None, qual=None, pscrn=None, int16_prescreener=None, 
 #
 # type = "nnedi3", "eedi2", "eedi3" or "sangnom"
 def santiag(c, strh=1, strv=1, type='nnedi3', nsize=None, nns=None, qual=None, pscrn=None, int16_prescreener=None, int16_predictor=None, exp=None, aa=None,
-            alpha=None, beta=None, gamma=None, nrad=None, mdis=None, vcheck=None, fw=None, fh=None, halfres=False, typeh=None, typev=None, opencl=False):
+            alpha=None, beta=None, gamma=None, nrad=None, mdis=None, vcheck=None, fw=None, fh=None, halfres=False, typeh=None, typev=None, opencl=False, device=None):
     def santiag_dir(c, strength, type, fw=None, fh=None):
         if fw is None:
             fw = c.width
@@ -119,15 +119,17 @@ def santiag(c, strh=1, strv=1, type='nnedi3', nsize=None, nns=None, qual=None, p
             cshift = [cshift, cshift * (1 << c.format.subsampling_h)]
         return Resize(c, fw, fh, sy=cshift, dmode=1)
 
-    def santiag_stronger(c, strength, type):    
+    def santiag_stronger(c, strength, type):
         if opencl:
             myNNEDI3 = core.nnedi3cl.NNEDI3CL
-            myEEDI3 = core.eedi3m.EEDI3CL if hasattr(core, 'eedi3m') else core.eedi3.eedi3
-            nnedi3_args = dict(nsize=nsize, nns=nns, qual=qual, pscrn=pscrn)
+            myEEDI3 = core.eedi3m.EEDI3CL
+            nnedi3_args = dict(nsize=nsize, nns=nns, qual=qual, pscrn=pscrn, device=device)
+            eedi3_args = dict(alpha=alpha, beta=beta, gamma=gamma, nrad=nrad, mdis=mdis, vcheck=vcheck, device=device)
         else:
             myNNEDI3 = core.znedi3.nnedi3 if hasattr(core, 'znedi3') else core.nnedi3.nnedi3
             myEEDI3 = core.eedi3m.EEDI3 if hasattr(core, 'eedi3m') else core.eedi3.eedi3
             nnedi3_args = dict(nsize=nsize, nns=nns, qual=qual, pscrn=pscrn, int16_prescreener=int16_prescreener, int16_predictor=int16_predictor, exp=exp)
+            eedi3_args = dict(alpha=alpha, beta=beta, gamma=gamma, nrad=nrad, mdis=mdis, vcheck=vcheck)
 
         strength = max(strength, 0)
         field = strength % 2
@@ -150,7 +152,7 @@ def santiag(c, strh=1, strv=1, type='nnedi3', nsize=None, nns=None, qual=None, p
             return core.eedi2.EEDI2(c, field=field)
         elif type == 'eedi3':
             sclip = myNNEDI3(c, field=field, dh=dh, **nnedi3_args)
-            return myEEDI3(c, field=field, dh=dh, alpha=alpha, beta=beta, gamma=gamma, nrad=nrad, mdis=mdis, vcheck=vcheck, sclip=sclip)
+            return myEEDI3(c, field=field, dh=dh, sclip=sclip, **eedi3_args)
         elif type == 'sangnom':
             if dh:
                 cshift = -0.25
@@ -565,26 +567,6 @@ def HQDeringmod(input, p=None, ringmask=None, mrad=1, msmooth=1, incedge=False, 
     matrix1 = [1, 2, 1, 2, 4, 2, 1, 2, 1]
     matrix2 = [1, 1, 1, 1, 1, 1, 1, 1, 1]
 
-    expr = 'x {neutral} - abs y {neutral} - abs <= x y ?'.format(neutral=neutral)
-    if 0 in planes:
-        Y = True
-        Yexpr = expr
-    else:
-        Y = False
-        Yexpr = ''
-    if 1 in planes:
-        U = True
-        Uexpr = expr
-    else:
-        U = False
-        Uexpr = ''
-    if 2 in planes:
-        V = True
-        Vexpr = expr
-    else:
-        V = False
-        Vexpr = ''
-
     if sharp <= 0:
         sclp = p
     else:
@@ -597,15 +579,16 @@ def HQDeringmod(input, p=None, ringmask=None, mrad=1, msmooth=1, incedge=False, 
             method = core.std.Convolution(pre, matrix=matrix1, planes=planes).std.Convolution(matrix=matrix2, planes=planes).std.Convolution(matrix=matrix2, planes=planes)
         sharpdiff = core.std.MakeDiff(pre, method, planes=planes)
         allD = core.std.MakeDiff(input, p, planes=planes)
-        ssDD = core.rgvs.Repair(sharpdiff, allD, [1] if isGray else [1 if Y else 0, 1 if U else 0, 1 if V else 0])
-        ssDD = core.std.Expr([ssDD, sharpdiff], [Yexpr] if isGray else [Yexpr, Uexpr, Vexpr])
+        ssDD = core.rgvs.Repair(sharpdiff, allD, [1 if i in planes else 0 for i in range(input.format.num_planes)])
+        expr = 'x {neutral} - abs y {neutral} - abs <= x y ?'.format(neutral=neutral)
+        ssDD = core.std.Expr([ssDD, sharpdiff], [expr if i in planes else '' for i in range(input.format.num_planes)])
         sclp = core.std.MergeDiff(p, ssDD, planes=planes)
 
     # Post-Process: Repairing
     if drrep <= 0:
         repclp = sclp
     else:
-        repclp = core.rgvs.Repair(input, sclp, [drrep] if isGray else [drrep if Y else 0, drrep if U else 0, drrep if V else 0])
+        repclp = core.rgvs.Repair(input, sclp, [drrep if i in planes else 0 for i in range(input.format.num_planes)])
 
     # Post-Process: Limiting
     if (thr <= 0 and darkthr <= 0) or (thr >= 128 and darkthr >= 128):
@@ -704,7 +687,7 @@ def QTGMC(Input, Preset='Slower', TR0=None, TR1=None, TR2=None, Rep0=None, Rep1=
           SourceMatch=0, MatchPreset=None, MatchEdi=None, MatchPreset2=None, MatchEdi2=None, MatchTR2=1, MatchEnhance=0.5, Lossless=0, NoiseProcess=None, EZDenoise=None, EZKeepGrain=None,
           NoisePreset='Fast', Denoiser=None, FftThreads=1, DenoiseMC=None, NoiseTR=None, Sigma=None, ChromaNoise=False, ShowNoise=0., GrainRestore=None, NoiseRestore=None, NoiseDeint=None,
           StabilizeNoise=None, InputType=0, ProgSADMask=None, FPSDivisor=1, ShutterBlur=0, ShutterAngleSrc=180, ShutterAngleOut=180, SBlurLimit=4, Border=False, Precise=None, Tuning='None',
-          ShowSettings=False, ForceTR=0, TFF=None, pscrn=None, int16_prescreener=None, int16_predictor=None, exp=None, alpha=None, beta=None, gamma=None, nrad=None, vcheck=None, opencl=False):
+          ShowSettings=False, ForceTR=0, TFF=None, pscrn=None, int16_prescreener=None, int16_predictor=None, exp=None, alpha=None, beta=None, gamma=None, nrad=None, vcheck=None, opencl=False, device=None):
     #---------------------------------------
     # Presets
 
@@ -1129,7 +1112,7 @@ def QTGMC(Input, Preset='Slower', TR0=None, TR1=None, TR2=None, Rep0=None, Rep1=
         edi1 = core.resize.Point(EdiExt, w, h, src_top=(EdiExt.height - h) / 2, src_height=h + epsilon)
     else:
         edi1 = QTGMC_Interpolate(ediInput, InputType, EdiMode, NNSize, NNeurons, EdiQual, EdiMaxD, pscrn, int16_prescreener, int16_predictor, exp, alpha, beta, gamma, nrad, vcheck,
-                                 bobbed, ChromaEdi, TFF, opencl)
+                                 bobbed, ChromaEdi, TFF, opencl, device)
 
     # InputType=2,3: use motion mask to blend luma between original clip & reweaved clip based on ProgSADMask setting. Use chroma from original clip in any case
     if InputType < 2:
@@ -1188,7 +1171,7 @@ def QTGMC(Input, Preset='Slower', TR0=None, TR1=None, TR2=None, Rep0=None, Rep1=
         match = QTGMC_ApplySourceMatch(repair1, InputType, ediInput, bVec1 if maxTR > 0 else None, fVec1 if maxTR > 0 else None, bVec2 if maxTR > 1 else None, fVec2 if maxTR > 1 else None, SubPel,
                                        SubPelInterp, hpad, vpad, ThSAD1, ThSCD1, ThSCD2, SourceMatch, MatchTR1, MatchEdi, MatchNNSize, MatchNNeurons, MatchEdiQual, MatchEdiMaxD, MatchTR2, MatchEdi2,
                                        MatchNNSize2, MatchNNeurons2, MatchEdiQual2, MatchEdiMaxD2, MatchEnhance, pscrn, int16_prescreener, int16_predictor, exp, alpha, beta, gamma, nrad, vcheck,
-                                       TFF, opencl)
+                                       TFF, opencl, device)
 
     # Lossless=2 - after preparing an interpolated, de-shimmered clip, restore the original source fields into it and clean up any artefacts
     # This mode will not give a true lossless result because the resharpening and final temporal smooth are still to come, but it will add further detail
@@ -1393,18 +1376,18 @@ def QTGMC(Input, Preset='Slower', TR0=None, TR1=None, TR2=None, Rep0=None, Rep1=
 # Interpolate input clip using method given in EdiMode. Use Fallback or Bob as result if mode not in list. If ChromaEdi string if set then interpolate chroma
 # separately with that method (only really useful for EEDIx). The function is used as main algorithm starting point and for first two source-match stages
 def QTGMC_Interpolate(Input, InputType, EdiMode, NNSize, NNeurons, EdiQual, EdiMaxD, pscrn, int16_prescreener, int16_predictor, exp, alpha, beta, gamma, nrad, vcheck,
-                      Fallback=None, ChromaEdi='', TFF=None, opencl=False):
-                      
+                      Fallback=None, ChromaEdi='', TFF=None, opencl=False, device=None):
     if opencl:
-      myNNEDI3 = core.nnedi3cl.NNEDI3CL
-      myEEDI3 = core.eedi3m.EEDI3CL if hasattr(core, 'eedi3m') else core.eedi3.eedi3
-      nnedi3_args = dict(nsize=NNSize, nns=NNeurons, qual=EdiQual, pscrn=pscrn)
+        myNNEDI3 = core.nnedi3cl.NNEDI3CL
+        myEEDI3 = core.eedi3m.EEDI3CL
+        nnedi3_args = dict(nsize=NNSize, nns=NNeurons, qual=EdiQual, pscrn=pscrn, device=device)
+        eedi3_args = dict(alpha=alpha, beta=beta, gamma=gamma, nrad=nrad, mdis=EdiMaxD, vcheck=vcheck, device=device)
     else:
-      myNNEDI3 = core.znedi3.nnedi3 if hasattr(core, 'znedi3') else core.nnedi3.nnedi3  
-      myEEDI3 = core.eedi3m.EEDI3 if hasattr(core, 'eedi3m') else core.eedi3.eedi3
-      nnedi3_args = dict(nsize=NNSize, nns=NNeurons, qual=EdiQual, pscrn=pscrn, int16_prescreener=int16_prescreener, int16_predictor=int16_predictor, exp=exp)
-    eedi3_args = dict(alpha=alpha, beta=beta, gamma=gamma, nrad=nrad, mdis=EdiMaxD, vcheck=vcheck)              
-  
+        myNNEDI3 = core.znedi3.nnedi3 if hasattr(core, 'znedi3') else core.nnedi3.nnedi3
+        myEEDI3 = core.eedi3m.EEDI3 if hasattr(core, 'eedi3m') else core.eedi3.eedi3
+        nnedi3_args = dict(nsize=NNSize, nns=NNeurons, qual=EdiQual, pscrn=pscrn, int16_prescreener=int16_prescreener, int16_predictor=int16_predictor, exp=exp)
+        eedi3_args = dict(alpha=alpha, beta=beta, gamma=gamma, nrad=nrad, mdis=EdiMaxD, vcheck=vcheck)
+
     isGray = (Input.format.color_family == vs.GRAY)
     if isGray:
         ChromaEdi = ''
@@ -1543,7 +1526,7 @@ def QTGMC_MakeLossless(Input, Source, InputType, TFF):
 # the source without introducing shimmer. All other arguments defined in main script
 def QTGMC_ApplySourceMatch(Deinterlace, InputType, Source, bVec1, fVec1, bVec2, fVec2, SubPel, SubPelInterp, hpad, vpad, ThSAD1, ThSCD1, ThSCD2, SourceMatch,
                            MatchTR1, MatchEdi, MatchNNSize, MatchNNeurons, MatchEdiQual, MatchEdiMaxD, MatchTR2, MatchEdi2, MatchNNSize2, MatchNNeurons2, MatchEdiQual2, MatchEdiMaxD2, MatchEnhance,
-                           pscrn, int16_prescreener, int16_predictor, exp, alpha, beta, gamma, nrad, vcheck, TFF, opencl):
+                           pscrn, int16_prescreener, int16_predictor, exp, alpha, beta, gamma, nrad, vcheck, TFF, opencl, device):
     # Basic source-match. Find difference between source clip & equivalent fields in interpolated/smoothed clip (called the "error" in formula below). Ideally
     # there should be no difference, we want the fields in the output to be as close as possible to the source whilst remaining shimmer-free. So adjust the
     # *source* in such a way that smoothing it will give a result closer to the unadjusted source. Then rerun the interpolation (edi) and binomial smooth with
@@ -1564,7 +1547,7 @@ def QTGMC_ApplySourceMatch(Deinterlace, InputType, Source, bVec1, fVec1, bVec2, 
         match1Update = core.std.Expr([Source, match1Clip], ['x {} * y {} * -'.format(errorAdjust1 + 1, errorAdjust1)])
     if SourceMatch > 0:
         match1Edi = QTGMC_Interpolate(match1Update, InputType, MatchEdi, MatchNNSize, MatchNNeurons, MatchEdiQual, MatchEdiMaxD, pscrn, int16_prescreener, int16_predictor, exp, alpha, beta, gamma,
-                                      nrad, vcheck, TFF=TFF, opencl=opencl)
+                                      nrad, vcheck, TFF=TFF, opencl=opencl, device=device)
         if MatchTR1 > 0:
             match1Super = core.mv.Super(match1Edi, pel=SubPel, sharp=SubPelInterp, levels=1, hpad=hpad, vpad=vpad)
             match1Degrain1 = core.mv.Degrain1(match1Edi, match1Super, bVec1, fVec1, thsad=ThSAD1, thscd1=ThSCD1, thscd2=ThSCD2)
@@ -1599,7 +1582,7 @@ def QTGMC_ApplySourceMatch(Deinterlace, InputType, Source, bVec1, fVec1, bVec2, 
     if SourceMatch > 1:
         match2Diff = core.std.MakeDiff(Source, match2Clip)
         match2Edi = QTGMC_Interpolate(match2Diff, InputType, MatchEdi2, MatchNNSize2, MatchNNeurons2, MatchEdiQual2, MatchEdiMaxD2, pscrn, int16_prescreener, int16_predictor, exp, alpha, beta, gamma,
-                                      nrad, vcheck, TFF=TFF, opencl=opencl)
+                                      nrad, vcheck, TFF=TFF, opencl=opencl, device=device)
         if MatchTR2 > 0:
             match2Super = core.mv.Super(match2Edi, pel=SubPel, sharp=SubPelInterp, levels=1, hpad=hpad, vpad=vpad)
             match2Degrain1 = core.mv.Degrain1(match2Edi, match2Super, bVec1, fVec1, thsad=ThSAD1, thscd1=ThSCD1, thscd2=ThSCD2)
@@ -1643,12 +1626,14 @@ def QTGMC_ApplySourceMatch(Deinterlace, InputType, Source, bVec1, fVec1, bVec2, 
 def srestore(source, frate=None, omode=6, speed=None, mode=2, thresh=16, dclip=None):
     if not isinstance(source, vs.VideoNode):
         raise TypeError('srestore: This is not a clip')
-    if source.format.color_family == vs.GRAY:
-        raise TypeError('srestore: Gray color family is not supported')
+    if source.format.color_family != vs.YUV:
+        raise TypeError('srestore: Only YUV color family supported')
     if dclip is None:
         dclip = source
     elif not isinstance(dclip, vs.VideoNode):
-        raise TypeError('srestore: dclip is not a clip')
+        raise TypeError("srestore: 'dclip' is not a clip")
+    elif dclip.format.color_family != vs.YUV:
+        raise TypeError('srestore: Only YUV color family supported')
 
     neutral = 1 << (source.format.bits_per_sample - 1)
     peak = (1 << source.format.bits_per_sample) - 1
@@ -1687,7 +1672,7 @@ def srestore(source, frate=None, omode=6, speed=None, mode=2, thresh=16, dclip=N
         mec = core.std.Merge(core.std.Merge(source, core.std.Trim(source, 1), weight=[0, 0.5]), core.std.Trim(source, 1), weight=[0.5, 0])
 
     if dclip.format.id != vs.YUV420P8:
-        dclip = core.resize.Bicubic(dclip, format=vs.YUV420P8, matrix_s='709')
+        dclip = core.resize.Bicubic(dclip, format=vs.YUV420P8)
     dclip = core.resize.Point(dclip,
                               dclip.width if srad == 4 else int(dclip.width / 2 / srad + 4) * 4,
                               dclip.height if srad == 4 else int(dclip.height / 2 / srad + 4) * 4).std.Trim(2)
@@ -1705,7 +1690,7 @@ def srestore(source, frate=None, omode=6, speed=None, mode=2, thresh=16, dclip=N
         bclp = core.std.Expr([diff, core.std.Trim(diff, 1)], [expr1]).resize.Bilinear(bsize, bsize)
     else:
         bclp = core.std.Expr([core.std.Trim(diff, 1), core.std.MergeDiff(diff, core.std.Trim(diff, 2))], [expr2]).resize.Bilinear(bsize, bsize)
-    dclp = core.std.Expr([core.std.Trim(diff, 1)], ['x 128 - abs 1.1 pow 1 -']).resize.Bilinear(bsize, bsize)
+    dclp = core.std.Trim(diff, 1).std.Lut(function=lambda x: max(math.floor(abs(x - 128) ** 1.1 - 1 + 0.5), 0)).resize.Bilinear(bsize, bsize)
 
     ###### postprocessing ######
     if bom:
@@ -1970,7 +1955,7 @@ def srestore(source, frate=None, omode=6, speed=None, mode=2, thresh=16, dclip=N
 
 
 # Version 1.1
-def ivtc_txt60mc(src, frame_ref, srcbob=False, draft=False, tff=None, opencl=False):
+def ivtc_txt60mc(src, frame_ref, srcbob=False, draft=False, tff=None, opencl=False, device=None):
     if not isinstance(src, vs.VideoNode):
         raise TypeError('ivtc_txt60mc: This is not a clip')
     if not (srcbob or isinstance(tff, bool)):
@@ -1988,7 +1973,7 @@ def ivtc_txt60mc(src, frame_ref, srcbob=False, draft=False, tff=None, opencl=Fal
     elif draft:
         last = Bob(src, tff=tff)
     else:
-        last = QTGMC(src, TR0=1, TR1=1, TR2=1, SourceMatch=3, Lossless=2, TFF=tff, opencl=opencl)
+        last = QTGMC(src, TR0=1, TR1=1, TR2=1, SourceMatch=3, Lossless=2, TFF=tff, opencl=opencl, device=device)
 
     if invpos > 1:
         clean = core.std.AssumeFPS(core.std.Trim(last, 0, 0) + core.std.SelectEvery(last, 5, [6 - invpos]), fpsnum=6000, fpsden=1001)
@@ -2224,7 +2209,7 @@ def Vinverse2(clp, sstr=2.7, amnt=255, chroma=True):
 ###################
 def LUTDeCrawl(input, ythresh=10, cthresh=15, maxdiff=50, scnchg=25, usemaxdiff=True, mask=False):
     if not isinstance(input, vs.VideoNode) or input.format.color_family not in [vs.YUV, vs.YCOCG] or input.format.bits_per_sample > 10:
-        raise TypeError('LUTDeCrawl: This is not an 8-10 bits YUV or YCoCg clip')
+        raise TypeError('LUTDeCrawl: This is not an 8-10 bit YUV or YCoCg clip')
 
     shift = input.format.bits_per_sample - 8
     peak = (1 << input.format.bits_per_sample) - 1
@@ -2276,9 +2261,7 @@ def LUTDeCrawl(input, ythresh=10, cthresh=15, maxdiff=50, scnchg=25, usemaxdiff=
         else:
             return clips[1]
 
-    input = core.std.DuplicateFrames(input, [0, input.num_frames - 1])
     input = SCDetect(input, scnchg / 255)
-    input = core.std.DeleteFrames(input, [0, input.num_frames - 1])
     output = core.std.FrameEval(output, eval=functools.partial(YDifferenceFromPrevious, clips=[input, output]), prop_src=input)
     output = core.std.FrameEval(output, eval=functools.partial(YDifferenceToNext, clips=[input, output]), prop_src=input)
 
@@ -2348,7 +2331,7 @@ def LUTDeCrawl(input, ythresh=10, cthresh=15, maxdiff=50, scnchg=25, usemaxdiff=
 ###################
 def LUTDeRainbow(input, cthresh=10, ythresh=10, y=True, linkUV=True, mask=False):
     if not isinstance(input, vs.VideoNode) or input.format.color_family not in [vs.YUV, vs.YCOCG] or input.format.bits_per_sample > 10:
-        raise TypeError('LUTDeRainbow: This is not an 8-10 bits YUV or YCoCg clip')
+        raise TypeError('LUTDeRainbow: This is not an 8-10 bit YUV or YCoCg clip')
 
     shift = input.format.bits_per_sample - 8
     peak = (1 << input.format.bits_per_sample) - 1
@@ -2449,8 +2432,7 @@ def GSMC(input, p=None, Lmask=None, nrmode=None, radius=1, adapt=-1, rep=13, pla
     if limitc is not None:
         limitc = scale(limitc, peak)
 
-    isGray = (input.format.color_family == vs.GRAY)
-    if isGray:
+    if input.format.color_family == vs.GRAY:
         planes = [0]
     if isinstance(planes, int):
         planes = [planes]
@@ -2506,7 +2488,7 @@ def GSMC(input, p=None, Lmask=None, nrmode=None, radius=1, adapt=-1, rep=13, pla
     # Post-Process: Luma-Adaptive Mask Merging & Repairing
     stable = core.std.MergeDiff(pre_nr, dif_sb, planes=planes)
     if rep > 0:
-        stable = core.rgvs.Repair(stable, input, [rep] if isGray else [rep if Y else 0, rep if U else 0, rep if V else 0])
+        stable = core.rgvs.Repair(stable, input, [rep if i in planes else 0 for i in range(input.format.num_planes)])
 
     if Lmask is not None:
         return core.std.MaskedMerge(input, stable, Lmask, planes=planes)
@@ -2536,17 +2518,17 @@ def GSMC(input, p=None, Lmask=None, nrmode=None, radius=1, adapt=-1, rep=13, pla
 ###
 ###
 ###
-### /!\ Needed filters: MVTools, FFT3DFilter, TTempSmooth, RGVS, Deblock, DCTFilter.
+### /!\ Needed filters: MVTools, DFTTest, FFT3DFilter, TTempSmooth, RGVS, Deblock, DCTFilter
 ### -------------------
 ###
 ###
 ###
-### USAGE: MCTemporalDenoise(i, radius, sigma, twopass, useTTmpSm, limit, limit2, post, chroma,
-###                          deblock, useQED, quant1, quant2, 
-###                          stabilize, maxr, TTstr,  
+### USAGE: MCTemporalDenoise(i, radius, pfMode, sigma, twopass, useTTmpSm, limit, limit2, post, chroma, refine,
+###                          deblock, useQED, quant1, quant2,
+###                          stabilize, maxr, TTstr,
 ###                          bwbh, owoh, blksize, overlap,
 ###                          bt, ncpu,
-###                          thSAD, thSAD2, thSCD1, thSCD2,
+###                          thSAD, thSADC, thSAD2, thSADC2, thSCD1, thSCD2,
 ###                          truemotion, MVglobal, pel, pelsearch, search, searchparam, MVsharp, DCT,
 ###                          p, settings)
 ###
@@ -2557,16 +2539,18 @@ def GSMC(input, p=None, Lmask=None, nrmode=None, radius=1, adapt=-1, rep=13, pla
 ###
 ### +---------+
 ### | DENOISE |
-### +---------+-----------------------------------------------------------------------------------------------+
-### | radius     : Temporal radius [1...6]                                                                    |
-### | sigma      : FFT3D sigma for the pre-filtering clip [0=no pre-filtering,1...]                           |
-### | twopass    : Do the denoising job in 2 stages (stronger but very slow)                                  |
-### | useTTmpSm  : Use MDegrain (faster) or MCompensate+TTempsmooth (stronger)                                |
-### | limit      : Limit the effect of the first denoising [-1=auto,0=off,1...255]                            |
-### | limit2     : Limit the effect of the second denoising (if twopass=true) [-1=auto,0=off,1...255]         |
-### | post       : Sigma value for post-denoising with FFT3D [0=off,...]                                      |
-### | chroma     : Process or not the chroma plane                                                            |
-### +---------------------------------------------------------------------------------------------------------+
+### +---------+--------------------------------------------------------------------------------------+
+### | radius    : Temporal radius [1...6]                                                            |
+### | pfMode    : Pre-filter mode [-1=off,0=FFT3DFilter,1=MinBlur(1),2=MinBlur(2),3=DFTTest]         |
+### | sigma     : FFT3D sigma for the pre-filtering clip (if pfMode=0)                               |
+### | twopass   : Do the denoising job in 2 stages (stronger but very slow)                          |
+### | useTTmpSm : Use MDegrain (faster) or MCompensate+TTempSmooth (stronger)                        |
+### | limit     : Limit the effect of the first denoising [-1=auto,0=off,1...255]                    |
+### | limit2    : Limit the effect of the second denoising (if twopass=true) [-1=auto,0=off,1...255] |
+### | post      : Sigma value for post-denoising with FFT3D [0=off,...]                              |
+### | chroma    : Process or not the chroma plane                                                    |
+### | refine    : Refine and recalculate motion data of previously estimated motion vectors          |
+### +------------------------------------------------------------------------------------------------+
 ###
 ###
 ### +---------+
@@ -2604,20 +2588,22 @@ def GSMC(input, p=None, Lmask=None, nrmode=None, radius=1, adapt=-1, rep=13, pla
 ###
 ### +-------+
 ### | FFT3D |
-### +-------+-------------------------------+
-### | bt        : FFT3D block temporal size |
-### | ncpu      : FFT3DFilter ncpu          |
-### +---------------------------------------+
+### +-------+--------------------------+
+### | bt   : FFT3D block temporal size |
+### | ncpu : FFT3DFilter ncpu          |
+### +----------------------------------+
 ###
 ###
 ### +---------+
 ### | MVTOOLS |
-### +---------+----------------------------------------------------+
-### | thSAD  : MVTools thSAD for the first pass                    |
-### | thSAD2 : MVTools thSAD for the second pass (if twopass=true) |
-### | thSCD1 : MVTools thSCD1                                      |
-### | thSCD2 : MVTools thSCD2                                      |
-### +-----------------------------------+--------------------------+
+### +---------+------------------------------------------------------+
+### | thSAD   : MVTools thSAD for the first pass                     |
+### | thSADC  : MVTools thSADC for the first pass                    |
+### | thSAD2  : MVTools thSAD for the second pass (if twopass=true)  |
+### | thSADC2 : MVTools thSADC for the second pass (if twopass=true) |
+### | thSCD1  : MVTools thSCD1                                       |
+### | thSCD2  : MVTools thSCD2                                       |
+### +-----------------------------------+----------------------------+
 ### | truemotion  : MVTools truemotion  |
 ### | MVglobal    : MVTools global      |
 ### | pel         : MVTools pel         |
@@ -2646,54 +2632,57 @@ def GSMC(input, p=None, Lmask=None, nrmode=None, radius=1, adapt=-1, rep=13, pla
 ### DEFAULTS:
 ### ---------
 ###
-### +-------------+-----------------------------+-----------------------------+-----------------------------+-----------------------------+-----------------------------+
-### | SETTINGS    |      VERY LOW               |      LOW                    |      MEDIUM                 |      HIGH                   |      VERY HIGH              |
-### |-------------+-----------------------------+-----------------------------+-----------------------------+-----------------------------+-----------------------------|
-### | radius      |      1                      |      2                      |      3                      |      2                      |      3                      |
-### | sigma       |      2                      |      4                      |      8                      |      12                     |      16                     |
-### | twopass     |      false                  |      false                  |      false                  |      true                   |      true                   |
-### | useTTmpSm   |      false                  |      false                  |      false                  |      false                  |      false                  |
-### | limit       |      -1                     |      -1                     |      -1                     |      -1                     |      0                      |
-### | limit2      |      -1                     |      -1                     |      -1                     |      0                      |      0                      |
-### | post        |      0                      |      0                      |      0                      |      0                      |      0                      |
-### | chroma      |      false                  |      false                  |      true                   |      true                   |      true                   |
-### |-------------+-----------------------------+-----------------------------+-----------------------------+-----------------------------+-----------------------------|
-### | deblock     |      false                  |      false                  |      false                  |      false                  |      false                  |
-### | useQED      |      true                   |      true                   |      true                   |      false                  |      false                  |
-### | quant1      |      10                     |      20                     |      30                     |      30                     |      40                     |
-### | quant2      |      20                     |      40                     |      60                     |      60                     |      80                     |
-### |-------------+-----------------------------+-----------------------------+-----------------------------+-----------------------------+-----------------------------|
-### | stabilize   |      false                  |      false                  |      false                  |      true                   |      true                   |
-### | maxr        |      1                      |      1                      |      2                      |      2                      |      2                      |
-### | TTstr       |      1                      |      1                      |      1                      |      2                      |      2                      |
-### |-------------+-----------------------------+-----------------------------+-----------------------------+-----------------------------+-----------------------------|
-### | bwbh        |      HD?16:8                |      HD?16:8                |      HD?16:8                |      HD?16:8                |      HD?16:8                |
-### | owoh        |      HD? 8:4                |      HD? 8:4                |      HD? 8:4                |      HD? 8:4                |      HD? 8:4                |
-### | blksize     |      HD?16:8                |      HD?16:8                |      HD?16:8                |      HD?16:8                |      HD?16:8                |
-### | overlap     |      HD? 8:4                |      HD? 8:4                |      HD? 8:4                |      HD? 8:4                |      HD? 8:4                |
-### |-------------+-----------------------------+-----------------------------+-----------------------------+-----------------------------+-----------------------------|
-### | bt          |      1                      |      3                      |      3                      |      3                      |      4                      |
-### | ncpu        |      1                      |      1                      |      1                      |      1                      |      1                      |
-### |-------------+-----------------------------+-----------------------------+-----------------------------+-----------------------------+-----------------------------|
-### | thSAD       |      200                    |      300                    |      400                    |      500                    |      600                    |
-### | thSAD2      |      200                    |      300                    |      400                    |      500                    |      600                    |
-### | thSCD1      |      200                    |      300                    |      400                    |      500                    |      600                    |
-### | thSCD2      |      90                     |      100                    |      100                    |      130                    |      130                    |
-### |-------------+-----------------------------+-----------------------------+-----------------------------+-----------------------------+-----------------------------|
-### | truemotion  |      false                  |      false                  |      false                  |      false                  |      false                  |
-### | MVglobal    |      true                   |      true                   |      true                   |      true                   |      true                   |
-### | pel         |      1                      |      2                      |      2                      |      2                      |      2                      |
-### | pelsearch   |      1                      |      2                      |      2                      |      2                      |      2                      |
-### | search      |      2                      |      2                      |      2                      |      2                      |      2                      |
-### | searchparam |      2                      |      2                      |      2                      |      2                      |      2                      |
-### | MVsharp     |      2                      |      2                      |      2                      |      1                      |      0                      |
-### | DCT         |      0                      |      0                      |      0                      |      0                      |      0                      |
-### +-------------+-----------------------------+-----------------------------+-----------------------------+-----------------------------+-----------------------------+
+### +-------------+----------------------+----------------------+----------------------+----------------------+----------------------+
+### | SETTINGS    |      VERY LOW        |      LOW             |      MEDIUM          |      HIGH            |      VERY HIGH       |
+### |-------------+----------------------+----------------------+----------------------+----------------------+----------------------|
+### | radius      |      1               |      2               |      3               |      2               |      3               |
+### | pfMode      |      3               |      3               |      3               |      3               |      3               |
+### | sigma       |      2               |      4               |      8               |      12              |      16              |
+### | twopass     |      false           |      false           |      false           |      true            |      true            |
+### | useTTmpSm   |      false           |      false           |      false           |      false           |      false           |
+### | limit       |      -1              |      -1              |      -1              |      -1              |      0               |
+### | limit2      |      -1              |      -1              |      -1              |      0               |      0               |
+### | post        |      0               |      0               |      0               |      0               |      0               |
+### | chroma      |      false           |      false           |      true            |      true            |      true            |
+### |-------------+----------------------+----------------------+----------------------+----------------------+----------------------|
+### | deblock     |      false           |      false           |      false           |      false           |      false           |
+### | useQED      |      true            |      true            |      true            |      false           |      false           |
+### | quant1      |      10              |      20              |      30              |      30              |      40              |
+### | quant2      |      20              |      40              |      60              |      60              |      80              |
+### |-------------+----------------------+----------------------+----------------------+----------------------+----------------------|
+### | stabilize   |      false           |      false           |      false           |      true            |      true            |
+### | maxr        |      1               |      1               |      2               |      2               |      2               |
+### | TTstr       |      1               |      1               |      1               |      2               |      2               |
+### |-------------+----------------------+----------------------+----------------------+----------------------+----------------------|
+### | bwbh        |      HD?16:8         |      HD?16:8         |      HD?16:8         |      HD?16:8         |      HD?16:8         |
+### | owoh        |      HD? 8:4         |      HD? 8:4         |      HD? 8:4         |      HD? 8:4         |      HD? 8:4         |
+### | blksize     |      HD?16:8         |      HD?16:8         |      HD?16:8         |      HD?16:8         |      HD?16:8         |
+### | overlap     |      HD? 8:4         |      HD? 8:4         |      HD? 8:4         |      HD? 8:4         |      HD? 8:4         |
+### |-------------+----------------------+----------------------+----------------------+----------------------+----------------------|
+### | bt          |      1               |      3               |      3               |      3               |      4               |
+### | ncpu        |      1               |      1               |      1               |      1               |      1               |
+### |-------------+----------------------+----------------------+----------------------+----------------------+----------------------|
+### | thSAD       |      200             |      300             |      400             |      500             |      600             |
+### | thSADC      |      thSAD/2         |      thSAD/2         |      thSAD/2         |      thSAD/2         |      thSAD/2         |
+### | thSAD2      |      200             |      300             |      400             |      500             |      600             |
+### | thSADC2     |      thSAD2/2        |      thSAD2/2        |      thSAD2/2        |      thSAD2/2        |      thSAD2/2        |
+### | thSCD1      |      200             |      300             |      400             |      500             |      600             |
+### | thSCD2      |      90              |      100             |      100             |      130             |      130             |
+### |-------------+----------------------+----------------------+----------------------+----------------------+----------------------|
+### | truemotion  |      false           |      false           |      false           |      false           |      false           |
+### | MVglobal    |      true            |      true            |      true            |      true            |      true            |
+### | pel         |      1               |      2               |      2               |      2               |      2               |
+### | pelsearch   |      1               |      2               |      2               |      2               |      2               |
+### | search      |      4               |      4               |      4               |      4               |      4               |
+### | searchparam |      2               |      2               |      2               |      2               |      2               |
+### | MVsharp     |      2               |      2               |      2               |      1               |      0               |
+### | DCT         |      0               |      0               |      0               |      0               |      0               |
+### +-------------+----------------------+----------------------+----------------------+----------------------+----------------------+
 ###
 ####################################################################################################################################
-def MCTemporalDenoise(i, radius=None, sigma=None, twopass=None, useTTmpSm=False, limit=None, limit2=None, post=0, chroma=None, deblock=False, useQED=None, quant1=None, quant2=None,
-                      stabilize=None, maxr=None, TTstr=None, bwbh=None, owoh=None, blksize=None, overlap=None, bt=None, ncpu=1, thSAD=None, thSAD2=None, thSCD1=None, thSCD2=None,
-                      truemotion=False, MVglobal=True, pel=None, pelsearch=None, search=2, searchparam=2, MVsharp=None, DCT=0, p=None, settings='low'):
+def MCTemporalDenoise(i, radius=None, pfMode=3, sigma=None, twopass=None, useTTmpSm=False, limit=None, limit2=None, post=0, chroma=None, refine=False, deblock=False, useQED=None, quant1=None,
+                      quant2=None, stabilize=None, maxr=None, TTstr=None, bwbh=None, owoh=None, blksize=None, overlap=None, bt=None, ncpu=1, thSAD=None, thSADC=None, thSAD2=None, thSADC2=None,
+                      thSCD1=None, thSCD2=None, truemotion=False, MVglobal=True, pel=None, pelsearch=None, search=4, searchparam=2, MVsharp=None, DCT=0, p=None, settings='low'):
     if not isinstance(i, vs.VideoNode):
         raise TypeError('MCTemporalDenoise: This is not a clip')
     if p is not None and (not isinstance(p, vs.VideoNode) or p.format.id != i.format.id):
@@ -2748,8 +2737,12 @@ def MCTemporalDenoise(i, radius=None, sigma=None, twopass=None, useTTmpSm=False,
         bt = [1, 3, 3, 3, 4][settings_num]
     if thSAD is None:
         thSAD = [200, 300, 400, 500, 600][settings_num]
+    if thSADC is None:
+        thSADC = thSAD / 2
     if thSAD2 is None:
         thSAD2 = [200, 300, 400, 500, 600][settings_num]
+    if thSADC2 is None:
+        thSADC2 = thSAD2 / 2
     if thSCD1 is None:
         thSCD1 = [200, 300, 400, 500, 600][settings_num]
     if thSCD2 is None:
@@ -2783,10 +2776,17 @@ def MCTemporalDenoise(i, radius=None, sigma=None, twopass=None, useTTmpSm=False,
     fft3d_args = dict(planes=planes, bw=bwbh, bh=bwbh, bt=bt, ow=owoh, oh=owoh, ncpu=ncpu)
     if p is not None:
         p = core.resize.Point(p, **pointresize_args)
-    elif sigma <= 0:
+    elif pfMode <= -1:
         p = i
-    else:
+    elif pfMode == 0:
         p = core.fft3dfilter.FFT3DFilter(i, sigma=sigma * 0.8, sigma2=sigma * 0.6, sigma3=sigma * 0.4, sigma4=sigma * 0.2, **fft3d_args)
+    elif pfMode >= 3:
+        p = core.dfttest.DFTTest(i, tbsize=1, sstring='0.0:4.0 0.2:9.0 1.0:15.0', planes=planes)
+    else:
+        p = MinBlur(i, pfMode, planes=planes)
+
+    pD = core.std.MakeDiff(i, p, planes=planes)
+    p = DitherLumaRebuild(p, s0=1, chroma=chroma)
 
     ### DEBLOCKING
     crop_args = dict(left=xf / 2, right=xf / 2, top=yf / 2, bottom=yf / 2)
@@ -2799,50 +2799,55 @@ def MCTemporalDenoise(i, radius=None, sigma=None, twopass=None, useTTmpSm=False,
 
     ### PREPARING
     super_args = dict(hpad=0, vpad=0, pel=pel, chroma=chroma, sharp=MVsharp)
-    pMVS = DitherLumaRebuild(p, s0=1, chroma=chroma).mv.Super(**super_args)
-    dMVS = core.mv.Super(d, levels=1, **super_args)
+    pMVS = core.mv.Super(p, rfilter=4 if refine else 2, **super_args)
+    if refine:
+        rMVS = core.mv.Super(p, levels=1, **super_args)
 
     analyse_args = dict(blksize=blksize, search=search, searchparam=searchparam, pelsearch=pelsearch, chroma=chroma, truemotion=truemotion, _global=MVglobal, overlap=overlap, dct=DCT)
+    recalculate_args = dict(thsad=thSAD / 2, blksize=max(blksize / 2, 4), search=search, chroma=chroma, truemotion=truemotion, overlap=max(overlap / 2, 2), dct=DCT)
     f1v = core.mv.Analyse(pMVS, isb=False, delta=1, **analyse_args)
     b1v = core.mv.Analyse(pMVS, isb=True, delta=1, **analyse_args)
+    if refine:
+        f1v = core.mv.Recalculate(rMVS, f1v, **recalculate_args)
+        b1v = core.mv.Recalculate(rMVS, b1v, **recalculate_args)
     if radius > 1:
         f2v = core.mv.Analyse(pMVS, isb=False, delta=2, **analyse_args)
         b2v = core.mv.Analyse(pMVS, isb=True, delta=2, **analyse_args)
+        if refine:
+            f2v = core.mv.Recalculate(rMVS, f2v, **recalculate_args)
+            b2v = core.mv.Recalculate(rMVS, b2v, **recalculate_args)
     if radius > 2:
         f3v = core.mv.Analyse(pMVS, isb=False, delta=3, **analyse_args)
         b3v = core.mv.Analyse(pMVS, isb=True, delta=3, **analyse_args)
+        if refine:
+            f3v = core.mv.Recalculate(rMVS, f3v, **recalculate_args)
+            b3v = core.mv.Recalculate(rMVS, b3v, **recalculate_args)
     if radius > 3:
         f4v = core.mv.Analyse(pMVS, isb=False, delta=4, **analyse_args)
         b4v = core.mv.Analyse(pMVS, isb=True, delta=4, **analyse_args)
+        if refine:
+            f4v = core.mv.Recalculate(rMVS, f4v, **recalculate_args)
+            b4v = core.mv.Recalculate(rMVS, b4v, **recalculate_args)
     if radius > 4:
         f5v = core.mv.Analyse(pMVS, isb=False, delta=5, **analyse_args)
         b5v = core.mv.Analyse(pMVS, isb=True, delta=5, **analyse_args)
+        if refine:
+            f5v = core.mv.Recalculate(rMVS, f5v, **recalculate_args)
+            b5v = core.mv.Recalculate(rMVS, b5v, **recalculate_args)
     if radius > 5:
         f6v = core.mv.Analyse(pMVS, isb=False, delta=6, **analyse_args)
         b6v = core.mv.Analyse(pMVS, isb=True, delta=6, **analyse_args)
-
-    if useTTmpSm:
-        compensate_args = dict(thsad=thSAD, thscd1=thSCD1, thscd2=thSCD2)
-        f1c = core.mv.Compensate(d, dMVS, f1v, **compensate_args)
-        b1c = core.mv.Compensate(d, dMVS, b1v, **compensate_args)
+        if refine:
+            f6v = core.mv.Recalculate(rMVS, f6v, **recalculate_args)
+            b6v = core.mv.Recalculate(rMVS, b6v, **recalculate_args)
 
     # if useTTmpSm or stabilize:
         # mask_args = dict(ml=thSAD, gamma=0.999, kind=1, ysc=255)
         # SAD_f1m = core.mv.Mask(d, f1v, **mask_args)
         # SAD_b1m = core.mv.Mask(d, b1v, **mask_args)
 
-    def MCTD_MVD(i, iMVS, thSAD):
-        degrain_args = dict(thsad=thSAD, plane=4 if chroma else 0, thscd1=thSCD1, thscd2=thSCD2)
-
-        if radius == 4:
-            mv12 = core.mv.Degrain2(i, iMVS, b1v, f1v, b2v, f2v, **degrain_args)
-            mv34 = core.mv.Degrain2(i, iMVS, b3v, f3v, b4v, f4v, **degrain_args)
-        if radius == 5:
-            mv45 = core.mv.Degrain2(i, iMVS, b4v, f4v, b5v, f5v, **degrain_args)
-        if radius >= 5:
-            mv123 = core.mv.Degrain3(i, iMVS, b1v, f1v, b2v, f2v, b3v, f3v, **degrain_args)
-        if radius >= 6:
-            mv456 = core.mv.Degrain3(i, iMVS, b4v, f4v, b5v, f5v, b6v, f6v, **degrain_args)
+    def MCTD_MVD(i, iMVS, thSAD, thSADC):
+        degrain_args = dict(thsad=thSAD, thsadc=thSADC, plane=4 if chroma else 0, thscd1=thSCD1, thscd2=thSCD2)
 
         if radius <= 1:
             sm = core.mv.Degrain1(i, iMVS, b1v, f1v, **degrain_args)
@@ -2851,15 +2856,25 @@ def MCTemporalDenoise(i, radius=None, sigma=None, twopass=None, useTTmpSm=False,
         elif radius == 3:
             sm = core.mv.Degrain3(i, iMVS, b1v, f1v, b2v, f2v, b3v, f3v, **degrain_args)
         elif radius == 4:
+            mv12 = core.mv.Degrain2(i, iMVS, b1v, f1v, b2v, f2v, **degrain_args)
+            mv34 = core.mv.Degrain2(i, iMVS, b3v, f3v, b4v, f4v, **degrain_args)
             sm = core.std.Merge(mv12, mv34, weight=[0.4444])
         elif radius == 5:
+            mv123 = core.mv.Degrain3(i, iMVS, b1v, f1v, b2v, f2v, b3v, f3v, **degrain_args)
+            mv45 = core.mv.Degrain2(i, iMVS, b4v, f4v, b5v, f5v, **degrain_args)
             sm = core.std.Merge(mv123, mv45, weight=[0.4545])
         else:
+            mv123 = core.mv.Degrain3(i, iMVS, b1v, f1v, b2v, f2v, b3v, f3v, **degrain_args)
+            mv456 = core.mv.Degrain3(i, iMVS, b4v, f4v, b5v, f5v, b6v, f6v, **degrain_args)
             sm = core.std.Merge(mv123, mv456, weight=[0.4615])
 
         return sm
 
     def MCTD_TTSM(i, iMVS, thSAD):
+        compensate_args = dict(thsad=thSAD, thscd1=thSCD1, thscd2=thSCD2)
+
+        f1c = core.mv.Compensate(i, iMVS, f1v, **compensate_args)
+        b1c = core.mv.Compensate(i, iMVS, b1v, **compensate_args)
         if radius > 1:
             f2c = core.mv.Compensate(i, iMVS, f2v, **compensate_args)
             b2c = core.mv.Compensate(i, iMVS, b2v, **compensate_args)
@@ -2911,8 +2926,8 @@ def MCTemporalDenoise(i, radius=None, sigma=None, twopass=None, useTTmpSm=False,
         return core.std.SelectEvery(sm, radius * 2 + 1, [radius])
 
     ### DENOISING: FIRST PASS
-    sm = MCTD_TTSM(d, dMVS, thSAD) if useTTmpSm else MCTD_MVD(d, dMVS, thSAD)
-    pD = core.std.MakeDiff(i, p, planes=planes)
+    dMVS = core.mv.Super(d, levels=1, **super_args)
+    sm = MCTD_TTSM(d, dMVS, thSAD) if useTTmpSm else MCTD_MVD(d, dMVS, thSAD, thSADC)
 
     if limit <= -1:
         smD = core.std.MakeDiff(i, sm, planes=planes)
@@ -2928,7 +2943,7 @@ def MCTemporalDenoise(i, radius=None, sigma=None, twopass=None, useTTmpSm=False,
     ### DENOISING: SECOND PASS
     if twopass:
         smLMVS = core.mv.Super(smL, levels=1, **super_args)
-        sm = MCTD_TTSM(smL, smLMVS, thSAD2) if useTTmpSm else MCTD_MVD(smL, smLMVS, thSAD2)
+        sm = MCTD_TTSM(smL, smLMVS, thSAD2) if useTTmpSm else MCTD_MVD(smL, smLMVS, thSAD2, thSADC2)
 
         if limit2 <= -1:
             smD = core.std.MakeDiff(i, sm, planes=planes)
@@ -2949,12 +2964,12 @@ def MCTemporalDenoise(i, radius=None, sigma=None, twopass=None, useTTmpSm=False,
 
     ### STABILIZING
     if stabilize:
-        # mM = core.std.Merge(SAD_f1m, SAD_b1m, weight=[0.5] if isGray else [0.5, 0]).std.Lut(planes=[0], function=lambda x: min(math.floor(x ** 1.6 + 0.5), peak))
-        mE = core.std.Prewitt(smP, planes=[0]).std.Lut(planes=[0], function=lambda x: min(math.floor(x ** 1.8 + 0.5), peak)).std.Median(planes=[0]).std.Inflate(planes=[0])
-        # mF = core.std.Expr([mM, mE], ['x y max'] if isGray else ['x y max', '']).std.Convolution(matrix=[1, 1, 1, 1, 1, 1, 1, 1, 1], planes=[0])
-        mF = core.std.Convolution(mE, matrix=[1, 1, 1, 1, 1, 1, 1, 1, 1], planes=[0])
+        # mM = core.std.Merge(mvf.GetPlane(SAD_f1m, 0), mvf.GetPlane(SAD_b1m, 0), weight=[0.5]).std.Lut(function=lambda x: min(math.floor(x ** 1.6 + 0.5), peak))
+        mE = core.std.Prewitt(mvf.GetPlane(smP, 0)).std.Lut(function=lambda x: min(math.floor(x ** 1.8 + 0.5), peak)).std.Median().std.Inflate()
+        # mF = core.std.Expr([mM, mE], ['x y max']).std.Convolution(matrix=[1, 1, 1, 1, 1, 1, 1, 1, 1])
+        mF = core.std.Convolution(mE, matrix=[1, 1, 1, 1, 1, 1, 1, 1, 1])
         TTc = core.ttmpsm.TTempSmooth(smP, maxr=maxr, mdiff=255, strength=TTstr, planes=planes)
-        smP = core.std.MaskedMerge(TTc, smP, mF, planes=planes, first_plane=True)
+        smP = core.std.MaskedMerge(TTc, smP, mF, planes=planes)
 
     ### OUTPUT
     return core.std.Crop(smP, **crop_args)
@@ -3001,8 +3016,8 @@ def SMDegrain(input, tr=2, thSAD=300, thSADC=None, RefineMotion=False, contrasha
     if thSADC is None:
         thSADC = thSAD2
 
-    GlobalR = Globals == 1
-    GlobalO = Globals >= 3
+    GlobalR = (Globals == 1)
+    GlobalO = (Globals >= 3)
     if1 = CClip is not None
 
     if contrasharp is None:
@@ -3035,7 +3050,7 @@ def SMDegrain(input, tr=2, thSAD=300, thSADC=None, RefineMotion=False, contrasha
         thSCD1 = int((blksize * 2.5) ** 2)
 
     planes = [0, 1, 2] if chroma else [0]
-    plane0 = plane != 0
+    plane0 = (plane != 0)
 
     if hpad is None:
         hpad = blksize
@@ -3120,95 +3135,77 @@ def SMDegrain(input, tr=2, thSAD=300, thSADC=None, RefineMotion=False, contrasha
 
     # Motion vectors search
     global bv6, bv4, bv3, bv2, bv1, fv1, fv2, fv3, fv4, fv6
+    super_args = dict(hpad=hpad, vpad=vpad, pel=pel)
+    analyse_args = dict(blksize=blksize, search=search, chroma=chroma, truemotion=truemotion, _global=MVglobal, overlap=overlap, dct=dct)
+    if RefineMotion:
+        recalculate_args = dict(thsad=halfthSAD, blksize=halfblksize, search=search, chroma=chroma, truemotion=truemotion, overlap=halfoverlap, dct=dct)
+
     if pelclip:
-        super_search = core.mv.Super(pref, pel=pel, chroma=chroma, hpad=hpad, vpad=vpad, pelclip=pclip, rfilter=4)
+        super_search = core.mv.Super(pref, chroma=chroma, rfilter=4, pelclip=pclip, **super_args)
     else:
-        super_search = core.mv.Super(pref, pel=pel, sharp=subpixel, chroma=chroma, hpad=hpad, vpad=vpad, rfilter=4)
+        super_search = core.mv.Super(pref, chroma=chroma, sharp=subpixel, rfilter=4, **super_args)
+
     if not GlobalR:
         if pelclip:
-            super_render = core.mv.Super(inputP, pel=pel, chroma=plane0, hpad=hpad, vpad=vpad, levels=1, pelclip=pclip2)
+            super_render = core.mv.Super(inputP, levels=1, chroma=plane0, pelclip=pclip2, **super_args)
             if RefineMotion:
-                Recalculate = core.mv.Super(pref, pel=pel, chroma=chroma, hpad=hpad, vpad=vpad, levels=1, pelclip=pclip)
+                Recalculate = core.mv.Super(pref, levels=1, chroma=chroma, pelclip=pclip, **super_args)
         else:
-            super_render = core.mv.Super(inputP, pel=pel, sharp=subpixel, chroma=plane0, hpad=hpad, vpad=vpad, levels=1)
+            super_render = core.mv.Super(inputP, levels=1, chroma=plane0, sharp=subpixel, **super_args)
             if RefineMotion:
-                Recalculate = core.mv.Super(pref, pel=pel, sharp=subpixel, chroma=chroma, hpad=hpad, vpad=vpad, levels=1)
+                Recalculate = core.mv.Super(pref, levels=1, chroma=chroma, sharp=subpixel, **super_args)
+
         if interlaced:
             if tr > 2:
-                bv6 = core.mv.Analyse(super_search, isb=True, delta=6, overlap=overlap, blksize=blksize, search=search, chroma=chroma,
-                                      truemotion=truemotion, _global=MVglobal, dct=dct)
-                fv6 = core.mv.Analyse(super_search, isb=False, delta=6, overlap=overlap, blksize=blksize, search=search, chroma=chroma,
-                                      truemotion=truemotion, _global=MVglobal, dct=dct)
+                bv6 = core.mv.Analyse(super_search, isb=True, delta=6, **analyse_args)
+                fv6 = core.mv.Analyse(super_search, isb=False, delta=6, **analyse_args)
                 if RefineMotion:
-                    bv6 = core.mv.Recalculate(Recalculate, bv6, overlap=halfoverlap, blksize=halfblksize, thsad=halfthSAD, chroma=chroma,
-                                              truemotion=truemotion, dct=dct)
-                    fv6 = core.mv.Recalculate(Recalculate, fv6, overlap=halfoverlap, blksize=halfblksize, thsad=halfthSAD, chroma=chroma,
-                                              truemotion=truemotion, dct=dct)
+                    bv6 = core.mv.Recalculate(Recalculate, bv6, **recalculate_args)
+                    fv6 = core.mv.Recalculate(Recalculate, fv6, **recalculate_args)
             if tr > 1:
-                bv4 = core.mv.Analyse(super_search, isb=True, delta=4, overlap=overlap, blksize=blksize, search=search, chroma=chroma,
-                                      truemotion=truemotion, _global=MVglobal, dct=dct)
-                fv4 = core.mv.Analyse(super_search, isb=False, delta=4, overlap=overlap, blksize=blksize, search=search, chroma=chroma,
-                                      truemotion=truemotion, _global=MVglobal, dct=dct)
+                bv4 = core.mv.Analyse(super_search, isb=True, delta=4, **analyse_args)
+                fv4 = core.mv.Analyse(super_search, isb=False, delta=4, **analyse_args)
                 if RefineMotion:
-                    bv4 = core.mv.Recalculate(Recalculate, bv4, overlap=halfoverlap, blksize=halfblksize, thsad=halfthSAD, chroma=chroma,
-                                              truemotion=truemotion, dct=dct)
-                    fv4 = core.mv.Recalculate(Recalculate, fv4, overlap=halfoverlap, blksize=halfblksize, thsad=halfthSAD, chroma=chroma,
-                                              truemotion=truemotion, dct=dct)
+                    bv4 = core.mv.Recalculate(Recalculate, bv4, **recalculate_args)
+                    fv4 = core.mv.Recalculate(Recalculate, fv4, **recalculate_args)
         else:
             if tr > 2:
-                bv3 = core.mv.Analyse(super_search, isb=True, delta=3, overlap=overlap, blksize=blksize, search=search, chroma=chroma,
-                                      truemotion=truemotion, _global=MVglobal, dct=dct)
-                fv3 = core.mv.Analyse(super_search, isb=False, delta=3, overlap=overlap, blksize=blksize, search=search, chroma=chroma,
-                                      truemotion=truemotion, _global=MVglobal, dct=dct)
+                bv3 = core.mv.Analyse(super_search, isb=True, delta=3, **analyse_args)
+                fv3 = core.mv.Analyse(super_search, isb=False, delta=3, **analyse_args)
                 if RefineMotion:
-                    bv3 = core.mv.Recalculate(Recalculate, bv3, overlap=halfoverlap, blksize=halfblksize, thsad=halfthSAD, chroma=chroma,
-                                              truemotion=truemotion, dct=dct)
-                    fv3 = core.mv.Recalculate(Recalculate, fv3, overlap=halfoverlap, blksize=halfblksize, thsad=halfthSAD, chroma=chroma,
-                                              truemotion=truemotion, dct=dct)
-            bv1 = core.mv.Analyse(super_search, isb=True, delta=1, overlap=overlap, blksize=blksize, search=search, chroma=chroma,
-                                  truemotion=truemotion, _global=MVglobal, dct=dct)
-            fv1 = core.mv.Analyse(super_search, isb=False, delta=1, overlap=overlap, blksize=blksize, search=search, chroma=chroma,
-                                  truemotion=truemotion, _global=MVglobal, dct=dct)
+                    bv3 = core.mv.Recalculate(Recalculate, bv3, **recalculate_args)
+                    fv3 = core.mv.Recalculate(Recalculate, fv3, **recalculate_args)
+            bv1 = core.mv.Analyse(super_search, isb=True, delta=1, **analyse_args)
+            fv1 = core.mv.Analyse(super_search, isb=False, delta=1, **analyse_args)
             if RefineMotion:
-                bv1 = core.mv.Recalculate(Recalculate, bv1, overlap=halfoverlap, blksize=halfblksize, thsad=halfthSAD, chroma=chroma,
-                                          truemotion=truemotion, dct=dct)
-                fv1 = core.mv.Recalculate(Recalculate, fv1, overlap=halfoverlap, blksize=halfblksize, thsad=halfthSAD, chroma=chroma,
-                                          truemotion=truemotion, dct=dct)
+                bv1 = core.mv.Recalculate(Recalculate, bv1, **recalculate_args)
+                fv1 = core.mv.Recalculate(Recalculate, fv1, **recalculate_args)
         if interlaced or tr > 1:
-            bv2 = core.mv.Analyse(super_search, isb=True, delta=2, overlap=overlap, blksize=blksize, search=search, chroma=chroma,
-                                  truemotion=truemotion, _global=MVglobal, dct=dct)
-            fv2 = core.mv.Analyse(super_search, isb=False, delta=2, overlap=overlap, blksize=blksize, search=search, chroma=chroma,
-                                  truemotion=truemotion, _global=MVglobal, dct=dct)
+            bv2 = core.mv.Analyse(super_search, isb=True, delta=2, **analyse_args)
+            fv2 = core.mv.Analyse(super_search, isb=False, delta=2, **analyse_args)
             if RefineMotion:
-                bv2 = core.mv.Recalculate(Recalculate, bv2, overlap=halfoverlap, blksize=halfblksize, thsad=halfthSAD, chroma=chroma,
-                                          truemotion=truemotion, dct=dct)
-                fv2 = core.mv.Recalculate(Recalculate, fv2, overlap=halfoverlap, blksize=halfblksize, thsad=halfthSAD, chroma=chroma,
-                                          truemotion=truemotion, dct=dct)
+                bv2 = core.mv.Recalculate(Recalculate, bv2, **recalculate_args)
+                fv2 = core.mv.Recalculate(Recalculate, fv2, **recalculate_args)
     else:
         super_render = super_search
 
     # Finally, MDegrain
+    degrain_args = dict(thsad=thSAD, thsadc=thSADC, plane=plane, limit=limit, limitc=limitc, thscd1=thSCD1, thscd2=thSCD2)
     if not GlobalO:
         if interlaced:
             if tr >= 3:
-                output = core.mv.Degrain3(mfilter, super_render, bv2, fv2, bv4, fv4, bv6, fv6, thsad=thSAD, thsadc=thSADC, thscd1=thSCD1, thscd2=thSCD2,
-                                          limit=limit, limitc=limitc, plane=plane)
+                output = core.mv.Degrain3(mfilter, super_render, bv2, fv2, bv4, fv4, bv6, fv6, **degrain_args)
             elif tr == 2:
-                output = core.mv.Degrain2(mfilter, super_render, bv2, fv2, bv4, fv4, thsad=thSAD, thsadc=thSADC, thscd1=thSCD1, thscd2=thSCD2,
-                                          limit=limit, limitc=limitc, plane=plane)
+                output = core.mv.Degrain2(mfilter, super_render, bv2, fv2, bv4, fv4, **degrain_args)
             else:
-                output = core.mv.Degrain1(mfilter, super_render, bv2, fv2, thsad=thSAD, thsadc=thSADC, thscd1=thSCD1, thscd2=thSCD2,
-                                          limit=limit, limitc=limitc, plane=plane)
+                output = core.mv.Degrain1(mfilter, super_render, bv2, fv2, **degrain_args)
         else:
             if tr >= 3:
-                output = core.mv.Degrain3(mfilter, super_render, bv1, fv1, bv2, fv2, bv3, fv3, thsad=thSAD, thsadc=thSADC, thscd1=thSCD1, thscd2=thSCD2,
-                                          limit=limit, limitc=limitc, plane=plane)
+                output = core.mv.Degrain3(mfilter, super_render, bv1, fv1, bv2, fv2, bv3, fv3, **degrain_args)
             elif tr == 2:
-                output = core.mv.Degrain2(mfilter, super_render, bv1, fv1, bv2, fv2, thsad=thSAD, thsadc=thSADC, thscd1=thSCD1, thscd2=thSCD2,
-                                          limit=limit, limitc=limitc, plane=plane)
+                output = core.mv.Degrain2(mfilter, super_render, bv1, fv1, bv2, fv2, **degrain_args)
             else:
-                output = core.mv.Degrain1(mfilter, super_render, bv1, fv1, thsad=thSAD, thsadc=thSADC, thscd1=thSCD1, thscd2=thSCD2,
-                                          limit=limit, limitc=limitc, plane=plane)
+                output = core.mv.Degrain1(mfilter, super_render, bv1, fv1, **degrain_args)
 
     # Contrasharp (only sharpens luma)
     if not GlobalO and if0:
@@ -3223,11 +3220,11 @@ def SMDegrain(input, tr=2, thSAD=300, thSADC=None, RefineMotion=False, contrasha
         if if0:
             if interlaced:
                 if ifC:
-                    return Weave(ContraSharpening(output, CClip), tff)
+                    return Weave(ContraSharpening(output, CClip, planes=planes), tff)
                 else:
                     return Weave(LSFmod(output, strength=contrasharp, source=CClip, Lmode=0, soothe=False, defaults='slow'), tff)
             elif ifC:
-                return ContraSharpening(output, CClip)
+                return ContraSharpening(output, CClip, planes=planes)
             else:
                 return LSFmod(output, strength=contrasharp, source=CClip, Lmode=0, soothe=False, defaults='slow')
         elif interlaced:
@@ -3255,15 +3252,10 @@ def STPresso(clp, limit=3, bias=24, RGmode=4, tthr=12, tlimit=3, tbias=49, back=
 
     peak = (1 << clp.format.bits_per_sample) - 1
 
-    isGray = (clp.format.color_family == vs.GRAY)
-    if isGray:
+    if clp.format.color_family == vs.GRAY:
         planes = [0]
     if isinstance(planes, int):
         planes = [planes]
-
-    Y = 0 in planes
-    U = 1 in planes
-    V = 2 in planes
 
     limit = scale(limit, peak)
     tthr = scale(tthr, peak)
@@ -3287,16 +3279,16 @@ def STPresso(clp, limit=3, bias=24, RGmode=4, tthr=12, tlimit=3, tbias=49, back=
     elif RGmode == 20:
         bzz = core.std.Convolution(clp, matrix=[1, 1, 1, 1, 1, 1, 1, 1, 1], planes=planes)
     else:
-        bzz = core.rgvs.RemoveGrain(clp, [RGmode] if isGray else [RGmode if Y else 0, RGmode if U else 0, RGmode if V else 0])
-    last = core.std.Expr([clp, bzz], [expr] if isGray else [expr if Y else '', expr if U else '', expr if V else ''])
+        bzz = core.rgvs.RemoveGrain(clp, [RGmode if i in planes else 0 for i in range(clp.format.num_planes)])
+    last = core.std.Expr([clp, bzz], [expr if i in planes else '' for i in range(clp.format.num_planes)])
     if tthr > 0:
         last = core.std.Expr([last,
                               core.std.MakeDiff(last, core.std.MakeDiff(bzz, core.flux.SmoothT(bzz, temporal_threshold=tthr, planes=planes), planes=planes),
                                                 planes=planes)],
-                             [texpr] if isGray else [texpr if Y else '', texpr if U else '', texpr if V else ''])
+                             [texpr if i in planes else '' for i in range(clp.format.num_planes)])
     if back > 0:
         expr = 'x {BK} + y < x {BK} + x {BK} - y > x {BK} - y ? ?'.format(BK=back)
-        return core.std.Expr([last, clp], [expr] if isGray else [expr if Y else '', expr if U else '', expr if V else ''])
+        return core.std.Expr([last, clp], [expr if i in planes else '' for i in range(clp.format.num_planes)])
     else:
         return last
 
@@ -3309,9 +3301,8 @@ def SigmoidInverse(src, thr=0.5, cont=6.5, planes=[0, 1, 2]):
     x0 = 1 / (1 + math.exp(cont * thr))
     x1m0 = 1 / (1 + math.exp(cont * (thr - 1))) - x0
     expr = '{thr} 1 x 65536 / {x1m0} * {x0} + 0.000001 max / 1 - 0.000001 max log {cont} / - 65536 *'.format(thr=thr, x1m0=x1m0, x0=x0, cont=cont)
-    if src.format.color_family != vs.GRAY:
-        expr = [expr if 0 in planes else '', expr if 1 in planes else '', expr if 2 in planes else '']
-    return core.std.Expr([src], expr)
+
+    return core.std.Expr([src], [expr if i in planes else '' for i in range(src.format.num_planes)])
 
 # Convert back a clip to linear luminance
 def SigmoidDirect(src, thr=0.5, cont=6.5, planes=[0, 1, 2]):
@@ -3321,9 +3312,8 @@ def SigmoidDirect(src, thr=0.5, cont=6.5, planes=[0, 1, 2]):
     x0 = 1 / (1 + math.exp(cont * thr))
     x1m0 = 1 / (1 + math.exp(cont * (thr - 1))) - x0
     expr = '1 1 {cont} {thr} x 65536 / - * exp + / {x0} - {x1m0} / 65536 *'.format(cont=cont, thr=thr, x0=x0, x1m0=x1m0)
-    if src.format.color_family != vs.GRAY:
-        expr = [expr if 0 in planes else '', expr if 1 in planes else '', expr if 2 in planes else '']
-    return core.std.Expr([src], expr)
+
+    return core.std.Expr([src], [expr if i in planes else '' for i in range(src.format.num_planes)])
 
 
 # Parameters:
@@ -4874,14 +4864,12 @@ def Clamp(clip, bright_limit, dark_limit, overshoot=0, undershoot=0, planes=[0, 
     if not (isinstance(clip, vs.VideoNode) and isinstance(bright_limit, vs.VideoNode) and isinstance(dark_limit, vs.VideoNode)):
         raise TypeError('Clamp: This is not a clip')
     if bright_limit.format.id != clip.format.id or dark_limit.format.id != clip.format.id:
-        raise TypeError('Clamp: clips must have the same format')
+        raise TypeError('Clamp: All clips must have the same format')
     if isinstance(planes, int):
         planes = [planes]
 
     expr = 'x y {overshoot} + > y {overshoot} + x ? z {undershoot} - < z {undershoot} - x y {overshoot} + > y {overshoot} + x ? ?'.format(overshoot=overshoot, undershoot=undershoot)
-    if clip.format.color_family != vs.GRAY:
-        expr = [expr if 0 in planes else '', expr if 1 in planes else '', expr if 2 in planes else '']
-    return core.std.Expr([clip, bright_limit, dark_limit], expr)
+    return core.std.Expr([clip, bright_limit, dark_limit], [expr if i in planes else '' for i in range(clip.format.num_planes)])
 
 
 def KNLMeansCL(clip, d=None, a=None, s=None, h=None, wmode=None, wref=None, device_type=None, device_id=None, info=None):
@@ -5045,51 +5033,46 @@ def Weave(clip, tff):
 ########################################
 ## Didée's functions:
 
-# Contra-sharpening: sharpen the denoised clip, but don't add more to any pixel than what was removed previously.
+# contra-sharpening: sharpen the denoised clip, but don't add more to any pixel than what was removed previously.
 # script function from Didée, at the VERY GRAINY thread (http://forum.doom9.org/showthread.php?p=1076491#post1076491)
 #
 # Parameters:
-#  radius (int) - Spatial radius of RemoveGrain for kernel blur(1-3). Default is 1
-#  rep (int)    - Mode of repair to limit the difference. Default is 1
-def ContraSharpening(denoised, original, radius=1, rep=1):
+#  radius (int)   - Spatial radius for contra-sharpening(1-3). Default is 2 for HD / 1 for SD
+#  rep (int)      - Mode of repair to limit the difference. Default is 13
+#  planes (int[]) - Whether to process the corresponding plane. The other planes will be passed through unchanged. Default is [0, 1, 2]
+def ContraSharpening(denoised, original, radius=None, rep=13, planes=[0, 1, 2]):
     if not (isinstance(denoised, vs.VideoNode) and isinstance(original, vs.VideoNode)):
         raise TypeError('ContraSharpening: This is not a clip')
     if denoised.format.id != original.format.id:
-        raise TypeError('ContraSharpening: clips must have the same format')
+        raise TypeError('ContraSharpening: Both clips must have the same format')
 
-    if denoised.format.color_family != vs.GRAY:
-        denoised_src = denoised
-        denoised = mvf.GetPlane(denoised, 0)
-        original = mvf.GetPlane(original, 0)
-    else:
-        denoised_src = None
+    if radius is None:
+        radius = 2 if denoised.width > 1024 or denoised.height > 576 else 1
 
-    s = MinBlur(denoised, 1)                     # Damp down remaining spots of the denoised clip.
+    if denoised.format.color_family == vs.GRAY:
+        planes = [0]
+    if isinstance(planes, int):
+        planes = [planes]
+
+    matrix1 = [1, 2, 1, 2, 4, 2, 1, 2, 1]
+    matrix2 = [1, 1, 1, 1, 1, 1, 1, 1, 1]
+
+    s = MinBlur(denoised, radius, planes=planes)                                                                # damp down remaining spots of the denoised clip
 
     if radius <= 1:
-        RG11 = core.std.Convolution(s, matrix=[1, 2, 1, 2, 4, 2, 1, 2, 1])
+        RG11 = core.std.Convolution(s, matrix=matrix1, planes=planes)
     elif radius == 2:
-        RG11 = core.std.Convolution(s, matrix=[1, 2, 1, 2, 4, 2, 1, 2, 1]).std.Convolution(matrix=[1, 1, 1, 1, 1, 1, 1, 1, 1])
+        RG11 = core.std.Convolution(s, matrix=matrix1, planes=planes).std.Convolution(matrix=matrix2, planes=planes)
     else:
-        RG11 = core.std.Convolution(s, matrix=[1, 2, 1, 2, 4, 2, 1, 2, 1]).std.Convolution(matrix=[1, 1, 1, 1, 1, 1, 1, 1, 1]).std.Convolution(matrix=[1, 1, 1, 1, 1, 1, 1, 1, 1])
+        RG11 = core.std.Convolution(s, matrix=matrix1, planes=planes).std.Convolution(matrix=matrix2, planes=planes).std.Convolution(matrix=matrix2, planes=planes)
 
-    ssD = core.std.MakeDiff(s, RG11)             # The difference of a simple kernel blur.
-    allD = core.std.MakeDiff(original, denoised) # The difference achieved by the denoising.
-
-    if radius == 2:
-        allD = core.rgvs.Repair(ssD, allD, rep)
-    elif radius >= 3:
-        allD = core.rgvs.Repair(ssD, core.rgvs.Repair(ssD, allD, rep), rep)
-
-    ssDD = core.rgvs.Repair(ssD, allD, rep)      # Limit the difference to the max of what the denoising removed locally.
+    ssD = core.std.MakeDiff(s, RG11, planes=planes)                                                             # the difference of a simple kernel blur
+    allD = core.std.MakeDiff(original, denoised, planes=planes)                                                 # the difference achieved by the denoising
+    ssDD = core.rgvs.Repair(ssD, allD, [rep if i in planes else 0 for i in range(denoised.format.num_planes)])  # limit the difference to the max of what the denoising removed locally
     expr = 'x {neutral} - abs y {neutral} - abs < x y ?'.format(neutral=1 << (denoised.format.bits_per_sample - 1))
-    ssDD = core.std.Expr([ssDD, ssD], [expr])    # abs(diff) after limiting may not be bigger than before.
-    last = core.std.MergeDiff(denoised, ssDD)    # Apply the limited difference. (Sharpening is just inverse blurring.)
+    ssDD = core.std.Expr([ssDD, ssD], [expr if i in planes else '' for i in range(denoised.format.num_planes)]) # abs(diff) after limiting may not be bigger than before
 
-    if denoised_src is not None:
-        return core.std.ShufflePlanes([last, denoised_src], planes=[0, 1, 2], colorfamily=denoised_src.format.color_family)
-    else:
-        return last
+    return core.std.MergeDiff(denoised, ssDD, planes=planes)                                                    # apply the limited difference (sharpening is just inverse blurring)
 
 
 # MinBlur   by Didée (http://avisynth.nl/index.php/MinBlur)
@@ -5098,21 +5081,13 @@ def MinBlur(clp, r=1, planes=[0, 1, 2]):
     if not isinstance(clp, vs.VideoNode):
         raise TypeError('MinBlur: This is not a clip')
 
-    bits = clp.format.bits_per_sample
-
-    isGray = (clp.format.color_family == vs.GRAY)
-    if isGray:
+    if clp.format.color_family == vs.GRAY:
         planes = [0]
     if isinstance(planes, int):
         planes = [planes]
 
     matrix1 = [1, 2, 1, 2, 4, 2, 1, 2, 1]
     matrix2 = [1, 1, 1, 1, 1, 1, 1, 1, 1]
-
-    expr = 'x y - x z - * 0 < x x y - abs x z - abs < y z ? ?'
-    Yexpr = expr if 0 in planes else ''
-    Uexpr = expr if 1 in planes else ''
-    Vexpr = expr if 2 in planes else ''
 
     if r <= 0:
         RG11 = sbr(clp, planes=planes)
@@ -5125,14 +5100,15 @@ def MinBlur(clp, r=1, planes=[0, 1, 2]):
         RG4 = core.ctmf.CTMF(clp, radius=2, planes=planes)
     else:
         RG11 = core.std.Convolution(clp, matrix=matrix1, planes=planes).std.Convolution(matrix=matrix2, planes=planes).std.Convolution(matrix=matrix2, planes=planes)
-        if bits == 16:
+        if clp.format.bits_per_sample == 16:
             s16 = clp
             RG4 = core.fmtc.bitdepth(clp, bits=12, planes=planes, dmode=1).ctmf.CTMF(radius=3, planes=planes).fmtc.bitdepth(bits=16, planes=planes)
             RG4 = mvf.LimitFilter(s16, RG4, thr=0.0625, elast=2, planes=planes)
         else:
             RG4 = core.ctmf.CTMF(clp, radius=3, planes=planes)
 
-    return core.std.Expr([clp, RG11, RG4], [Yexpr] if isGray else [Yexpr, Uexpr, Vexpr])
+    expr = 'x y - x z - * 0 < x x y - abs x z - abs < y z ? ?'
+    return core.std.Expr([clp, RG11, RG4], [expr if i in planes else '' for i in range(clp.format.num_planes)])
 
 
 # make a highpass on a blur's difference (well, kind of that)
@@ -5140,8 +5116,7 @@ def sbr(c, r=1, planes=[0, 1, 2]):
     if not isinstance(c, vs.VideoNode):
         raise TypeError('sbr: This is not a clip')
 
-    isGray = (c.format.color_family == vs.GRAY)
-    if isGray:
+    if c.format.color_family == vs.GRAY:
         planes = [0]
     if isinstance(planes, int):
         planes = [planes]
@@ -5149,25 +5124,25 @@ def sbr(c, r=1, planes=[0, 1, 2]):
     matrix1 = [1, 2, 1, 2, 4, 2, 1, 2, 1]
     matrix2 = [1, 1, 1, 1, 1, 1, 1, 1, 1]
 
-    expr = 'x y - x {neutral} - * 0 < {neutral} x y - abs x {neutral} - abs < x y - {neutral} + x ? ?'.format(neutral=1 << (c.format.bits_per_sample - 1))
-    Yexpr = expr if 0 in planes else ''
-    Uexpr = expr if 1 in planes else ''
-    Vexpr = expr if 2 in planes else ''
-
     if r <= 1:
         RG11 = core.std.Convolution(c, matrix=matrix1, planes=planes)
     elif r == 2:
         RG11 = core.std.Convolution(c, matrix=matrix1, planes=planes).std.Convolution(matrix=matrix2, planes=planes)
     else:
         RG11 = core.std.Convolution(c, matrix=matrix1, planes=planes).std.Convolution(matrix=matrix2, planes=planes).std.Convolution(matrix=matrix2, planes=planes)
+
     RG11D = core.std.MakeDiff(c, RG11, planes=planes)
+
     if r <= 1:
         RG11DS = core.std.Convolution(RG11D, matrix=matrix1, planes=planes)
     elif r == 2:
         RG11DS = core.std.Convolution(RG11D, matrix=matrix1, planes=planes).std.Convolution(matrix=matrix2, planes=planes)
     else:
         RG11DS = core.std.Convolution(RG11D, matrix=matrix1, planes=planes).std.Convolution(matrix=matrix2, planes=planes).std.Convolution(matrix=matrix2, planes=planes)
-    RG11DD = core.std.Expr([RG11D, RG11DS], [Yexpr] if isGray else [Yexpr, Uexpr, Vexpr])
+
+    expr = 'x y - x {neutral} - * 0 < {neutral} x y - abs x {neutral} - abs < x y - {neutral} + x ? ?'.format(neutral=1 << (c.format.bits_per_sample - 1))
+    RG11DD = core.std.Expr([RG11D, RG11DS], [expr if i in planes else '' for i in range(c.format.num_planes)])
+
     return core.std.MakeDiff(c, RG11DD, planes=planes)
 
 
@@ -5175,8 +5150,7 @@ def sbrV(c, r=1, planes=[0, 1, 2]):
     if not isinstance(c, vs.VideoNode):
         raise TypeError('sbrV: This is not a clip')
 
-    isGray = (c.format.color_family == vs.GRAY)
-    if isGray:
+    if c.format.color_family == vs.GRAY:
         planes = [0]
     if isinstance(planes, int):
         planes = [planes]
@@ -5184,25 +5158,25 @@ def sbrV(c, r=1, planes=[0, 1, 2]):
     matrix1 = [1, 2, 1]
     matrix2 = [1, 4, 6, 4, 1]
 
-    expr = 'x y - x {neutral} - * 0 < {neutral} x y - abs x {neutral} - abs < x y - {neutral} + x ? ?'.format(neutral=1 << (c.format.bits_per_sample - 1))
-    Yexpr = expr if 0 in planes else ''
-    Uexpr = expr if 1 in planes else ''
-    Vexpr = expr if 2 in planes else ''
-
     if r <= 1:
         RG11 = core.std.Convolution(c, matrix=matrix1, planes=planes, mode='v')
     elif r == 2:
         RG11 = core.std.Convolution(c, matrix=matrix1, planes=planes, mode='v').std.Convolution(matrix=matrix2, planes=planes, mode='v')
     else:
         RG11 = core.std.Convolution(c, matrix=matrix1, planes=planes, mode='v').std.Convolution(matrix=matrix2, planes=planes, mode='v').std.Convolution(matrix=matrix2, planes=planes, mode='v')
+
     RG11D = core.std.MakeDiff(c, RG11, planes=planes)
+
     if r <= 1:
         RG11DS = core.std.Convolution(RG11D, matrix=matrix1, planes=planes, mode='v')
     elif r == 2:
         RG11DS = core.std.Convolution(RG11D, matrix=matrix1, planes=planes, mode='v').std.Convolution(matrix=matrix2, planes=planes, mode='v')
     else:
         RG11DS = core.std.Convolution(RG11D, matrix=matrix1, planes=planes, mode='v').std.Convolution(matrix=matrix2, planes=planes, mode='v').std.Convolution(matrix=matrix2, planes=planes, mode='v')
-    RG11DD = core.std.Expr([RG11D, RG11DS], [Yexpr] if isGray else [Yexpr, Uexpr, Vexpr])
+
+    expr = 'x y - x {neutral} - * 0 < {neutral} x y - abs x {neutral} - abs < x y - {neutral} + x ? ?'.format(neutral=1 << (c.format.bits_per_sample - 1))
+    RG11DD = core.std.Expr([RG11D, RG11DS], [expr if i in planes else '' for i in range(c.format.num_planes)])
+
     return core.std.MakeDiff(c, RG11DD, planes=planes)
 
 
