@@ -2,35 +2,37 @@
 added nnedi3cl_rpow2
 '''
 def nnedi3_rpow2(clip,rfactor,correct_shift="fmtconv",nsize=0,nns=3,qual=None,etype=None,pscrn=None,opt=None,int16_prescreener=None,int16_predictor=None,exp=None):
-	import vapoursynth as vs
-	core = vs.get_core()
-	
-	def edi(clip,field,dh):
+  import vapoursynth as vs
+  core = vs.get_core()
+
+  def edi(clip,field,dh):
     if hasattr(core, 'znedi3'):  
       return core.znedi3.nnedi3(clip=clip,field=field,dh=dh,nsize=nsize,nns=nns,qual=qual,etype=etype,pscrn=pscrn,opt=opt,int16_prescreener=int16_prescreener,int16_predictor=int16_predictor,exp=exp)
     else:
       return core.nnedi3.nnedi3(clip=clip,field=field,dh=dh,nsize=nsize,nns=nns,qual=qual,etype=etype,pscrn=pscrn,opt=opt,int16_prescreener=int16_prescreener,int16_predictor=int16_predictor,exp=exp)
-	
-	return edi_rpow2(clip=clip,rfactor=rfactor,correct_shift=correct_shift,edi=edi)
+
+  return edi_rpow2(clip=clip,rfactor=rfactor,correct_shift=correct_shift,edi=edi)
 
 def nnedi3cl_rpow2(clip,rfactor,correct_shift="fmtconv",nsize=0,nns=3,qual=None,etype=None,pscrn=None):
-	import vapoursynth as vs
-	core = vs.get_core()
-	def edi(clip,field,dh):
-		return core.nnedi3cl.NNEDI3CL(clip=clip,field=field,dh=dh,nsize=nsize,nns=nns,qual=qual,etype=etype,pscrn=pscrn)
-	return edi_rpow2(clip=clip,rfactor=rfactor,correct_shift=correct_shift,edi=edi)
+  import vapoursynth as vs
+  core = vs.get_core()
+  
+  def edi(clip,field,dh):
+    return core.nnedi3cl.NNEDI3CL(clip=clip,field=field,dh=dh,nsize=nsize,nns=nns,qual=qual,etype=etype,pscrn=pscrn)
+
+  return edi_rpow2(clip=clip,rfactor=rfactor,correct_shift=correct_shift,edi=edi)
   
 def eedi3_rpow2(clip,rfactor,correct_shift="fmtconv",alpha=None,beta=None,gamma=None,nrad=None,mdis=None,hp=None,ucubic=None,cost3=None,vcheck=None,vthresh0=None,vthresh1=None,vthresh2=None,sclip=None):
-	import vapoursynth as vs
-	core = vs.get_core()
-	
-	def edi(clip,field,dh):
+  import vapoursynth as vs
+  core = vs.get_core()
+
+  def edi(clip,field,dh):
     if hasattr(core, 'eedi3m'):
       return core.eedi3m.EEDI3(clip=clip,field=field,dh=dh,alpha=alpha,beta=beta,gamma=gamma,nrad=nrad,mdis=mdis,hp=hp,ucubic=ucubic,cost3=cost3,vcheck=vcheck,vthresh0=vthresh0,vthresh1=vthresh1,vthresh2=vthresh2,sclip=sclip)
     else:
       return core.eedi3.eedi3(clip=clip,field=field,dh=dh,alpha=alpha,beta=beta,gamma=gamma,nrad=nrad,mdis=mdis,hp=hp,ucubic=ucubic,cost3=cost3,vcheck=vcheck,vthresh0=vthresh0,vthresh1=vthresh1,vthresh2=vthresh2,sclip=sclip)
-	
-	return edi_rpow2(clip=clip,rfactor=rfactor,correct_shift=correct_shift,edi=edi)
+
+  return edi_rpow2(clip=clip,rfactor=rfactor,correct_shift=correct_shift,edi=edi)
 
 def eedi2_rpow2(clip,rfactor,correct_shift="fmtconv",mthresh=None,lthresh=None,vthresh=None,estr=None,dstr=None,maxd=None,map=None,nt=None,pp=None):
 	import vapoursynth as vs
