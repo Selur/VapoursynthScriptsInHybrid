@@ -121,10 +121,11 @@ def sharpen(clip, mode=1, sstr=2.0, cstr=None, xstr=0.19, lstr=1.49, pstr=1.272,
 
     pstr = float(pstr)
 
-    ldmp = float(ldmp)
     if ldmp is None:
-        ldmp = sstr + 0.1
-
+      ldmp = sstr + 0.1
+    else:
+      ldmp = float(ldmp)
+        
     if sstr < 0.01 and cstr < 0.01 and xstr < 0.01:
         return src
 
