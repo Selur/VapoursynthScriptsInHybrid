@@ -1,8 +1,6 @@
 # finesharp.py - finesharp module for VapourSynth
 # Original author: Didee (http://forum.doom9.org/showthread.php?t=166082)
-# Requirement: VapourSynth r33 or later
-# Rev: 2017-12-16
-
+from vapoursynth import core
 import vapoursynth as vs
 
 
@@ -55,11 +53,7 @@ def spline(x, coordinates):
     return s
 
 
-def clamp(x, maximum):
-    return max(0, min(round(x), maximum))
-
-
-def sharpen(clip, mode=1, sstr=2.0, cstr=None, xstr=0.19, lstr=1.49, pstr=1.272, ldmp=None, use_lut=True):
+def sharpen(clip, mode=1, sstr=2.0, cstr=None, xstr=0.19, lstr=1.49, pstr=1.272, ldmp=None):
     """Small and relatively fast realtime-sharpening function, for 1080p,
     or after scaling 720p -> 1080p during playback
     (to make 720p look more like being 1080p)
@@ -71,35 +65,22 @@ def sharpen(clip, mode=1, sstr=2.0, cstr=None, xstr=0.19, lstr=1.49, pstr=1.272,
     then the *blurred* sharp-difference gets subtracted again.
 
     Args:
-        clip (clip): vs.YUV or vs.GRAY video.
+        clip (clip): YUV or GRAY video.
         mode (int): 1 to 3, weakest to strongest. When negative -1 to -3,
                 a broader kernel for equalisation is used.
         sstr (float): strength of sharpening, 0.0 up to ??
-        cstr (float): strength of equalisation, 0.0 to ? 2.0 ?
+        cstr (float): strength of equalisation, 0.0 to ??
                 (recomm. 0.5 to 1.25, default AUTO)
         xstr (float): strength of XSharpen-style final sharpening, 0.0 to 1.0
                 (but, better don't go beyond 0.249 ...)
         lstr (float): modifier for non-linear sharpening
         pstr (float): exponent for non-linear sharpening
         ldmp (float): "low damp", to not overenhance very small differences
-                (noise coming out of flat areas, default sstr+1)
-
-    Example:
-
-    .. code-block:: python
-
-            ...
-            import finesharp
-            ...
-            clip = finesharp.sharpen(clip)
-            ...
+                (noise coming out of flat areas, default sstr + 0.1)
     """
-    core = vs.get_core()
-
     bd = clip.format.bits_per_sample
-    max_ = 2 ** bd - 1
-    mid = (max_ + 1) // 2
-    scl = (max_ + 1) // 256
+    mid = 1 << (bd - 1)
+    scl = 1 << (bd - 8)
     x = 'x {} /'.format(scl)
     y = 'y {} /'.format(scl)
 
@@ -120,7 +101,7 @@ def sharpen(clip, mode=1, sstr=2.0, cstr=None, xstr=0.19, lstr=1.49, pstr=1.272,
 
     sstr = float(sstr)
     if sstr < 0.0:
-        raise ValueError('sstr must be larger than zero.')
+        raise ValueError('sstr must be positive.')
 
     if src.format.color_family != vs.GRAY:
         clip = core.std.ShufflePlanes(clips=clip, planes=0, colorfamily=vs.GRAY)
@@ -134,44 +115,28 @@ def sharpen(clip, mode=1, sstr=2.0, cstr=None, xstr=0.19, lstr=1.49, pstr=1.272,
 
     xstr = float(xstr)
     if xstr < 0.0:
-        raise ValueError('xstr must be larger than zero.')
+        raise ValueError('xstr must be positive.')
 
     lstr = float(lstr)
 
     pstr = float(pstr)
 
+    ldmp = float(ldmp)
     if ldmp is None:
         ldmp = sstr + 0.1
-    ldmp = float(ldmp)
-
-    rg = 20 - (mode > 0) * 9
 
     if sstr < 0.01 and cstr < 0.01 and xstr < 0.01:
         return src
 
     if abs(mode) == 1:
         c2 = core.std.Convolution(clip, matrix=[1, 2, 1, 2, 4, 2, 1, 2, 1]).std.Median()
-    else:
+    elif abs(mode) == 2:
         c2 = core.std.Median(clip).std.Convolution(matrix=[1, 2, 1, 2, 4, 2, 1, 2, 1])
-    if abs(mode) == 3:
-        c2 = core.std.Median(clip)
-
-    if bd in [8, 9, 10] and use_lut is True:
-        def expr(x, y):
-            d = x - y
-            absd = abs(d)
-            e0 = ((absd / lstr) ** (1 / pstr)) * sstr
-            e1 = d / (absd + 0.001)
-            e2 = (d * d) / (d * d + ldmp)
-            return clamp(e0 * e1 * e2 + mid, max_)
-
-        diff = core.std.Lut2(clipa=clip, clipb=c2, function=expr)
     else:
-        expr = '{x} {y} - abs {lstr} / log 1 {pstr} / * exp ' \
-            '{sstr} * {x} {y} - {x} {y} - abs 0.001 + / * {x} {y} - log 2 * exp ' \
-            '{x} {y} - log 2 * exp {ldmp} + / * 128 + {scl} *'
-        expr = expr.format(x=x, y=y, lstr=lstr, pstr=pstr, sstr=sstr, ldmp=ldmp, scl=scl)
-        diff = core.std.Expr(clips=[clip, c2], expr=expr)
+        c2 = core.std.Median(clip).std.Convolution(matrix=[1, 2, 1, 2, 4, 2, 1, 2, 1]).std.Median()
+
+    expr = '{x} {y} - abs {lstr} / 1 {pstr} / pow {sstr} * {x} {y} - {x} {y} - abs 0.001 + / * {x} {y} - 2 pow {x} {y} - 2 pow {ldmp} + / * 128 + {scl} *'
+    diff = core.std.Expr(clips=[clip, c2], expr=expr.format(x=x, y=y, lstr=lstr, pstr=pstr, sstr=sstr, ldmp=ldmp, scl=scl))
 
     shrp = clip
     if sstr >= 0.01:
@@ -180,14 +145,14 @@ def sharpen(clip, mode=1, sstr=2.0, cstr=None, xstr=0.19, lstr=1.49, pstr=1.272,
     if cstr >= 0.01:
         expr = 'x {mid} - {cstr} * {mid} +'.format(mid=mid, cstr=cstr)
         diff = core.std.Expr(clips=diff, expr=expr)
-        diff = core.rgvs.RemoveGrain(clip=diff, mode=[rg])
+        diff = core.std.Convolution(clip=diff, matrix=[1, 2, 1, 2, 4, 2, 1, 2, 1]) if mode > 0 else core.std.Convolution(clip=diff, matrix=[1, 1, 1, 1, 1, 1, 1, 1, 1])
         shrp = core.std.MakeDiff(clipa=shrp, clipb=diff)
 
     if xstr >= 0.01:
         expr = 'x x y - 9.9 * +'
         xyshrp = core.std.Expr(clips=[shrp, core.std.Convolution(shrp, matrix=[1, 1, 1, 1, 1, 1, 1, 1, 1])], expr=expr)
         rpshrp = core.rgvs.Repair(clip=xyshrp, repairclip=shrp, mode=[12])
-        shrp = core.std.Merge(clipa=rpshrp, clipb=shrp, weight=[1 - xstr])
+        shrp = core.std.Merge(clipa=shrp, clipb=rpshrp, weight=[xstr])
 
     if src.format.color_family != vs.GRAY:
         shrp = core.std.ShufflePlanes(clips=[shrp, src], planes=[0, 1, 2], colorfamily=src.format.color_family)
