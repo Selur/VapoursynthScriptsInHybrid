@@ -15,11 +15,9 @@ Main functions:
     Deblock_QED
     DeHalo_alpha
     EdgeCleaner
-    FineDehalo
     YAHR
-    HQDeringmod
+    HQDering mod
     QTGMC
-    smartfademod
     srestore
     ivtc_txt60mc
     logoNR
@@ -36,7 +34,7 @@ Main functions:
     GrainFactory3
     InterFrame
     SmoothLevels
-    FastLineDarkenMOD
+    FastLineDarken 1.4x MT MOD
     Toon
     LSFmod
     TemporalDegrain
@@ -397,10 +395,10 @@ def DeHalo_alpha(clp, rx=2., ry=2., darkstr=1., brightstr=1., lowsens=50, highse
     peak = (1 << clp.format.bits_per_sample) - 1
 
     if clp.format.color_family != vs.GRAY:
-        clp_orig = clp
+        clp_src = clp
         clp = mvf.GetPlane(clp, 0)
     else:
-        clp_orig = None
+        clp_src = None
 
     ox = clp.width
     oy = clp.height
@@ -421,8 +419,8 @@ def DeHalo_alpha(clp, rx=2., ry=2., darkstr=1., brightstr=1., lowsens=50, highse
                                ['x y max']).resize.Spline36(ox, oy)
     them = core.std.Expr([clp, remove], ['x y < x x y - {DRK} * - x x y - {BRT} * - ?'.format(DRK=darkstr, BRT=brightstr)])
 
-    if clp_orig is not None:
-        return core.std.ShufflePlanes([them, clp_orig], planes=[0, 1, 2], colorfamily=clp_orig.format.color_family)
+    if clp_src is not None:
+        return core.std.ShufflePlanes([them, clp_src], planes=[0, 1, 2], colorfamily=clp_src.format.color_family)
     else:
         return them
 
@@ -450,10 +448,10 @@ def EdgeCleaner(c, strength=10, rep=True, rmode=17, smode=0, hot=False):
     peak = (1 << c.format.bits_per_sample) - 1
 
     if c.format.color_family != vs.GRAY:
-        c_orig = c
+        c_src = c
         c = mvf.GetPlane(c, 0)
     else:
-        c_orig = None
+        c_src = None
 
     if smode >= 1:
         strength += 4
@@ -475,170 +473,10 @@ def EdgeCleaner(c, strength=10, rep=True, rmode=17, smode=0, hot=False):
         mask = core.std.Levels(diff, min_in=scale(40, peak), max_in=scale(168, peak), gamma=0.35).rgvs.RemoveGrain(7).std.Prewitt().std.Expr([expr])
         final = core.std.MaskedMerge(final, c, mask)
 
-    if c_orig is not None:
-        return core.std.ShufflePlanes([final, c_orig], planes=[0, 1, 2], colorfamily=c_orig.format.color_family)
+    if c_src is not None:
+        return core.std.ShufflePlanes([final, c_src], planes=[0, 1, 2], colorfamily=c_src.format.color_family)
     else:
         return final
-
-
-# This program is free software. It comes without any warranty, to
-# the extent permitted by applicable law. You can redistribute it
-# and/or modify it under the terms of the Do What The Fuck You Want
-# To Public License, Version 2, as published by Sam Hocevar. See
-# http://sam.zoy.org/wtfpl/COPYING for more details.
-def FineDehalo(src, rx=2, ry=None, thmi=80, thma=128, thlimi=50, thlima=100, darkstr=1., brightstr=1., showmask=0, contra=0., excl=True, edgeproc=0.):
-    if not isinstance(src, vs.VideoNode):
-        raise TypeError('FineDehalo: This is not a clip')
-
-    neutral = 1 << (src.format.bits_per_sample - 1)
-    peak = (1 << src.format.bits_per_sample) - 1
-
-    if src.format.color_family != vs.GRAY:
-        src_orig = src
-        src = mvf.GetPlane(src, 0)
-    else:
-        src_orig = None
-
-    if ry is None:
-        ry = rx
-
-    rx_i = math.floor(rx + 0.5)
-    ry_i = math.floor(ry + 0.5)
-
-    ### Dehaloing ###
-
-    dehaloed = DeHalo_alpha(src, rx=rx, ry=ry, darkstr=darkstr, brightstr=brightstr)
-
-    # Contrasharpening
-    if contra > 0:
-        bb = core.std.Convolution(dehaloed, matrix=[1, 2, 1, 2, 4, 2, 1, 2, 1])
-        bb2 = core.rgvs.Repair(bb, core.rgvs.Repair(bb, core.ctmf.CTMF(bb, radius=2), 1), 1)
-        xd = core.std.MakeDiff(bb, bb2)
-        xd = core.std.Expr([xd], ['x {neutral} - 2.49 * {contra} * {neutral} +'.format(neutral=neutral, contra=contra)])
-        xdd = core.std.Expr([xd, core.std.MakeDiff(src, dehaloed)], ['x {neutral} - y {neutral} - * 0 < {neutral} x {neutral} - abs y {neutral} - abs < x y ? ?'.format(neutral=neutral)])
-        dehaloed = core.std.MergeDiff(dehaloed, xdd)
-
-    ### Main edges ###
-
-    # Basic edge detection, thresholding will be applied later
-    edges = core.std.Prewitt(src)
-
-    # Keeps only the sharpest edges (line edges)
-    strong = core.std.Expr([edges], ['x {thmi} - {i} / 255 *'.format(thmi=scale(thmi, peak), i=thma - thmi)])
-
-    # Extends them to include the potential halos
-    large = mt_expand_multi(strong, sw=rx_i, sh=ry_i)
-
-    ### Exclusion zones ###
-
-    # When two edges are close from each other (both edges of a single line or multiple parallel color bands), the halo removal oversmoothes them or makes seriously bleed the bands,
-    # producing annoying artifacts. Therefore we have to produce a mask to exclude these zones from the halo removal
-
-    # Includes more edges than previously, but ignores simple details
-    light = core.std.Expr([edges], ['x {thlimi} - {i} / 255 *'.format(thlimi=scale(thlimi, peak), i=thlima - thlimi)])
-
-    # To build the exclusion zone, we make grow the edge mask, then shrink it to its original shape. During the growing stage, close adjacent edge masks will join and merge,
-    # forming a solid area, which will remain solid even after the shrinking stage
-
-    # Mask growing
-    shrink = mt_expand_multi(light, mode='ellipse', sw=rx_i, sh=ry_i)
-
-    # At this point, because the mask was made of a shades of grey, we may end up with large areas of dark grey after shrinking
-    # To avoid this, we amplify and saturate the mask here (actually we could even binarize it)
-    shrink = core.std.Expr([shrink], ['x 4 *'])
-
-    # Mask shrinking
-    shrink = mt_inpand_multi(shrink, mode='ellipse', sw=rx_i, sh=ry_i)
-
-    # This mask is almost binary, which will produce distinct discontinuities once applied. Then we have to smooth it
-    shrink = core.std.Convolution(shrink, matrix=[1, 1, 1, 1, 1, 1, 1, 1, 1]).std.Convolution(matrix=[1, 1, 1, 1, 1, 1, 1, 1, 1])
-
-    ### Final mask building ###
-
-    # Previous mask may be a bit weak on the pure edge side, so we ensure that the main edges are really excluded. We do not want them to be smoothed by the halo removal
-    if excl:
-        shr_med = core.std.Expr([strong, shrink], ['x y max'])
-    else:
-        shr_med = strong
-
-    # Substracts masks and amplifies the difference to be sure we get 255 on the areas to be processed
-    outside = core.std.Expr([large, shr_med], ['x y - 2 *'])
-
-    # If edge processing is required, adds the edgemask
-    if edgeproc > 0:
-        outside = core.std.Expr([outside, strong], ['x y {edgeproc} * +'.format(edgeproc=edgeproc * 0.66)])
-
-    # Smooth again and amplify to grow the mask a bit, otherwise the halo parts sticking to the edges could be missed
-    outside = core.std.Convolution(outside, matrix=[1, 1, 1, 1, 1, 1, 1, 1, 1]).std.Expr(['x 2 *'])
-
-    ### Masking ###
-
-    if showmask <= 0:
-        last = core.std.MaskedMerge(src, dehaloed, outside)
-
-    if src_orig is not None:
-        if showmask <= 0:
-            return core.std.ShufflePlanes([last, src_orig], planes=[0, 1, 2], colorfamily=src_orig.format.color_family)
-        elif showmask == 1:
-            return core.resize.Bicubic(outside, format=src_orig.format.id)
-        elif showmask == 2:
-            return core.resize.Bicubic(shrink, format=src_orig.format.id)
-        elif showmask == 3:
-            return core.resize.Bicubic(edges, format=src_orig.format.id)
-        else:
-            return core.resize.Bicubic(strong, format=src_orig.format.id)
-    else:
-        if showmask <= 0:
-            return last
-        elif showmask == 1:
-            return outside
-        elif showmask == 2:
-            return shrink
-        elif showmask == 3:
-            return edges
-        else:
-            return strong
-
-# Try to remove 2nd order halos
-def FineDehalo2(src, hconv=[-1, -2, 0, 0, 40, 0, 0, -2, -1], vconv=[-2, -1, 0, 0, 40, 0, 0, -1, -2], showmask=0):
-    if not isinstance(src, vs.VideoNode):
-        raise TypeError('FineDehalo2: This is not a clip')
-
-    if src.format.color_family != vs.GRAY:
-        src_orig = src
-        src = mvf.GetPlane(src, 0)
-    else:
-        src_orig = None
-
-    def FineDehalo2_grow_mask(mask, coordinates):
-        mask = core.std.Maximum(mask, coordinates=coordinates).std.Minimum(coordinates=coordinates)
-        mask_1 = core.std.Maximum(mask, coordinates=coordinates)
-        mask_2 = core.std.Maximum(mask_1, coordinates=coordinates).std.Maximum(coordinates=coordinates)
-        mask = core.std.Expr([mask_2, mask_1], ['x y -'])
-        return core.std.Convolution(mask, matrix=[1, 2, 1, 2, 4, 2, 1, 2, 1]).std.Expr(['x 1.8 *'])
-
-    fix_h = core.std.Convolution(src, matrix=vconv, mode='v')
-    fix_v = core.std.Convolution(src, matrix=hconv, mode='h')
-    mask_h = core.std.Convolution(src, matrix=[1, 2, 1, 0, 0, 0, -1, -2, -1], divisor=4, saturate=False)
-    mask_v = core.std.Convolution(src, matrix=[1, 0, -1, 2, 0, -2, 1, 0, -1], divisor=4, saturate=False)
-    temp_h = core.std.Expr([mask_h, mask_v], ['x 3 * y -'])
-    temp_v = core.std.Expr([mask_v, mask_h], ['x 3 * y -'])
-    mask_h = FineDehalo2_grow_mask(temp_h, [0, 1, 0, 0, 0, 0, 1, 0])
-    mask_v = FineDehalo2_grow_mask(temp_v, [0, 0, 0, 1, 1, 0, 0, 0])
-
-    if showmask <= 0:
-        last = core.std.MaskedMerge(src, fix_h, mask_h)
-        last = core.std.MaskedMerge(last, fix_v, mask_v)
-    else:
-        last = core.std.Expr([mask_h, mask_v], ['x y max'])
-
-    if src_orig is not None:
-        if showmask <= 0:
-            return core.std.ShufflePlanes([last, src_orig], planes=[0, 1, 2], colorfamily=src_orig.format.color_family)
-        else:
-            return core.resize.Bicubic(last, format=src_orig.format.id)
-    else:
-        return last
 
 
 # Y'et A'nother H'alo R'educing script
@@ -651,10 +489,10 @@ def YAHR(clp, blur=2, depth=32):
         raise TypeError('YAHR: This is not a clip')
 
     if clp.format.color_family != vs.GRAY:
-        clp_orig = clp
+        clp_src = clp
         clp = mvf.GetPlane(clp, 0)
     else:
-        clp_orig = None
+        clp_src = None
 
     b1 = core.std.Convolution(MinBlur(clp, 2), matrix=[1, 2, 1, 2, 4, 2, 1, 2, 1])
     b1D = core.std.MakeDiff(clp, b1)
@@ -665,8 +503,8 @@ def YAHR(clp, blur=2, depth=32):
     DD2 = core.std.MakeDiff(b1D, DD)
     last = core.std.MakeDiff(clp, DD2)
 
-    if clp_orig is not None:
-        return core.std.ShufflePlanes([last, clp_orig], planes=[0, 1, 2], colorfamily=clp_orig.format.color_family)
+    if clp_src is not None:
+        return core.std.ShufflePlanes([last, clp_src], planes=[0, 1, 2], colorfamily=clp_src.format.color_family)
     else:
         return last
 
@@ -1784,33 +1622,6 @@ def QTGMC_ApplySourceMatch(Deinterlace, InputType, Source, bVec1, fVec1, bVec2, 
     return core.std.MergeDiff(match1Shp, match3)
 
 
-# based on smartfade v0.2 by martino - Aimed at removing interlaced fades in anime. Uses luma difference between two fields as activation threshold.
-# mod by thetoof : removed degrainmedian post-processing
-#                  changed how the fields are blended together (average of 2 nnedi interpolations + contra-sharpening to retain more detail)
-#
-# Parameters:
-#  threshold (float) - Threshold for fade detection. Default is 0.4
-#  show (bool)       - Display luma difference between fields without processing anything. Default is false
-def smartfademod(clip, threshold=0.4, show=False, tff=None):
-    if not isinstance(clip, vs.VideoNode):
-        raise TypeError('smartfademod: This is not a clip')
-    if not isinstance(tff, bool):
-        raise TypeError("smartfademod: 'tff' must be set. Setting tff to true means top field first and false means bottom field first")
-
-    def frame_eval(n, f, orig, defade):
-        diff = abs(f[0].props['PlaneStatsAverage'] - f[1].props['PlaneStatsAverage']) * 255
-
-        if show:
-            return core.text.Text(orig, diff)
-        else:
-            return defade if diff > threshold else orig
-
-    sep = core.std.SeparateFields(clip, tff)
-    even = core.std.PlaneStats(sep[::2])
-    odd = core.std.PlaneStats(sep[1::2])
-    return core.std.FrameEval(clip, eval=functools.partial(frame_eval, orig=clip, defade=daa(clip)), prop_src=[even, odd])
-
-
 ###### srestore v2.7e ######
 def srestore(source, frate=None, omode=6, speed=None, mode=2, thresh=16, dclip=None):
     if not isinstance(source, vs.VideoNode):
@@ -2249,13 +2060,13 @@ def logoNR(dlg, src, chroma=True, l=0, t=0, r=0, b=0, d=1, a=2, s=2, h=3):
         chroma = False
 
     if not chroma and dlg.format.color_family != vs.GRAY:
-        dlg_orig = dlg
+        dlg_src = dlg
         dlg = mvf.GetPlane(dlg, 0)
         src = mvf.GetPlane(src, 0)
     else:
-        dlg_orig = None
+        dlg_src = None
 
-    b_crop = (l != 0) or (t != 0) or (r != 0) or (b != 0)
+    b_crop = l != 0 or t != 0 or r != 0 or b != 0
     if b_crop:
         src = core.std.Crop(src, l, r, t, b)
         last = core.std.Crop(dlg, l, r, t, b)
@@ -2272,8 +2083,8 @@ def logoNR(dlg, src, chroma=True, l=0, t=0, r=0, b=0, d=1, a=2, s=2, h=3):
     if b_crop:
         clp_nr = Overlay(dlg, clp_nr, x=l, y=t)
 
-    if dlg_orig is not None:
-        return core.std.ShufflePlanes([clp_nr, dlg_orig], planes=[0, 1, 2], colorfamily=dlg_orig.format.color_family)
+    if dlg_src is not None:
+        return core.std.ShufflePlanes([clp_nr, dlg_src], planes=[0, 1, 2], colorfamily=dlg_src.format.color_family)
     else:
         return clp_nr
 
@@ -2290,10 +2101,10 @@ def Vinverse(clp, sstr=2.7, amnt=255, chroma=True):
     peak = (1 << clp.format.bits_per_sample) - 1
 
     if not chroma and clp.format.color_family != vs.GRAY:
-        clp_orig = clp
+        clp_src = clp
         clp = mvf.GetPlane(clp, 0)
     else:
-        clp_orig = None
+        clp_src = None
 
     vblur = core.std.Convolution(clp, matrix=[50, 99, 50], mode='v')
     vblurD = core.std.MakeDiff(clp, vblur)
@@ -2307,8 +2118,8 @@ def Vinverse(clp, sstr=2.7, amnt=255, chroma=True):
     elif amnt < 255:
         last = core.std.Expr([clp, last], ['x {AMN} + y < x {AMN} + x {AMN} - y > x {AMN} - y ? ?'.format(AMN=scale(amnt, peak))])
 
-    if clp_orig is not None:
-        return core.std.ShufflePlanes([last, clp_orig], planes=[0, 1, 2], colorfamily=clp_orig.format.color_family)
+    if clp_src is not None:
+        return core.std.ShufflePlanes([last, clp_src], planes=[0, 1, 2], colorfamily=clp_src.format.color_family)
     else:
         return last
 
@@ -2321,10 +2132,10 @@ def Vinverse2(clp, sstr=2.7, amnt=255, chroma=True):
     peak = (1 << clp.format.bits_per_sample) - 1
 
     if not chroma and clp.format.color_family != vs.GRAY:
-        clp_orig = clp
+        clp_src = clp
         clp = mvf.GetPlane(clp, 0)
     else:
-        clp_orig = None
+        clp_src = None
 
     vblur = sbrV(clp)
     vblurD = core.std.MakeDiff(clp, vblur)
@@ -2338,8 +2149,8 @@ def Vinverse2(clp, sstr=2.7, amnt=255, chroma=True):
     elif amnt < 255:
         last = core.std.Expr([clp, last], ['x {AMN} + y < x {AMN} + x {AMN} - y > x {AMN} - y ? ?'.format(AMN=scale(amnt, peak))])
 
-    if clp_orig is not None:
-        return core.std.ShufflePlanes([last, clp_orig], planes=[0, 1, 2], colorfamily=clp_orig.format.color_family)
+    if clp_src is not None:
+        return core.std.ShufflePlanes([last, clp_src], planes=[0, 1, 2], colorfamily=clp_src.format.color_family)
     else:
         return last
 
@@ -2396,7 +2207,7 @@ def Vinverse2(clp, sstr=2.7, amnt=255, chroma=True):
 # 10/3/08: Is this thing on?
 #
 ###################
-def LUTDeCrawl(input, ythresh=10, cthresh=10, maxdiff=50, scnchg=25, usemaxdiff=True, mask=False):
+def LUTDeCrawl(input, ythresh=10, cthresh=15, maxdiff=50, scnchg=25, usemaxdiff=True, mask=False):
     if not isinstance(input, vs.VideoNode) or input.format.color_family not in [vs.YUV, vs.YCOCG] or input.format.bits_per_sample > 10:
         raise TypeError('LUTDeCrawl: This is not an 8-10 bit YUV or YCoCg clip')
 
@@ -2541,7 +2352,7 @@ def LUTDeRainbow(input, cthresh=10, ythresh=10, y=True, linkUV=True, mask=False)
     input_plus_v = mvf.GetPlane(input_plus, 2)
 
     expr = 'x y - abs {ythr} < {peak} 0 ?'.format(ythr=ythresh, peak=peak)
-    average_y = core.std.Expr([input_minus_y, input_plus_y], [expr]).resize.Bilinear(input_u.width, input_u.height)
+    average_y = core.std.Expr([input_minus_y, input_plus_y], [expr]).resize.Bilinear(input.width // 2, input.height // 2)
     average_u = core.std.Expr([input_minus_u, input_plus_u], ['x y - abs {cthr} < x y + 2 / 0 ?'.format(cthr=cthresh)])
     average_v = core.std.Expr([input_minus_v, input_plus_v], ['x y - abs {cthr} < x y + 2 / 0 ?'.format(cthr=cthresh)])
 
@@ -3190,7 +3001,7 @@ bv6 = bv4 = bv3 = bv2 = bv1 = fv1 = fv2 = fv3 = fv4 = fv6 = None
 
 def SMDegrain(input, tr=2, thSAD=300, thSADC=None, RefineMotion=False, contrasharp=None, CClip=None, interlaced=False, tff=None, plane=4, Globals=0,
               pel=None, subpixel=2, prefilter=-1, mfilter=None, blksize=None, overlap=None, search=4, truemotion=None, MVglobal=None, dct=0,
-              limit=255, limitc=None, thSCD1=None, thSCD2=130, chroma=True, hpad=None, vpad=None, Str=1., Amp=0.0625):
+              limit=255, limitc=None, thSCD1=None, thSCD2=130, chroma=True, hpad=None, vpad=None, Str=1., Amp=0.0625, opencl=False, device=None):
     if not isinstance(input, vs.VideoNode):
         raise TypeError('SMDegrain: This is not a clip')
 
@@ -3318,9 +3129,9 @@ def SMDegrain(input, tr=2, thSAD=300, thSADC=None, RefineMotion=False, contrasha
     if pelclip:
         import nnedi3_resample as nnrs
         cshift = 0.25 if pel == 2 else 0.375
-        pclip = nnrs.nnedi3_resample(pref, w * pel, h * pel, cshift, cshift, nns=4)
+        pclip = nnrs.nnedi3_resample(pref, w * pel, h * pel, cshift, cshift, nns=4, opencl=opencl, device=device)
         if not GlobalR:
-            pclip2 = nnrs.nnedi3_resample(inputP, w * pel, h * pel, cshift, cshift, nns=4)
+            pclip2 = nnrs.nnedi3_resample(inputP, w * pel, h * pel, cshift, cshift, nns=4, opencl=opencl, device=device)
 
     # Motion vectors search
     global bv6, bv4, bv3, bv2, bv1, fv1, fv2, fv3, fv4, fv6
@@ -3530,10 +3341,10 @@ def GrainFactory3(clp, g1str=7., g2str=5., g3str=3., g1shrp=60, g2shrp=66, g3shr
     peak = (1 << clp.format.bits_per_sample) - 1
 
     if clp.format.color_family != vs.GRAY:
-        clp_orig = clp
+        clp_src = clp
         clp = mvf.GetPlane(clp, 0)
     else:
-        clp_orig = None
+        clp_src = None
 
     ox = clp.width
     oy = clp.height
@@ -3601,8 +3412,8 @@ def GrainFactory3(clp, g1str=7., g2str=5., g3str=3., g1shrp=60, g2shrp=66, g3shr
         grainlayer = core.grain.Add(grainlayer, ontop_grain)
     result = core.std.MakeDiff(clp, grainlayer)
 
-    if clp_orig is not None:
-        return core.std.ShufflePlanes([result, clp_orig], planes=[0, 1, 2], colorfamily=clp_orig.format.color_family)
+    if clp_src is not None:
+        return core.std.ShufflePlanes([result, clp_src], planes=[0, 1, 2], colorfamily=clp_src.format.color_family)
     else:
         return result
 
@@ -3903,10 +3714,10 @@ def SmoothLevels(input, input_low=0, gamma=1., input_high=None, output_low=0, ou
 
     isGray = (input.format.color_family == vs.GRAY)
     if chroma <= 0 and not isGray:
-        input_orig = input
+        input_src = input
         input = mvf.GetPlane(input, 0)
     else:
-        input_orig = None
+        input_src = None
 
     if input_high is None:
         input_high = peak
@@ -4026,8 +3837,8 @@ def SmoothLevels(input, input_low=0, gamma=1., input_high=None, output_low=0, ou
     else:
         limitO = Slevel
 
-    if input_orig is not None:
-        return core.std.ShufflePlanes([limitO, input_orig], planes=[0, 1, 2], colorfamily=input_orig.format.color_family)
+    if input_src is not None:
+        return core.std.ShufflePlanes([limitO, input_src], planes=[0, 1, 2], colorfamily=input_src.format.color_family)
     else:
         return limitO
 
@@ -4076,10 +3887,10 @@ def FastLineDarkenMOD(c, strength=48, protection=5, luma_cap=191, threshold=4, t
     peak = (1 << c.format.bits_per_sample) - 1
 
     if c.format.color_family != vs.GRAY:
-        c_orig = c
+        c_src = c
         c = mvf.GetPlane(c, 0)
     else:
-        c_orig = None
+        c_src = None
 
     Str = strength / 128
     lum = scale(luma_cap, peak)
@@ -4094,12 +3905,13 @@ def FastLineDarkenMOD(c, strength=48, protection=5, luma_cap=191, threshold=4, t
     else:
         tmp = scale(127, peak)
         diff = core.std.Expr([c, exin], ['y {lum} < y {lum} ? x {thr} + > x y {lum} < y {lum} ? - 0 ? {i} +'.format(lum=lum, thr=thr, i=tmp)])
-        linemask = core.std.Expr([core.std.Minimum(diff)], ['x {i} - {thn} * {peak} +'.format(i=tmp, thn=thn, peak=peak)]).std.Convolution(matrix=[1, 1, 1, 1, 1, 1, 1, 1, 1])
+        expr = 'x {i} - {thn} * {peak} +'.format(i=tmp, thn=thn, peak=peak)
+        linemask = core.std.Expr([core.std.Minimum(diff)], [expr]).std.Convolution(matrix=[1, 1, 1, 1, 1, 1, 1, 1, 1])
         thin = core.std.Expr([core.std.Maximum(c), diff], ['x y {i} - {Str} 1 + * +'.format(i=tmp, Str=Str)])
         last = core.std.MaskedMerge(thin, thick, linemask)
 
-    if c_orig is not None:
-        return core.std.ShufflePlanes([last, c_orig], planes=[0, 1, 2], colorfamily=c_orig.format.color_family)
+    if c_src is not None:
+        return core.std.ShufflePlanes([last, c_src], planes=[0, 1, 2], colorfamily=c_src.format.color_family)
     else:
         return last
 
@@ -4131,10 +3943,10 @@ def Toon(input, str=1., l_thr=2, u_thr=12, blur=2, depth=32):
     multiple = peak / 255
 
     if input.format.color_family != vs.GRAY:
-        input_orig = input
+        input_src = input
         input = mvf.GetPlane(input, 0)
     else:
-        input_orig = None
+        input_src = None
 
     lthr = neutral + scale(l_thr, peak)
     lthr8 = lthr / multiple
@@ -4148,8 +3960,8 @@ def Toon(input, str=1., l_thr=2, u_thr=12, blur=2, depth=32):
     expr = 'y {lthr} <= {neutral} y {uthr} >= x {uthr8} y {multiple} / - 128 * x {multiple} / y {multiple} / {lthr8} - * + {ludiff} / {multiple} * ? {neutral} - {str} * {neutral} + ?'.format(lthr=lthr, neutral=neutral, uthr=uthr, uthr8=uthr8, multiple=multiple, lthr8=lthr8, ludiff=ludiff, str=str)
     last = core.std.MakeDiff(input, core.std.Expr([last, core.std.Maximum(last)], [expr]))
 
-    if input_orig is not None:
-        return core.std.ShufflePlanes([last, input_orig], planes=[0, 1, 2], colorfamily=input_orig.format.color_family)
+    if input_src is not None:
+        return core.std.ShufflePlanes([last, input_src], planes=[0, 1, 2], colorfamily=input_src.format.color_family)
     else:
         return last
 
@@ -4595,7 +4407,7 @@ def LSFmod(input, strength=100, Smode=None, Smethod=None, kernel=11, preblur=Fal
         tmp = input
 
     if not isGray:
-        tmp_orig = tmp
+        tmp_src = tmp
         tmp = mvf.GetPlane(tmp, 0)
 
     if not preblur:
@@ -4681,7 +4493,7 @@ def LSFmod(input, strength=100, Smode=None, Smethod=None, kernel=11, preblur=Fal
     ### OUTPUT
     if dest_x != ox or dest_y != oy:
         if not isGray:
-            PP2 = core.std.ShufflePlanes([PP2, tmp_orig], planes=[0, 1, 2], colorfamily=input.format.color_family)
+            PP2 = core.std.ShufflePlanes([PP2, tmp_src], planes=[0, 1, 2], colorfamily=input.format.color_family)
         out = core.resize.Spline36(PP2, dest_x, dest_y)
     elif ss_x > 1 or ss_y > 1:
         out = core.resize.Spline36(PP2, dest_x, dest_y)
@@ -5080,10 +4892,10 @@ def Overlay(clipa, clipb, x=0, y=0, mask=None, opacity=1.):
     if not (isinstance(clipa, vs.VideoNode) and isinstance(clipb, vs.VideoNode)):
         raise TypeError('Overlay: This is not a clip')
     if clipa.format.subsampling_w > 0 or clipa.format.subsampling_h > 0:
-        clipa_orig = clipa
+        clipa_src = clipa
         clipa = core.resize.Point(clipa, format=core.register_format(clipa.format.color_family, clipa.format.sample_type, clipa.format.bits_per_sample, 0, 0).id)
     else:
-        clipa_orig = None
+        clipa_src = None
     if clipb.format.id != clipa.format.id:
         clipb = core.resize.Point(clipb, format=clipa.format.id)
     if mask is None:
@@ -5115,8 +4927,8 @@ def Overlay(clipa, clipb, x=0, y=0, mask=None, opacity=1.):
 
     # Return padded clip
     last = core.std.MaskedMerge(clipa, clipb, mask)
-    if clipa_orig is not None:
-        last = core.resize.Point(last, format=clipa_orig.format.id)
+    if clipa_src is not None:
+        last = core.resize.Point(last, format=clipa_src.format.id)
     return last
 
 
