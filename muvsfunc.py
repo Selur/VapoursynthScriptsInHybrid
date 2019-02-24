@@ -938,7 +938,7 @@ def ediaa(a):
     return last
 
 
-def nnedi3aa(a):
+def nnedi3aa(a, opencl=False, device=None):
     """Using nnedi3 (Emulgator):
 
     Read the document of Avisynth version for more details.
@@ -950,8 +950,14 @@ def nnedi3aa(a):
     if not isinstance(a, vs.VideoNode):
         raise TypeError(funcName + ': \"a\" must be a clip!')
 
-    last = core.nnedi3.nnedi3(a, field=1, dh=True).std.Transpose()
-    last = core.nnedi3.nnedi3(last, field=1, dh=True).std.Transpose()
+    if opencl:
+      myNNEDI3 = core.nnedi3cl.NNEDI3CL
+      last = myNNEDI3(a, field=1, dh=True, device=device).std.Transpose()
+      last = myNNEDI3(last, field=1, dh=True, device=device).std.Transpose()
+    else:
+      myNNEDI3 = core.znedi3.nnedi3 if hasattr(core, 'znedi3') else core.nnedi3.nnedi3
+      last = myNNEDI3(a, field=1, dh=True).std.Transpose()
+      last = myNNEDI3(last, field=1, dh=True).std.Transpose()
     last = core.resize.Spline36(last, a.width, a.height, src_left=-0.5, src_top=-0.5)
 
     return last
