@@ -580,7 +580,7 @@ def GradFun3(src, thr=None, radius=None, elast=None, mask=None, mode=None, ampo=
 
     if mask > 0:
         dmask = mvf.GetPlane(src_8, 0)
-        dmask = _Build_gf3_range_mask(dmask)
+        dmask = Build_gf3_range_mask(dmask)
         dmask = core.std.Expr([dmask], [mexpr])
         dmask = core.rgvs.RemoveGrain([dmask], [22])
         if mask > 1:
@@ -660,7 +660,7 @@ def _GF3_bilateral_multistage(src, ref, radius, thr, elast, planes):
     return last
 
 
-def _Build_gf3_range_mask(src, radius=1):
+def Build_gf3_range_mask(src, radius=1):
 
     last = src
 
