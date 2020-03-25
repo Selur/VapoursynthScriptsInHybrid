@@ -13,6 +13,8 @@ Holy's ported AviSynth functions for VapourSynth.
 
 Main functions:
     daa
+    daa3mod
+    mcdaa3
     santiag
     FixChromaBleedingMod
     Deblock_QED
@@ -88,7 +90,6 @@ def daa(c, nsize=None, nns=None, qual=None, pscrn=None, int16_prescreener=None, 
         raise TypeError('daa: This is not a clip')
 
     if opencl:
-                                         
         nnedi3 = partial(core.nnedi3cl.NNEDI3CL, nsize=nsize, nns=nns, qual=qual, pscrn=pscrn, device=device)
     else:
         nnedi3 = partial(core.znedi3.nnedi3 if hasattr(core, 'znedi3') else core.nnedi3.nnedi3,
@@ -97,13 +98,30 @@ def daa(c, nsize=None, nns=None, qual=None, pscrn=None, int16_prescreener=None, 
     nn = nnedi3(c, field=3)
     dbl = core.std.Merge(nn[::2], nn[1::2])
     dblD = core.std.MakeDiff(c, dbl)
-                      
     shrpD = core.std.MakeDiff(dbl, core.std.Convolution(dbl, matrix=[1, 1, 1, 1, 1, 1, 1, 1, 1] if c.width > 1100 else [1, 2, 1, 2, 4, 2, 1, 2, 1]))
-         
-                                                                                                     
     DD = core.rgvs.Repair(shrpD, dblD, mode=[13])
     return core.std.MergeDiff(dbl, DD)
 
+def daa3mod(c1, nsize=None, nns=None, qual=None, pscrn=None, int16_prescreener=None, int16_predictor=None, exp=None, opencl=False, device=None):
+    if not isinstance(c1, vs.VideoNode):
+        raise TypeError('daa3mod: This is not a clip')
+
+    c = core.resize.Spline36(c1, c1.width, c1.height * 3 // 2)
+    return daa(c, nsize, nns, qual, pscrn, int16_prescreener, int16_predictor, exp, opencl, device).resize.Spline36(c1.width, c1.height)
+
+
+def mcdaa3(input, nsize=None, nns=None, qual=None, pscrn=None, int16_prescreener=None, int16_predictor=None, exp=None, opencl=False, device=None):
+    if not isinstance(input, vs.VideoNode):
+        raise TypeError('mcdaa3: This is not a clip')
+
+    sup = core.hqdn3d.Hqdn3d(input).fft3dfilter.FFT3DFilter().mv.Super(sharp=1)
+    fv1 = core.mv.Analyse(sup, isb=False, delta=1, truemotion=False, dct=2)
+    fv2 = core.mv.Analyse(sup, isb=True, delta=1, truemotion=True, dct=2)
+    csaa = daa3mod(input, nsize, nns, qual, pscrn, int16_prescreener, int16_predictor, exp, opencl, device)
+    momask1 = core.mv.Mask(input, fv1, ml=2, kind=1)
+    momask2 = core.mv.Mask(input, fv2, ml=3, kind=1)
+    momask = core.std.Merge(momask1, momask2)
+    return core.std.MaskedMerge(input, csaa, momask)
 
 # santiag v1.6
 # Simple antialiasing
@@ -281,30 +299,6 @@ def FixChromaBleedingMod(input, cx=4, cy=4, thr=4.0, strength=0.8, blur=False):
     fv = core.std.MaskedMerge(mvf.GetPlane(input, 2), mvf.GetPlane(input_c, 2), mask)
     return core.std.ShufflePlanes([input, fu, fv], planes=[0, 0, 0], colorfamily=input.format.color_family)
 
-
-                              
-                                                                                    
-                                                      
- 
-                     
-                                                  
-                                                                                        
-                                                          
- 
-                     
-                                        
-                                                                         
- 
-                     
-                                                                                                    
-                                                                                                                   
-                                                                                
- 
-                               
-                                                                                                                
-                                                                          
-                                                                                             
- 
 # Parameters:
 #  quant1 (int) - Strength of block edge deblocking. Default is 24
 #  quant2 (int) - Strength of block internal deblocking. Default is 26
@@ -507,7 +501,6 @@ def FineDehalo(src, rx=2.0, ry=None, thmi=80, thma=128, thlimi=50, thlima=100, d
     if src.format.color_family == vs.RGB:
         raise TypeError('FineDehalo: RGB color family is not supported')
 
-    neutral = 1 << (src.format.bits_per_sample - 1)
     peak = (1 << src.format.bits_per_sample) - 1
 
     if src.format.color_family != vs.GRAY:
@@ -528,12 +521,7 @@ def FineDehalo(src, rx=2.0, ry=None, thmi=80, thma=128, thlimi=50, thlima=100, d
 
     # Contrasharpening
     if contra > 0:
-        bb = core.std.Convolution(dehaloed, matrix=[1, 2, 1, 2, 4, 2, 1, 2, 1])
-        bb2 = core.rgvs.Repair(bb, core.rgvs.Repair(bb, core.ctmf.CTMF(bb, radius=2), mode=[1]), mode=[1])
-        xd = core.std.MakeDiff(bb, bb2)
-        xd = core.std.Expr([xd], expr=[f'x {neutral} - 2.49 * {contra} * {neutral} +'])
-        xdd = core.std.Expr([xd, core.std.MakeDiff(src, dehaloed)], expr=[f'x {neutral} - y {neutral} - * 0 < {neutral} x {neutral} - abs y {neutral} - abs < x y ? ?'])
-        dehaloed = core.std.MergeDiff(dehaloed, xdd)
+        dehaloed = FineDehalo_contrasharp(dehaloed, src, contra)
 
     ### Main edges ###
 
@@ -615,6 +603,36 @@ def FineDehalo(src, rx=2.0, ry=None, thmi=80, thma=128, thlimi=50, thlima=100, d
             return edges
         else:
             return strong
+
+# level == 1.0 : normal contrasharp
+def FineDehalo_contrasharp(dehaloed, src, level):
+    if not (isinstance(dehaloed, vs.VideoNode) and isinstance(src, vs.VideoNode)):
+        raise TypeError('FineDehalo_contrasharp: This is not a clip')
+    if dehaloed.format.color_family == vs.RGB:
+        raise TypeError('FineDehalo_contrasharp: RGB color family is not supported')
+    if dehaloed.format.id != src.format.id:
+        raise TypeError('FineDehalo_contrasharp: Both clips must have the same format')
+
+    neutral = 1 << (dehaloed.format.bits_per_sample - 1)
+
+    if dehaloed.format.color_family != vs.GRAY:
+        dehaloed_orig = dehaloed
+        dehaloed = mvf.GetPlane(dehaloed, 0)
+        src = mvf.GetPlane(src, 0)
+    else:
+        dehaloed_orig = None
+
+    bb = core.std.Convolution(dehaloed, matrix=[1, 2, 1, 2, 4, 2, 1, 2, 1])
+    bb2 = core.rgvs.Repair(bb, core.rgvs.Repair(bb, core.ctmf.CTMF(bb, radius=2), mode=[1]), mode=[1])
+    xd = core.std.MakeDiff(bb, bb2)
+    xd = core.std.Expr([xd], expr=[f'x {neutral} - 2.49 * {level} * {neutral} +'])
+    xdd = core.std.Expr([xd, core.std.MakeDiff(src, dehaloed)], expr=[f'x {neutral} - y {neutral} - * 0 < {neutral} x {neutral} - abs y {neutral} - abs < x y ? ?'])
+    last = core.std.MergeDiff(dehaloed, xdd)
+
+    if dehaloed_orig is not None:
+        last = core.std.ShufflePlanes([last, dehaloed_orig], planes=[0, 1, 2], colorfamily=dehaloed_orig.format.color_family)
+    return last
+
 
 # Try to remove 2nd order halos
 def FineDehalo2(src, hconv=[-1, -2, 0, 0, 40, 0, 0, -2, -1], vconv=[-2, -1, 0, 0, 40, 0, 0, -1, -2], showmask=0):
@@ -5519,26 +5537,63 @@ def KNLMeansCL(clip, d=None, a=None, s=None, h=None, wmode=None, wref=None, devi
                                                                                                       
 
 
-def Overlay(clipa, clipb, x=0, y=0, mask=None, opacity=1.0):
+def Overlay(clipa, clipb, x=0, y=0, mask=None, opacity=1.0, mode='blend'):
     if not (isinstance(clipa, vs.VideoNode) and isinstance(clipb, vs.VideoNode)):
         raise TypeError('Overlay: This is not a clip')
+
+    if mask is not None:
+        if not isinstance(mask, vs.VideoNode):
+            raise TypeError("Overlay: 'mask' is not a clip")
+
+        if mask.width != clipb.width or mask.height != clipb.height or mask.format.bits_per_sample != clipb.format.bits_per_sample:
+            raise TypeError("Overlay: 'mask' must have the same dimensions and bit depth as 'clipb'")
+
+    isGray = (clipa.format.color_family == vs.GRAY)
+    sample_type = clipa.format.sample_type
+    bits_per_sample = clipa.format.bits_per_sample
+
+    if sample_type == vs.INTEGER:
+        neutral = [1 << (bits_per_sample - 1)] * 2
+        peak = (1 << bits_per_sample) - 1
+        range = peak + 1
+        factor = 1 / range
+    else:
+        neutral = [0.5, 0.0]
+        peak = range = factor = 1.0
+
+    matrix = '709' if clipa.width > 1024 or clipa.height > 576 else '170m'
+    matrix_in_s = matrix_s = None
+
+    opacity = min(max(opacity, 0.0), 1.0)
+    mode = mode.lower()
+
+    if mode == 'chroma' and isGray:
+        return clipa
+
     if clipa.format.subsampling_w > 0 or clipa.format.subsampling_h > 0:
         clipa_orig = clipa
-        clipa = core.resize.Point(clipa, format=core.register_format(clipa.format.color_family, clipa.format.sample_type, clipa.format.bits_per_sample, 0, 0).id)
+        clipa = core.resize.Point(clipa, format=core.register_format(clipa.format.color_family, sample_type, bits_per_sample, 0, 0).id)
     else:
         clipa_orig = None
+
     if clipb.format.id != clipa.format.id:
         clipb = core.resize.Point(clipb, format=clipa.format.id)
-    if mask is None:
-        mask = core.std.BlankClip(clipb, color=[(1 << clipb.format.bits_per_sample) - 1] * clipb.format.num_planes)
-    elif not isinstance(mask, vs.VideoNode):
-        raise TypeError("Overlay: 'mask' is not a clip")
-    if mask.width != clipb.width or mask.height != clipb.height:
-        raise TypeError("Overlay: 'mask' must be the same dimension as 'clipb'")
 
-    mask = mvf.GetPlane(mask, 0)
-    if opacity < 1:
-        mask = core.std.Expr([mask], expr=[f'x {opacity} *'])
+    if mask is not None and mask.format.id != clipb.format.id:
+        if mask.format.color_family != vs.GRAY:
+            mask = core.resize.Point(mask, format=clipb.format.id, range_s='full')
+        else:
+            mask = core.std.ShufflePlanes([mask], planes=[0, 0, 0], colorfamily=clipb.format.color_family)
+
+    if mask is None and mode in ['blend', 'chroma', 'luma', 'difference']:
+        mask = core.std.BlankClip(clipb, format=core.register_format(vs.GRAY, sample_type, bits_per_sample, 0, 0).id, color=[peak])
+
+    if mode in ['chroma', 'luma', 'multiply', 'lighten', 'darken', 'softlight', 'hardlight', 'difference', 'exclusion'] and clipa.format.color_family == vs.RGB:
+        clipa_orig = clipa
+        clipa = core.resize.Point(clipa, format=core.register_format(vs.YUV, sample_type, bits_per_sample, 0, 0).id, matrix_s=matrix)
+        clipb = core.resize.Point(clipb, format=core.register_format(vs.YUV, sample_type, bits_per_sample, 0, 0).id, matrix_s=matrix)
+        if mask is not None:
+            mask = core.std.ShufflePlanes([mask], planes=[0, 0, 0], colorfamily=vs.YUV)
 
     # Calculate padding sizes
     l, r = x, clipa.width - clipb.width - x
@@ -5551,15 +5606,108 @@ def Overlay(clipa, clipb, x=0, y=0, mask=None, opacity=1.0):
     cb, pb = min(b, 0) * -1, max(b, 0)
 
     # Crop and padding
-    clipb = core.std.Crop(clipb, cl, cr, ct, cb)
-    mask = core.std.Crop(mask, cl, cr, ct, cb)
-    clipb = core.std.AddBorders(clipb, pl, pr, pt, pb)
-    mask = core.std.AddBorders(mask, pl, pr, pt, pb)
+    if mode in ['multiply', 'darken']:
+        color = [peak] * clipb.format.num_planes
+    elif mode in ['softlight', 'hardlight']:
+        color = [neutral[0]] if isGray else [neutral[0], neutral[1], neutral[1]]
+    else:
+        color = None
+
+    clipb = core.std.Crop(clipb, left=cl, right=cr, top=ct, bottom=cb)
+    clipb = core.std.AddBorders(clipb, left=pl, right=pr, top=pt, bottom=pb, color=color)
+    if mask is not None:
+        mask = core.std.Crop(mask, left=cl, right=cr, top=ct, bottom=cb)
+        mask = core.std.AddBorders(mask, left=pl, right=pr, top=pt, bottom=pb, color=[0] * mask.format.num_planes)
+
+    if mode in ['blend', 'chroma', 'luma']:
+        if opacity < 1:
+            mask = core.std.Expr([mask], expr=[f'x {opacity} *'])
+
+        if mode == 'luma' or isGray:
+            planes = [0]
+        elif mode == 'chroma':
+            planes = [1, 2]
+        else:
+            planes = [0, 1, 2]
+
+        last = core.std.MaskedMerge(clipa, clipb, mask, planes=planes, first_plane=True)
+    elif mode in ['add', 'subtract']:
+        if clipa.format.color_family in [vs.YUV, vs.YCOCG]:
+            if clipa_orig is None:
+                clipa_orig = clipa
+            clipa = core.resize.Point(clipa, format=core.register_format(vs.RGB, sample_type, bits_per_sample, 0, 0).id, matrix_in_s=matrix)
+            clipb = core.resize.Point(clipb, format=core.register_format(vs.RGB, sample_type, bits_per_sample, 0, 0).id, matrix_in_s=matrix)
+            if mask is not None:
+                mask = core.std.ShufflePlanes([mask], planes=[0, 0, 0], colorfamily=vs.RGB)
+            matrix_s = matrix
+
+        if mask is None:
+            expr = f'x y {opacity} * +' if mode == 'add' else f'x y {opacity} * -'
+            last = core.std.Expr([clipa, clipb], expr=[expr])
+        else:
+            expr = f'x y z * {opacity} * {factor} * +' if mode == 'add' else f'x y z * {opacity} * {factor} * -'
+            last = core.std.Expr([clipa, clipb, mask], expr=[expr])
+    elif mode == 'multiply':
+        if not isGray:
+            clipb = core.std.ShufflePlanes([clipb], planes=[0, 0, 0], colorfamily=clipb.format.color_family)
+
+        if mask is None:
+            exprY = f'x {range} {1 - opacity} * y {opacity} * + * {factor} *'
+            exprUV = f'x {range} * {1 - opacity} * x y * {range} y - {neutral[1]} * + {opacity} * + {factor} *'
+            last = core.std.Expr([clipa, clipb], expr=[exprY] if isGray else [exprY, exprUV])
+        else:
+            exprY = f'x {range} {range} z {opacity} * - * y z * {opacity} * + * {factor * factor} *'
+            exprUV = f'x {range} * {range} z {opacity} * - * x y * {neutral[1]} {range} y - * + z * {opacity} * + {factor * factor} *'
+            last = core.std.Expr([clipa, clipb, mask], expr=[exprY] if isGray else [exprY, exprUV])
+    elif mode in ['lighten', 'darken']:
+        cmp = core.std.Expr([mvf.GetPlane(clipa, 0), mvf.GetPlane(clipb, 0)], expr=['y x > 1 0 ?' if mode == 'lighten' else 'y x < 1 0 ?'])
+        if not isGray:
+            cmp = core.std.ShufflePlanes([cmp], planes=[0, 0, 0], colorfamily=clipa.format.color_family)
+
+        if mask is None:
+            expr = f'z 1 = x {1 - opacity} * y {opacity} * + x ?'
+            last = core.std.Expr([clipa, clipb, cmp], expr=[expr])
+        else:
+            expr = f'a 1 = x {range} z {opacity} * - * y z * {opacity} * + {factor} * x ?'
+            last = core.std.Expr([clipa, clipb, mask, cmp], expr=[expr])
+    elif mode in ['softlight', 'hardlight']:
+        if mask is None:
+            exprY = f'x {1 - opacity} * x y + {neutral[0]} - {opacity} * +' if mode == 'softlight' else f'x {1 - opacity} * x y 2 * + {neutral[0] * 2} - {opacity} * +'
+            exprUV = f'x {1 - opacity} * x y + {neutral[1]} - {opacity} * +'
+            last = core.std.Expr([clipa, clipb], expr=[exprY] if isGray else [exprY, exprUV])
+        else:
+            exprY = f'x {range} z {opacity} * - * x y + {neutral[0]} - z * {opacity} * + {factor} *' if mode == 'softlight' else f'x {range} z {opacity} * - * x y 2 * + {neutral[0] * 2} - z * {opacity} * + {factor} *'
+            exprUV = f'x {range} z {opacity} * - * x y + {neutral[1]} - z * {opacity} * + {factor} *'
+            last = core.std.Expr([clipa, clipb, mask], expr=[exprY] if isGray else [exprY, exprUV])
+    elif mode == 'difference':
+        exprY = f'x {1 - opacity} * x y - abs {neutral[0]} + {opacity} * +'
+        exprUV = f'x {1 - opacity} * x y - abs {neutral[1]} + {opacity} * +'
+        last = core.std.Expr([clipa, clipb], expr=[exprY] if isGray else [exprY, exprUV])
+        last = core.std.MaskedMerge(clipa, last, mask, first_plane=True)
+    elif mode == 'exclusion':
+        if not isGray:
+            clipb = core.std.ShufflePlanes([clipb], planes=[0, 0, 0], colorfamily=clipb.format.color_family)
+
+        if mask is None:
+            if sample_type == vs.INTEGER:
+                exprY = exprUV = f'x {1 - opacity} * {peak} x - y * {peak} y - x * + {factor} * {opacity} * +'
+            else:
+                exprY = f'x {1 - opacity} * {peak} x - y * {peak} y - x * + {factor} * {opacity} * +'
+                exprUV = f'x 0.5 + {1 - opacity} * {peak} x 0.5 + - y * {peak} y - x 0.5 + * + {factor} * {opacity} * + 0.5 -'
+            last = core.std.Expr([clipa, clipb], expr=[exprY] if isGray else [exprY, exprUV])
+        else:
+            if sample_type == vs.INTEGER:
+                exprY = exprUV = f'x {range} z {opacity} * - * {peak} x - y * {peak} y - x * + {factor} * z * {opacity} * + {factor} *'
+            else:
+                exprY = f'x {range} z {opacity} * - * {peak} x - y * {peak} y - x * + {factor} * z * {opacity} * + {factor} *'
+                exprUV = f'x 0.5 + {range} z {opacity} * - * {peak} x 0.5 + - y * {peak} y - x 0.5 + * + {factor} * z * {opacity} * + {factor} * 0.5 -'
+            last = core.std.Expr([clipa, clipb, mask], expr=[exprY] if isGray else [exprY, exprUV])
+    else:
+        raise ValueError("Overlay: invalid 'mode' specified")
 
     # Return padded clip
-    last = core.std.MaskedMerge(clipa, clipb, mask)
     if clipa_orig is not None:
-        last = core.resize.Point(last, format=clipa_orig.format.id)
+        last = core.resize.Point(last, format=clipa_orig.format.id, matrix_in_s=matrix_in_s, matrix_s=matrix_s)
     return last
 
 
