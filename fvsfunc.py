@@ -146,7 +146,7 @@ Original header:
 def GradFun3(src, thr=None, radius=None, elast=None, mask=None, mode=None, ampo=None,
                 ampn=None, pat=None, dyn=None, staticnoise=None, smode=None, thr_det=None,
                 debug=None, thrc=None, radiusc=None, elastc=None, planes=None, ref=None,
-                yuv444=None, w=None, h=None, resizer=None, b=None, c=None, bits=None):
+                yuv444=None, w=None, h=None, resizer=None, b=None, c=None, bits=None, opencl=False, device=None):
 
     def smooth_mod(src_16, ref_16, smode, radius, thr, elast, planes):
         if smode == 0:
