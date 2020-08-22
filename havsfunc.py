@@ -115,7 +115,11 @@ def mcdaa3(input, nsize=None, nns=None, qual=None, pscrn=None, int16_prescreener
     if not isinstance(input, vs.VideoNode):
         raise vs.Error('mcdaa3: This is not a clip')
 
-    sup = input.hqdn3d.Hqdn3d().neo_fft3d.FFT3D().mv.Super(sharp=1)
+    if hasattr(core, 'neo_fft3d'):
+      sup = input.hqdn3d.Hqdn3d().neo_fft3d.FFT3D().mv.Super(sharp=1)
+    else:
+      sup = input.hqdn3d.Hqdn3d().fft3dfilter.FFT3DFilter().mv.Super(sharp=1)
+
     fv1 = sup.mv.Analyse(isb=False, delta=1, truemotion=False, dct=2)
     fv2 = sup.mv.Analyse(isb=True, delta=1, truemotion=True, dct=2)
     csaa = daa3mod(input, nsize, nns, qual, pscrn, int16_prescreener, int16_predictor, exp, opencl, device)
@@ -1274,8 +1278,10 @@ def QTGMC(Input, Preset='Slower', TR0=None, TR1=None, TR2=None, Rep0=None, Rep1=
             else:
                 dnWindow = noiseWindow.knlm.KNLMeansCL(d=NoiseTR, h=Sigma)
         else:
-            dnWindow = noiseWindow.neo_fft3d.FFT3D(sigma=Sigma, planes=CNplanes, bt=noiseTD)
-
+            if hasattr(core, 'neo_fft3d'):
+              dnWindow = noiseWindow.neo_fft3d.FFT3D(sigma=Sigma, planes=CNplanes, bt=noiseTD)
+            else:
+              dnWindow = noiseWindow.fft3dfilter.FFT3DFilter(sigma=Sigma, planes=CNplanes, bt=noiseTD)
         # Rework denoised clip to match source format - various code paths here: discard the motion compensation window, discard doubled lines (from point resize)
         # Also reweave to get interlaced noise if source was interlaced (could keep the full frame of noise, but it will be poor quality from the point resize)
         if not DenoiseMC:
@@ -3127,7 +3133,10 @@ def MCTemporalDenoise(i, radius=None, pfMode=3, sigma=None, twopass=None, useTTm
     elif pfMode <= -1:
         p = i
     elif pfMode == 0:
-        p = i.neo_fft3d.FFT3D(sigma=sigma * 0.8, sigma2=sigma * 0.6, sigma3=sigma * 0.4, sigma4=sigma * 0.2, **fft3d_args)
+        if hasattr(core, 'neo_fft3d'):
+            p = i.neo_fft3d.FFT3D(sigma=sigma * 0.8, sigma2=sigma * 0.6, sigma3=sigma * 0.4, sigma4=sigma * 0.2, **fft3d_args)
+        else:
+            p = i.fft3fdilter.FFT3DFilter(sigma=sigma * 0.8, sigma2=sigma * 0.6, sigma3=sigma * 0.4, sigma4=sigma * 0.2, **fft3d_args)
     elif pfMode >= 3:
         p = i.dfttest.DFTTest(tbsize=1, slocation=[0.0,4.0, 0.2,9.0, 1.0,15.0], planes=planes)
     else:
@@ -3306,7 +3315,10 @@ def MCTemporalDenoise(i, radius=None, pfMode=3, sigma=None, twopass=None, useTTm
     if post <= 0:
         smP = smL
     else:
-        smP = smL.neo_fft3d.FFT3D(sigma=post * 0.8, sigma2=post * 0.6, sigma3=post * 0.4, sigma4=post * 0.2, **fft3d_args)
+        if hasattr(core, 'neo_fft3d'):
+            smP = smL.neo_fft3d.FFT3D(sigma=post * 0.8, sigma2=post * 0.6, sigma3=post * 0.4, sigma4=post * 0.2, **fft3d_args)
+        else:
+            smP = smL.fft3dfilter.FFT3DFilter(sigma=post * 0.8, sigma2=post * 0.6, sigma3=post * 0.4, sigma4=post * 0.2, **fft3d_args)
 
     ### EDGECLEANING
     if edgeclean:
@@ -5155,9 +5167,14 @@ def TemporalDegrain(          \
 
     # Taking care of a missing denoising clip and use of fft3d to determine it
     if denoiseClip is None:
-        denoiseClip = inpClip.neo_fft3d.FFT3D(sigma=sigma\
-            , sigma2=sigma2, sigma3=sigma3, sigma4=sigma4, bw=blockWidth\
-            , bh=blockHeight, ow=overlapWidth, oh=overlapHeight)
+        if hasattr(core, 'neo_fft3d'):
+          denoiseClip = inpClip.neo_fft3d.FFT3D(sigma=sigma\
+              , sigma2=sigma2, sigma3=sigma3, sigma4=sigma4, bw=blockWidth\
+              , bh=blockHeight, ow=overlapWidth, oh=overlapHeight)
+        else:
+          denoiseClip = inpClip.fft3dfilter.FFT3DFilter(sigma=sigma\
+              , sigma2=sigma2, sigma3=sigma3, sigma4=sigma4, bw=blockWidth\
+              , bh=blockHeight, ow=overlapWidth, oh=overlapHeight)
 
     # If HQ is activated, do an additional denoising
     if HQ > 0:
