@@ -192,7 +192,7 @@ def santiag(c, strh=1, strv=1, type='nnedi3', nsize=None, nns=None, qual=None, p
                 if c.format.color_family != vs.GRAY:
                     cshift = [cshift, cshift * (1 << c.format.subsampling_h)]
                 c = Resize(c, w, h * 2, sy=cshift, dmode=1)
-            return c.sangnom.SangNom(order=field, aa=aa)
+            return c.sangnom.SangNomMod(order=field, aa=aa)
         else:
             raise vs.Error('santiag: unexpected value for type')
 
