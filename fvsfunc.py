@@ -150,13 +150,13 @@ def GradFun3(src, thr=None, radius=None, elast=None, mask=None, mode=None, ampo=
 
     def smooth_mod(src_16, ref_16, smode, radius, thr, elast, planes):
         if smode == 0:
-            return muf.GF3_smoothgrad_multistage(src_16, ref_16, radius, thr, elast, planes)
+            return muf._GF3_smoothgrad_multistage(src_16, ref_16, radius, thr, elast, planes)
         elif smode == 1:
-            return muf.GF3_dfttest(src_16, ref_16, radius, thr, elast, planes)
+            return muf._GF3_dfttest(src_16, ref_16, radius, thr, elast, planes)
         elif smode == 2:
             return bilateral(src_16, ref_16, radius, thr, elast, planes)
         elif smode == 3:
-            return muf.GF3_smoothgrad_multistage_3(src_16, radius, thr, elast, planes)
+            return muf._GF3_smoothgrad_multistage_3(src_16, radius, thr, elast, planes)
         elif smode == 4:
             return dfttest_mod(src_16, ref_16, radius, thr, elast, planes)
         elif smode == 5:
