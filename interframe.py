@@ -38,7 +38,7 @@ def InterFrame(Input, Preset='Medium', Tuning='Film', NewNum=None, NewDen=1, GPU
               SuperString = '{'
           SuperString += 'gpu:1}' if GPU else 'gpu:0}'
         else:
-          SuperString = overWriteSuper
+          SuperString = overwriteSuper
 
         # Create VectorsString
         if overwriteVectors == '':
