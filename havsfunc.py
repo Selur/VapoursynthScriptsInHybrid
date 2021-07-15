@@ -5330,7 +5330,7 @@ def aaf(                \
             aa = inputClip.resize.Lanczos(4*int(sx*aar), 4*int(sy*aar))
 
         # y-Edges
-        aa = aa.sangnom.SangNom(aa=aay)
+        aa = aa.sangnom.SangNomMod(aa=aay)
     else:
         aa = inputClip
 
@@ -5339,7 +5339,7 @@ def aaf(                \
             aa = aa.resize.Lanczos(4*int(sx*aar), sy)
         aa = aa.std.Transpose()
         # x-Edges
-        aa = aa.sangnom.SangNom(aa=aax)
+        aa = aa.sangnom.SangNomMod(aa=aax)
         aa = aa.std.Transpose()
 
     # Restore original scaling
