@@ -988,8 +988,8 @@ def maa(input):
 
     mask = core.std.Convolution(input, [0, -1, 0, -1, 0, 1, 0, 1, 0], divisor=2, saturate=False).std.Binarize(scale(7, bits) + 1)
     aa_clip = core.resize.Spline36(input, w * 2, h * 2)
-    aa_clip = core.sangnom.SangNomMod(aa_clip).std.Transpose()
-    aa_clip = core.sangnom.SangNomMod(aa_clip).std.Transpose()
+    aa_clip = core.sangnom.SangNom(aa_clip).std.Transpose()
+    aa_clip = core.sangnom.SangNom(aa_clip).std.Transpose()
     aa_clip = core.resize.Spline36(aa_clip, w, h)
     last = core.std.MaskedMerge(input, aa_clip, mask)
 
@@ -1082,8 +1082,8 @@ def SharpAAMcmod(orig, dark=0.2, thin=10, sharp=150, smooth=-1, stabilize=False,
     aatype = aatype.lower()
     if aatype == 'sangnom':
         aa = core.resize.Spline36(preaa, w * 2, h * 2)
-        aa = core.std.Transpose(aa).sangnom.SangNomMod()
-        aa = core.std.Transpose(aa).sangnom.SangNomMod()
+        aa = core.std.Transpose(aa).sangnom.SangNom()
+        aa = core.std.Transpose(aa).sangnom.SangNom()
         aa = core.resize.Spline36(aa, w, h)
     elif aatype == 'eedi2':
         aa = ediaa(preaa)

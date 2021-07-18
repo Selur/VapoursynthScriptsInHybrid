@@ -192,7 +192,7 @@ def santiag(c, strh=1, strv=1, type='nnedi3', nsize=None, nns=None, qual=None, p
                 if c.format.color_family != vs.GRAY:
                     cshift = [cshift, cshift * (1 << c.format.subsampling_h)]
                 c = Resize(c, w, h * 2, sy=cshift, dmode=1)
-            return c.sangnom.SangNomMod(order=field, aa=aa)
+            return c.sangnom.SangNom(order=field, aa=aa)
         else:
             raise vs.Error('santiag: unexpected value for type')
 
@@ -5330,7 +5330,7 @@ def aaf(                \
             aa = inputClip.resize.Lanczos(4*int(sx*aar), 4*int(sy*aar))
 
         # y-Edges
-        aa = aa.sangnom.SangNomMod(aa=aay)
+        aa = aa.sangnom.SangNom(aa=aay)
     else:
         aa = inputClip
 
@@ -5339,7 +5339,7 @@ def aaf(                \
             aa = aa.resize.Lanczos(4*int(sx*aar), sy)
         aa = aa.std.Transpose()
         # x-Edges
-        aa = aa.sangnom.SangNomMod(aa=aax)
+        aa = aa.sangnom.SangNom(aa=aax)
         aa = aa.std.Transpose()
 
     # Restore original scaling
