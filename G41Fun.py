@@ -2198,14 +2198,29 @@ def TemporalDegrain2(clip, degrainTR=2, degrainPlane=4, meAlg=5, meAlgPar=None, 
     isGRAY = clip.format.color_family == vs.GRAY
     i = 0.00392 if isFLOAT else 1 << (bd - 8)
     mid = 0.5 if isFLOAT else 1 << (bd - 1)
-    S = core.mvsf.Super if isFLOAT else core.mv.Super
-    A = core.mvsf.Analyse if isFLOAT else core.mv.Analyse
-    C = core.mvsf.Compensate if isFLOAT else core.mv.Compensate
-    R = core.mvsf.Recalculate if isFLOAT else core.mv.Recalculate
-    D1 = core.mvsf.Degrain1 if isFLOAT else core.mv.Degrain1
-    D2 = core.mvsf.Degrain2 if isFLOAT else core.mv.Degrain2
-    D3 = core.mvsf.Degrain3 if isFLOAT else core.mv.Degrain3
-    RG = core.rgsf.RemoveGrain if isFLOAT else core.rgvs.RemoveGrain
+    
+    if hasattr(core, 'mvsf'):  
+      S = core.mvsf.Super if isFLOAT else core.mv.Super
+      A = core.mvsf.Analyse if isFLOAT else core.mv.Analyse
+      C = core.mvsf.Compensate if isFLOAT else core.mv.Compensate
+      R = core.mvsf.Recalculate if isFLOAT else core.mv.Recalculate
+      D1 = core.mvsf.Degrain1 if isFLOAT else core.mv.Degrain1
+      D2 = core.mvsf.Degrain2 if isFLOAT else core.mv.Degrain2
+      D3 = core.mvsf.Degrain3 if isFLOAT else core.mv.Degrain3
+    else:
+      S = core.mv.Super
+      A = core.mv.Analyse
+      C = core.mv.Compensate
+      R = core.mv.Recalculate
+      D1 = core.mv.Degrain1
+      D2 = core.mv.Degrain2
+      D3 = core.mv.Degrain3
+    
+    if hasattr(core, 'rgsf'):  
+      RG = core.rgsf.RemoveGrain if isFLOAT else core.rgvs.RemoveGrain
+    else:
+      RG = core.rgvs.RemoveGrain
+
     rad = 3 if extraSharp else None
     mat = [1, 2, 1, 2, 4, 2, 1, 2, 1]
     ChromaNoise = (degrainPlane > 0)
@@ -2480,9 +2495,15 @@ def mClean(clip, thSAD=400, chroma=True, sharp=10, rn=14, deband=0, depth=0, str
     bd = clip.format.bits_per_sample
     isFLOAT = clip.format.sample_type == vs.FLOAT
     icalc = False if isFLOAT else icalc
-    S = core.mv.Super if icalc else core.mvsf.Super
-    A = core.mv.Analyse if icalc else core.mvsf.Analyse
-    R = core.mv.Recalculate if icalc else core.mvsf.Recalculate
+    
+    if hasattr(core, 'mvsf'):  
+      S = core.mv.Super if icalc else core.mvsf.Super
+      A = core.mv.Analyse if icalc else core.mvsf.Analyse
+      R = core.mv.Recalculate if icalc else core.mvsf.Recalculate
+    else:
+     S = core.mvsf.Super
+     A = core.mv.Analyse
+     R = core.mv.Recalculate
 
     if not isinstance(clip, vs.VideoNode) or clip.format.color_family != vs.YUV:
         raise TypeError("mClean: This is not a YUV clip!")
