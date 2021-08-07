@@ -2300,8 +2300,9 @@ def TemporalDegrain2(clip, degrainTR=2, degrainPlane=4, meAlg=5, meAlgPar=None, 
     thSCD1 = int(ppSCD1 * 64)
     CMplanes = [0, 1, 2] if ChromaMotion else [0]
     
-    if maxTR > 3 and not isFLOAT:
-        raise ValueError("TemporalDegrain2: maxTR > 3 requires input of float sample type")
+    
+    #if maxTR > 3 and not isFLOAT:
+    #    raise ValueError("TemporalDegrain2: maxTR > 3 requires input of float sample type")
     
     if SrchClipPP == 1:
         spatialBlur = core.resize.Bilinear(clip, m4(w/2), m4(h/2)).std.Convolution(matrix=mat, planes=CMplanes).resize.Bilinear(w, h)
@@ -2501,7 +2502,7 @@ def mClean(clip, thSAD=400, chroma=True, sharp=10, rn=14, deband=0, depth=0, str
       A = core.mv.Analyse if icalc else core.mvsf.Analyse
       R = core.mv.Recalculate if icalc else core.mvsf.Recalculate
     else:
-     S = core.mvsf.Super
+     S = core.mv.Super
      A = core.mv.Analyse
      R = core.mv.Recalculate
 
@@ -2535,7 +2536,7 @@ def mClean(clip, thSAD=400, chroma=True, sharp=10, rn=14, deband=0, depth=0, str
         sharp = 50
 
     # Denoise preparation
-    c = core.vcmod.Median(clip, plane=[0, 1, 1]) if chroma else clip
+    c = core.vcm.Median(clip, plane=[0, 1, 1]) if chroma else clip
 
     # Temporal luma noise filter
     if not (isFLOAT or icalc):
@@ -2577,7 +2578,7 @@ def mClean(clip, thSAD=400, chroma=True, sharp=10, rn=14, deband=0, depth=0, str
     if deband:
         filt = filt.f3kdb.Deband(range=16, preset="high" if chroma else "luma", grainy=defH/15, grainc=defH/16 if chroma else 0, output_depth=outbits)
         clean = core.std.ShufflePlanes(filt, [0], vs.GRAY)
-        filt = core.vcmod.Veed(filt) if deband == 2 else filt
+        filt = core.vcm.Veed(filt) if deband == 2 else filt
 
     # Spatial luma denoising
     clean2 = RG(clean, rgmode)
