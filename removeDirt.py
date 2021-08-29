@@ -23,7 +23,6 @@ def RemoveDirtMC(input, limit=6, block_size=8, block_over = 4, gpu=False):
   quad = core.rgvs.RemoveGrain(input, mode=[12,0,1])   # blur the luma for searching motion vectors  orig avs: mode=12, modeU=-1
   if gpu:
     import ChangeFPS
-    # no clue what to do with _grey here, I assume it can be ignored
     block_over = 0 if block_over == 0 else 1 if block_over == 2 else 2 if block_over == 4 else 3 
     Super = core.svp1.Super(quad, "{gpu:1,pel:2}")
     bvec = core.svp1.Analyse(Super['clip'], Super['data'], input, "{ gpu:1, block:{w:"+str(block_size)+", h:"+str(block_size)+",overlap:"+str(block_over)+"} }")
@@ -43,6 +42,6 @@ def RemoveDirtMC(input, limit=6, block_size=8, block_over = 4, gpu=False):
     forw  = core.mv.Flow(clip=quad,super=i,vectors=[fvec])
 
   clp = core.std.Interleave([backw,quad,forw])
-  clp = RemoveDirt(clp, remgrainmode=2, limit=limit,_grey=_grey)
+  clp = RemoveDirt(clp, remgrainmode=2, limit=limit)
   clp = core.std.SelectEvery(clp,3,1)
   return clp
