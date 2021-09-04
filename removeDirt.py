@@ -24,7 +24,7 @@ def RemoveDirtMC(input, limit=6, block_size=8, block_over = 4, gpu=False):
   if gpu:
     import ChangeFPS
     block_over = 0 if block_over == 0 else 1 if block_over == 2 else 2 if block_over == 4 else 3 
-    Super = core.svp1.Super(quad, "{gpu:1,pel:2}")
+    Super = core.svp1.Super(quad, "{gpu:1,pel:4}")
     bvec = core.svp1.Analyse(Super['clip'], Super['data'], input, "{ gpu:1, block:{w:"+str(block_size)+", h:"+str(block_size)+",overlap:"+str(block_over)+"} }")
     fvec = core.svp1.Analyse(Super['clip'], Super['data'], input, "{ gpu:1, block:{w:"+str(block_size)+", h:"+str(block_size)+",overlap:"+str(block_over)+",special:{delta: 1}} }")
     backw = core.svp2.SmoothFps(quad,Super['clip'], Super['data'],bvec['clip'],bvec['data'],"{}") # here the frame rate is doubled
