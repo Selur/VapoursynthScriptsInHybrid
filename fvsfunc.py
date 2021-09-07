@@ -1,10 +1,6 @@
 import vapoursynth as vs
 import re
 from functools import partial
-import havsfunc as haf  # https://github.com/HomeOfVapourSynthEvolution/havsfunc
-import mvsfunc as mvf  # https://github.com/HomeOfVapourSynthEvolution/mvsfunc
-import muvsfunc as muf  # https://github.com/WolframRhodium/muvsfunc
-import edi_rpow2 as nnedi3_rpow2  # https://gist.github.com/4re/342624c9e1a144a696c6
 
 # Small collection of VapourSynth functions I used at least once.
 # Most are simple wrappers or ports of AviSynth functions.
@@ -22,6 +18,14 @@ import edi_rpow2 as nnedi3_rpow2  # https://gist.github.com/4re/342624c9e1a144a6
 #       TemporalDegrain
 #       DescaleAA
 #       InsertSign
+
+# To use all included functions, you need to have
+# the following Python scripts installed:
+#
+# havsfunc: https://github.com/HomeOfVapourSynthEvolution/havsfunc
+# mvsfunc: https://github.com/HomeOfVapourSynthEvolution/mvsfunc
+# muvsfunc: https://github.com/WolframRhodium/muvsfunc
+# nnedi3_rpow2: https://gist.github.com/4re/342624c9e1a144a696c6
 
 
 core = vs.core
@@ -146,7 +150,16 @@ Original header:
 def GradFun3(src, thr=None, radius=None, elast=None, mask=None, mode=None, ampo=None,
                 ampn=None, pat=None, dyn=None, staticnoise=None, smode=None, thr_det=None,
                 debug=None, thrc=None, radiusc=None, elastc=None, planes=None, ref=None,
-                yuv444=None, w=None, h=None, resizer=None, b=None, c=None, bits=None, opencl=False, device=None):
+                yuv444=None, w=None, h=None, resizer=None, b=None, c=None, bits=None):
+
+    try:
+        import mvsfunc as mvf
+    except ImportError:
+        raise ImportError('GradFun3: mvsfunc not found. Download it here: https://github.com/HomeOfVapourSynthEvolution/mvsfunc')
+    try:
+        import muvsfunc as muf
+    except ImportError:
+        raise ImportError('GradFun3: muvsfunc not found. Download it here: https://github.com/WolframRhodium/muvsfunc')
 
     def smooth_mod(src_16, ref_16, smode, radius, thr, elast, planes):
         if smode == 0:
@@ -256,10 +269,10 @@ def GradFun3(src, thr=None, radius=None, elast=None, mask=None, mode=None, ampo=
         bits = src.format.bits_per_sample
 
     # Value checking
-    if src.format.color_family not in [vs.YUV, vs.GRAY, vs.YCOCG]:
-        raise TypeError(funcname + ': "src" must be YUV, GRAY or YCOCG color family!')
-    if ref.format.color_family not in [vs.YUV, vs.GRAY, vs.YCOCG]:
-        raise TypeError(funcname + ': "ref" must be YUV, GRAY or YCOCG color family!')
+    if src.format.color_family not in [vs.YUV, vs.GRAY]:
+        raise TypeError(funcname + ': "src" must be YUV or GRAY color family!')
+    if ref.format.color_family not in [vs.YUV, vs.GRAY]:
+        raise TypeError(funcname + ': "ref" must be YUV or GRAY color family!')
     if thr < 0.1 or thr > 10.0:
         raise ValueError(funcname + ': "thr" must be in [0.1, 10.0]!')
     if thrc < 0.1 or thrc > 10.0:
@@ -326,7 +339,7 @@ def GradFun3(src, thr=None, radius=None, elast=None, mask=None, mode=None, ampo=
 
     if mask > 0:
         dmask = mvf.GetPlane(src_8, 0)
-        dmask = muf.Build_gf3_range_mask(dmask, mask)
+        dmask = muf._Build_gf3_range_mask(dmask, mask)
         dmask = core.std.Expr([dmask], [mexpr])
         dmask = core.rgvs.RemoveGrain(dmask, [22])
         if mask > 1:
@@ -622,10 +635,7 @@ def JIVTC(src, pattern, thr=10, draft=False, ivtced=None, bobber=None, show=Fals
 
     ivtced = defivtc if ivtced is None else ivtced
     if bobber is None:
-        if hasattr('znedi3'):
-          bobbed = core.yadifmod.Yadifmod(ivtced, edeint=core.znedi3.nnedi3(ivtced, 2), order=0, mode=1)
-        else:
-          bobbed = core.yadifmod.Yadifmod(ivtced, edeint=core.nnedi3.nnedi3(ivtced, 2), order=0, mode=1)
+        bobbed = core.yadifmod.Yadifmod(ivtced, edeint=core.nnedi3.nnedi3(ivtced, 2), order=0, mode=1)
     else:
         bobbed = bobber(ivtced)
 
@@ -675,6 +685,11 @@ Original Header:
 
 """
 def OverlayInter(src, pattern, pos=0, size=0, show=False, draft=False, bobber=None, ivtc=None, tff=None):
+
+    try:
+        import havsfunc as haf
+    except ImportError:
+        raise ImportError('OverlayInter: havsfunc not found. Download it here: https://github.com/HomeOfVapourSynthEvolution/havsfunc')
 
     if bobber is None and not isinstance(tff, bool):
         raise TypeError('OverlayInter: "tff" must be set. Setting tff to True means top field first. False means bottom field first')
@@ -759,23 +774,34 @@ Only 8-bit input supported currently
 def AutoDeblock(src, edgevalue=24, db1=1, db2=6, db3=15, deblocky=True, deblockuv=True, debug=False, redfix=False,
                 fastdeblock=False, adb1=3, adb2=4, adb3=8, adb1d=2, adb2d=7, adb3d=11, planes=None):
 
+    try:
+        import havsfunc as haf
+    except ImportError:
+        raise ImportError('AutoDeblock: havsfunc not found. Download it here: https://github.com/HomeOfVapourSynthEvolution/havsfunc')
+
     def to8bit(f):
         return f * 0xFF
 
-    def eval_deblock_strength(n, f, fastdeblock, unfiltered, fast, weakdeblock,
+    def sub_props(src, f, name):
+        OrigDiff_str = str(to8bit(f[0].props.OrigDiff))
+        YNextDiff_str = str(to8bit(f[1].props.YNextDiff))
+        return core.sub.Subtitle(src, name + f"\nOrigDiff: {OrigDiff_str}\nYNextDiff: {YNextDiff_str}")
+
+    def eval_deblock_strength(n, f, fastdeblock, debug, unfiltered, fast, weakdeblock,
                               mediumdeblock, strongdeblock):
+        unfiltered = sub_props(unfiltered, f, "unfiltered") if debug else unfiltered
         out = unfiltered
         if fastdeblock:
             if to8bit(f[0].props.OrigDiff) > adb1 and to8bit(f[1].props.YNextDiff) > adb1d:
-                return fast
+                return sub_props(fast, f, "deblock") if debug else fast
             else:
                 return unfiltered
         if to8bit(f[0].props.OrigDiff) > adb1 and to8bit(f[1].props.YNextDiff) > adb1d:
-            out = weakdeblock
+            out = sub_props(weakdeblock, f, "weakdeblock") if debug else weakdeblock
         if to8bit(f[0].props.OrigDiff) > adb2 and to8bit(f[1].props.YNextDiff) > adb2d:
-            out = mediumdeblock
+            out = sub_props(mediumdeblock, f, "mediumdeblock") if debug else mediumdeblock
         if to8bit(f[0].props.OrigDiff) > adb3 and to8bit(f[1].props.YNextDiff) > adb3d:
-            out = strongdeblock
+            out = sub_props(strongdeblock, f, "strongdeblock") if debug else strongdeblock
         return out
 
     def fix_red(n, f, unfiltered, autodeblock):
@@ -800,21 +826,16 @@ def AutoDeblock(src, edgevalue=24, db1=1, db2=6, db3=15, deblocky=True, deblocku
 
     predeblock = haf.Deblock_QED(src.rgvs.RemoveGrain(2).rgvs.RemoveGrain(2))
     fast = core.dfttest.DFTTest(predeblock, tbsize=1)
-    fast = core.text.Text(fast, 'deblock') if debug else fast
 
     unfiltered = src
-    unfiltered = core.text.Text(unfiltered, 'unfiltered') if debug else unfiltered
     weakdeblock = core.dfttest.DFTTest(predeblock, sigma=db1, tbsize=1, planes=planes)
-    weakdeblock = core.text.Text(weakdeblock, 'weakdeblock') if debug else weakdeblock
     mediumdeblock = core.dfttest.DFTTest(predeblock, sigma=db2, tbsize=1, planes=planes)
-    mediumdeblock = core.text.Text(mediumdeblock, 'mediumdeblock') if debug else mediumdeblock
     strongdeblock = core.dfttest.DFTTest(predeblock, sigma=db3, tbsize=1, planes=planes)
-    strongdeblock = core.text.Text(strongdeblock, 'strongdeblock') if debug else strongdeblock
 
     difforig = core.std.PlaneStats(orig, orig_d, prop='Orig')
     diffnext = core.std.PlaneStats(src, src.std.DeleteFrames([0]), prop='YNext')
     autodeblock = core.std.FrameEval(unfiltered, partial(eval_deblock_strength, fastdeblock=fastdeblock,
-                                     unfiltered=unfiltered, fast=fast, weakdeblock=weakdeblock,
+                                     debug=debug, unfiltered=unfiltered, fast=fast, weakdeblock=weakdeblock,
                                      mediumdeblock=mediumdeblock, strongdeblock=strongdeblock),
                                      prop_src=[difforig,diffnext])
 
@@ -894,13 +915,16 @@ rfs = ReplaceFrames
 
 """
 This overlays a clip onto another.
-Default matrix for RGB -> YUV conversion is 601 to match AviSynth's Overlay()
+Default matrix for RGB -> YUV conversion is "709"
+Use "601" if you want to mimic AviSynth's Overlay()
 overlay should be a list of [video, mask] or a path string to an RGBA file
-If you specifiy a clip instead it will just be spliced into the source
-(RGBA videos opened by ffms2 are already such a list)
+If you specifiy a clip instead then a mask with max value will be generated
+(RGBA videos opened by ffms2 with alpha=True are already such a list)
 """
-def InsertSign(clip, overlay, start, end=None, matrix='601'):
+def InsertSign(clip, overlay, start, end=None, matrix='709'):
 
+    if start < 0:
+        raise ValueError('InsertSign: "start" must not be lower than 0!')
     if isinstance(overlay, str):
         overlay = core.ffms2.Source(overlay, alpha=True)
     if not isinstance(overlay, list):
@@ -913,6 +937,8 @@ def InsertSign(clip, overlay, start, end=None, matrix='601'):
         end = clip.num_frames
     if start >= end:
         raise ValueError('InsertSign: "start" must be smaller than or equal to "end"!')
+    if matrix == '601':
+        matrix = '470bg'
     clip_cf = clip.format.color_family
     overlay_cf = overlay[0].format.color_family
 
@@ -920,18 +946,22 @@ def InsertSign(clip, overlay, start, end=None, matrix='601'):
     middle = clip[start:end]
     after = clip[end:] if end != clip.num_frames else None
 
-    if overlay[1] is not None:
-        mask = core.resize.Bicubic(overlay[1], clip.width, clip.height)
-        mask = Depth(mask, bits=clip.format.bits_per_sample)
-    else:
-        mask = None
-    if clip_cf != overlay_cf and (clip_cf == vs.YUV or overlay_cf == vs.YUV):
-        sign = core.fmtc.matrix(overlay[0], mat=matrix)
-    else:
-        sign = overlay[0]
-    sign = core.resize.Spline36(sign, clip.width, clip.height, format=clip.format.id,
+    matrix_s = None
+    matrix_in_s = None
+    if clip_cf == vs.YUV and overlay_cf == vs.RGB:
+        matrix_s = matrix
+    if overlay_cf == vs.YUV and clip_cf == vs.RGB:
+        matrix_in_s = matrix
+    sign = core.resize.Spline36(overlay[0], clip.width, clip.height, format=clip.format.id,
+                                matrix_s=matrix_s, matrix_in_s=matrix_in_s,
                                 dither_type='error_diffusion')
-    middle = core.std.MaskedMerge(middle, sign, mask) if mask is not None else sign
+
+    if overlay[1] is None:
+        overlay[1] = core.std.BlankClip(sign, format=vs.GRAY8, color=255)
+    mask = core.resize.Bicubic(overlay[1], clip.width, clip.height)
+    mask = Depth(mask, bits=clip.format.bits_per_sample, range='full', range_in='full')
+
+    middle = core.std.MaskedMerge(middle, sign, mask)
 
     out = middle
     if before is not None:
@@ -953,6 +983,11 @@ Basic idea stolen from a script made by Daiz.
 def DescaleAA(src, w=1280, h=720, thr=10, kernel='bilinear', b=1/3, c=1/3, taps=3,
               expand=3, inflate=3, showmask=False):
 
+    try:
+        import nnedi3_rpow2 as nnp2
+    except ImportError:
+        raise ImportError('DescaleAA: nnedi3_rpow2 not found. Download it here: https://gist.github.com/4re/342624c9e1a144a696c6')
+
     if kernel.lower().startswith('de'):
         kernel = kernel[2:]
 
@@ -972,7 +1007,7 @@ def DescaleAA(src, w=1280, h=720, thr=10, kernel='bilinear', b=1/3, c=1/3, taps=
     # Fix lineart
     src_y = core.std.ShufflePlanes(src, planes=0, colorfamily=vs.GRAY)
     deb = Resize(src_y, w, h, kernel=kernel, a1=b, a2=c, taps=taps, invks=True)
-    sharp = nnedi3_rpow2.nnedi3_rpow2(deb, 2, ow, oh)
+    sharp = nnp2.nnedi3_rpow2(deb, 2, ow, oh)
     thrlow = 4 * maxvalue // 0xFF if sample_type == vs.INTEGER else 4 / 0xFF
     thrhigh = 24 * maxvalue // 0xFF if sample_type == vs.INTEGER else 24 / 0xFF
     edgemask = core.std.Prewitt(sharp, planes=0)
@@ -1019,6 +1054,11 @@ Works on any bitdepth
 
 """
 def maa(src, mask=None, chroma=None, ss=None, aa=None, aac=None, show=None):
+
+    try:
+        import mvsfunc as mvf
+    except ImportError:
+        raise ImportError('maa: mvsfunc not found. Download it here: https://github.com/HomeOfVapourSynthEvolution/mvsfunc')
 
     def SangNomAA(src, ss=2.0, aa=48, aac=None):
         ss_w = round(src.width * ss / 4) * 4
@@ -1111,6 +1151,11 @@ Differences:
 """
 def TemporalDegrain(input_, denoise=None, gpu=False, sigma=16, bw=16, bh=16, pel=2,
                     blksize=8, ov=None, degrain=2, limit=255, sad1=400, sad2=300, hq=0):
+
+    try:
+        import havsfunc as haf
+    except ImportError:
+        raise ImportError('TemporalDegrain: havsfunc not found. Download it here: https://github.com/HomeOfVapourSynthEvolution/havsfunc')
 
     if not isinstance(input_, vs.VideoNode):
         raise TypeError('TemporalDegrain: "input_" must be a clip!')
