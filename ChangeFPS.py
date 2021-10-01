@@ -3,9 +3,9 @@ from vapoursynth import core
 import functools
 import math
 
-def ChangeFPS(clp, target_fps_num, target_fps_den):
-  attribute_clip = core.std.BlankClip(clp, length=math.floor(len(clp) * target_fps_num / target_fps_den * clp.fps_den / clp.fps_num), fpsnum=target_fps_num, fpsden=target_fps_den)
-  adjusted_clip = core.std.FrameEval(attribute_clip, functools.partial(frame_adjuster, clip=clp, target_fps_num=target_fps_num, target_fps_den=target_fps_den))
+def ChangeFPS(clip, target_fps_num, target_fps_den):
+  attribute_clip = core.std.BlankClip(clip, length=math.floor(len(clip) * target_fps_num / target_fps_den * clip.fps_den / clip.fps_num), fpsnum=target_fps_num, fpsden=target_fps_den)
+  adjusted_clip = core.std.FrameEval(attribute_clip, functools.partial(frame_adjuster, clip=clip, target_fps_num=target_fps_num, target_fps_den=target_fps_den))
   return adjusted_clip
 
 def frame_adjuster(n, clip, target_fps_num, target_fps_den):

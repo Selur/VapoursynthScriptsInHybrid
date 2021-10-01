@@ -1,4 +1,5 @@
 import vapoursynth as vs
+from vapoursynth import core
 
 def ChromaShift(clip, shift_left=0, shift_right=0, shift_top=0, shift_bottom=0):
   
