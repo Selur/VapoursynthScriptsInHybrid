@@ -4,7 +4,7 @@ added opencl-option to support TCannyCL
 """
 
 def _sharpen(clip, strength, planes, opencl=False):
-    core = vs.get_core()
+    core = vs.core
     if opencl is True:
       blur = core.tcanny.TCannyCL(clip, sigma=strength, mode=-1, planes=planes)
     else:
@@ -39,7 +39,7 @@ def mcdegrainsharp(clip, frames=2, bblur=0.3, csharp=0.3, bsrch=True, thsad=400,
         plane (int): Sets processed color plane:
             0 - luma, 1 - chroma U, 2 - chroma V, 3 - both chromas, 4 - all.
     """
-    core = vs.get_core()
+    core = vs.core
 
     if bblur > 1.58 or bblur < 0.0:
         raise ValueError('"bblur" must be between 0.0 and 1.58')

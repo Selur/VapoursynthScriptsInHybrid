@@ -20,7 +20,6 @@ def AutoWhiteAdjust(n, f, clip, core):
    return core.std.Expr(clip, expr=['x ' + repr(r_gain) + ' *', 'x ' + repr(g_gain) + ' *', 'x ' + repr(b_gain) + ' *'])
 
 def AutoWhite(clip):
-   core = vs.get_core()
    rgb_clip = clip
    r_avg = core.std.PlaneStats(rgb_clip, plane=0)
    g_avg = core.std.PlaneStats(rgb_clip, plane=1)

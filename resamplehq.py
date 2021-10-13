@@ -29,7 +29,7 @@ def resamplehq(src, width=None, height=None, kernel='spline36',
              if this was lower thant 16. If false, the output will be kept at
              the internal precision of 16 bits.
     """
-    core = vs.get_core()
+    core = vs.core
 
     # Var stuff
 

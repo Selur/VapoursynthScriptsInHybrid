@@ -1,14 +1,13 @@
-from functools import partial
 import math
+from functools import partial
 
-from vapoursynth import core
-import vapoursynth as vs
 import mvsfunc as mvf
-import adjust
+import vapoursynth as vs
+
+core = vs.core
 
 """
 Holy's ported AviSynth functions for VapourSynth.
-(replaced fft3dfilter mit neo_fft3d)
 
 Main functions:
     daa
@@ -69,9 +68,7 @@ Utility functions:
     sbr, sbrV
     DitherLumaRebuild
     mt_expand_multi, mt_inpand_multi
-                                    
     mt_inflate_multi, mt_deflate_multi
-                                      
 """
 
 
@@ -119,7 +116,6 @@ def mcdaa3(input, nsize=None, nns=None, qual=None, pscrn=None, int16_prescreener
       sup = input.hqdn3d.Hqdn3d().neo_fft3d.FFT3D().mv.Super(sharp=1)
     else:
       sup = input.hqdn3d.Hqdn3d().fft3dfilter.FFT3DFilter().mv.Super(sharp=1)
-
     fv1 = sup.mv.Analyse(isb=False, delta=1, truemotion=False, dct=2)
     fv2 = sup.mv.Analyse(isb=True, delta=1, truemotion=True, dct=2)
     csaa = daa3mod(input, nsize, nns, qual, pscrn, int16_prescreener, int16_predictor, exp, opencl, device)
@@ -192,7 +188,7 @@ def santiag(c, strh=1, strv=1, type='nnedi3', nsize=None, nns=None, qual=None, p
                 if c.format.color_family != vs.GRAY:
                     cshift = [cshift, cshift * (1 << c.format.subsampling_h)]
                 c = Resize(c, w, h * 2, sy=cshift, dmode=1)
-            return c.sangnom.SangNom(order=field, aa=aa)
+            return c.sangnom.SangNom(order=field + 1, aa=aa)
         else:
             raise vs.Error('santiag: unexpected value for type')
 
@@ -202,12 +198,6 @@ def santiag(c, strh=1, strv=1, type='nnedi3', nsize=None, nns=None, qual=None, p
     type = type.lower()
     typeh = type if typeh is None else typeh.lower()
     typev = type if typev is None else typev.lower()
-         
-                             
-                     
-                    
-         
-                             
 
     w = c.width
     h = c.height
@@ -225,7 +215,6 @@ def santiag(c, strh=1, strv=1, type='nnedi3', nsize=None, nns=None, qual=None, p
         fh = h
     if strh < 0 and strv < 0:
         c = c.resize.Spline36(fw, fh)
-         
     return c
 
 
@@ -238,6 +227,8 @@ def santiag(c, strh=1, strv=1, type='nnedi3', nsize=None, nns=None, qual=None, p
 #  strength (float) - Saturation strength in clip to be merged with the original chroma. Value below 1.0 reduces the saturation, a value of 1.0 leaves the saturation intact. Default is 0.8
 #  blur (bool)      - Set to true to blur the mask clip. Default is false
 def FixChromaBleedingMod(input, cx=4, cy=4, thr=4.0, strength=0.8, blur=False):
+    import adjust
+
     if not isinstance(input, vs.VideoNode):
         raise vs.Error('FixChromaBleedingMod: This is not a clip')
 
@@ -269,8 +260,6 @@ def FixChromaBleedingMod(input, cx=4, cy=4, thr=4.0, strength=0.8, blur=False):
         if clip.format.color_family != vs.GRAY:
             last = last.std.Lut(planes=[1, 2], function=get_lut2)
         return last
-             
-                                                                       
 
     # prepare to work on the V channel and filter noise
     vch = mvf.GetPlane(adjust.Tweak(input, sat=thr), 2)
@@ -316,8 +305,6 @@ def Deblock_QED(clp, quant1=24, quant2=26, aOff1=1, bOff1=2, aOff2=1, bOff2=2, u
     if not isinstance(clp, vs.VideoNode):
         raise vs.Error('Deblock_QED: This is not a clip')
 
-                                                   
-                                                
     isGray = (clp.format.color_family == vs.GRAY)
     planes = [0, 1, 2] if uv >= 3 and not isGray else [0]
 
@@ -344,8 +331,6 @@ def Deblock_QED(clp, quant1=24, quant2=26, aOff1=1, bOff1=2, aOff2=1, bOff2=2, u
     if not isGray:
         blockc = block.std.CropAbs(width=clp.width >> clp.format.subsampling_w, height=clp.height >> clp.format.subsampling_h)
         block = core.std.ShufflePlanes([block, blockc], planes=[0, 0, 0], colorfamily=clp.format.color_family)
-                                                                  
-                                                                                                   
     block = block.std.Loop(times=clp.num_frames)
 
     # create normal deblocking (for block borders) and strong deblocking (for block interiour)
@@ -413,7 +398,9 @@ def DeHalo_alpha(clp, rx=2.0, ry=2.0, darkstr=1.0, brightstr=1.0, lowsens=50, hi
     if clp.format.color_family == vs.RGB:
         raise vs.Error('DeHalo_alpha: RGB format is not supported')
 
-    peak = (1 << clp.format.bits_per_sample) - 1 if clp.format.sample_type == vs.INTEGER else 1.0
+    isInteger = (clp.format.sample_type == vs.INTEGER)
+
+    peak = (1 << clp.format.bits_per_sample) - 1 if isInteger else 1.0
 
     if clp.format.color_family != vs.GRAY:
         clp_orig = clp
@@ -427,7 +414,7 @@ def DeHalo_alpha(clp, rx=2.0, ry=2.0, darkstr=1.0, brightstr=1.0, lowsens=50, hi
     halos = clp.resize.Bicubic(m4(ox / rx), m4(oy / ry), filter_param_a=1/3, filter_param_b=1/3).resize.Bicubic(ox, oy, filter_param_a=1, filter_param_b=0)
     are = core.std.Expr([clp.std.Maximum(), clp.std.Minimum()], expr=['x y -'])
     ugly = core.std.Expr([halos.std.Maximum(), halos.std.Minimum()], expr=['x y -'])
-    expr = f'y x - y 0.0001 + / {peak} * {scale(lowsens, peak)} - y {scale(256, peak)} + {scale(512, peak)} / {highsens / 100} + *'
+    expr = f'y x - y y 0 = + / {peak} * {scale(lowsens, peak)} - y {scale(256, peak)} + {scale(512, peak)} / {highsens / 100} + * {"0 max 1 min" if not isInteger else ""}'
     so = core.std.Expr([ugly, are], expr=[expr])
     lets = core.std.MaskedMerge(halos, clp, so)
     if ss <= 1:
@@ -1051,7 +1038,6 @@ def QTGMC(Input, Preset='Slower', TR0=None, TR1=None, TR2=None, Rep0=None, Rep1=
 
     neutral = 1 << (Input.format.bits_per_sample - 1)
     peak = (1 << Input.format.bits_per_sample) - 1
-                                                   
 
     SOvs = scale(SOvs, peak)
 
@@ -1128,7 +1114,7 @@ def QTGMC(Input, Preset='Slower', TR0=None, TR1=None, TR2=None, Rep0=None, Rep1=
     if totalRestore <= 0:
         StabilizeNoise = False
     noiseTD = [1, 3, 5][NoiseTR]
-    noiseCentre = 128.5 * 2 ** (Input.format.bits_per_sample - 8) if Denoiser in ['fft3df', 'fft3dfilter', 'FFT3D'] else neutral
+    noiseCentre = 128.5 * 2 ** (Input.format.bits_per_sample - 8) if Denoiser in ['fft3df', 'fft3dfilter'] else neutral
 
     # MVTools settings
     if Lambda is None:
@@ -1230,8 +1216,8 @@ def QTGMC(Input, Preset='Slower', TR0=None, TR1=None, TR2=None, Rep0=None, Rep1=
 
     # Calculate forward and backward motion vectors from motion search clip
     if maxTR > 0:
-        analyse_args = dict(blksize=BlockSize, overlap=Overlap, search=Search, searchparam=SearchParam, pelsearch=PelSearch, truemotion=TrueMotion, _lambda=Lambda, lsad=LSAD, pnew=PNew, plevel=PLevel,
-                            _global=GlobalMotion, dct=DCT, chroma=ChromaMotion)
+        analyse_args = dict(blksize=BlockSize, overlap=Overlap, search=Search, searchparam=SearchParam, pelsearch=PelSearch, truemotion=TrueMotion, lambda_=Lambda, lsad=LSAD, pnew=PNew, plevel=PLevel,
+                            global_=GlobalMotion, dct=DCT, chroma=ChromaMotion)
         srchSuper = DitherLumaRebuild(srchClip, s0=1, chroma=ChromaMotion).mv.Super(pel=SubPel, sharp=SubPelInterp, hpad=hpad, vpad=vpad, chroma=ChromaMotion)
         bVec1 = srchSuper.mv.Analyse(isb=True, delta=1, **analyse_args)
         fVec1 = srchSuper.mv.Analyse(isb=False, delta=1, **analyse_args)
@@ -1281,7 +1267,7 @@ def QTGMC(Input, Preset='Slower', TR0=None, TR1=None, TR2=None, Rep0=None, Rep1=
             if hasattr(core, 'neo_fft3d'):
               dnWindow = noiseWindow.neo_fft3d.FFT3D(sigma=Sigma, planes=CNplanes, bt=noiseTD)
             else:
-              dnWindow = noiseWindow.fft3dfilter.FFT3DFilter(sigma=Sigma, planes=CNplanes, bt=noiseTD)
+              dnWindow = noiseWindow.fft3dfilter.FFT3DFilter(sigma=Sigma, planes=CNplanes, bt=noiseTD, ncpu=FftThreads)
         # Rework denoised clip to match source format - various code paths here: discard the motion compensation window, discard doubled lines (from point resize)
         # Also reweave to get interlaced noise if source was interlaced (could keep the full frame of noise, but it will be poor quality from the point resize)
         if not DenoiseMC:
@@ -1534,7 +1520,7 @@ def QTGMC(Input, Preset='Slower', TR0=None, TR1=None, TR2=None, Rep0=None, Rep1=
     rBlockDivide = BlockSize // rBlockSize
     rLambda = Lambda // (rBlockDivide * rBlockDivide)
     if ShutterBlur > 1:
-        recalculate_args = dict(thsad=ThSAD1, blksize=rBlockSize, overlap=rOverlap, search=Search, searchparam=SearchParam, truemotion=TrueMotion, _lambda=rLambda, pnew=PNew, dct=DCT,
+        recalculate_args = dict(thsad=ThSAD1, blksize=rBlockSize, overlap=rOverlap, search=Search, searchparam=SearchParam, truemotion=TrueMotion, lambda_=rLambda, pnew=PNew, dct=DCT,
                                 chroma=ChromaMotion)
         sbBVec1 = core.mv.Recalculate(srchSuper, bVec1, **recalculate_args)
         sbFVec1 = core.mv.Recalculate(srchSuper, fVec1, **recalculate_args)
@@ -1639,8 +1625,6 @@ def QTGMC_Interpolate(Input, InputType, EdiMode, NNSize, NNeurons, EdiQual, EdiM
 # Rough algorithm: Get difference, deflate vertically by a couple of pixels or so, then inflate again. Thin regions will be removed
 #                  by this process. Restore remaining areas of difference back to as they were in reference clip
 def QTGMC_KeepOnlyBobShimmerFixes(Input, Ref, Rep=1, Chroma=True):
-                                                     
-                                                  
     isGray = (Input.format.color_family == vs.GRAY)
     planes = [0, 1, 2] if Chroma and not isGray else [0]
 
@@ -1700,8 +1684,6 @@ def QTGMC_KeepOnlyBobShimmerFixes(Input, Ref, Rep=1, Chroma=True):
 # Given noise extracted from an interlaced source (i.e. the noise is interlaced), generate "progressive" noise with a new "field" of noise injected. The new
 # noise is centered on a weighted local average and uses the difference between local min & max as an estimate of local variance
 def QTGMC_Generate2ndFieldNoise(Input, InterleavedClip, ChromaNoise=False, TFF=None):
-                                                     
-                                                  
     isGray = (Input.format.color_family == vs.GRAY)
     planes = [0, 1, 2] if ChromaNoise and not isGray else [0]
 
@@ -1857,7 +1839,6 @@ def smartfademod(clip, threshold=0.4, show=False, tff=None):
         diff = abs(f[0].props['PlaneStatsAverage'] - f[1].props['PlaneStatsAverage']) * 255
         if show:
             return orig.text.Text(text=diff)
-             
         return defade if diff > threshold else orig
 
     if not isinstance(clip, vs.VideoNode):
@@ -2568,8 +2549,8 @@ def LUTDeCrawl(input, ythresh=10, cthresh=10, maxdiff=50, scnchg=25, usemaxdiff=
         else:
             return clips[1]
 
-    if not isinstance(input, vs.VideoNode) or input.format.color_family not in [vs.YUV, vs.YCOCG] or input.format.bits_per_sample > 10:
-        raise vs.Error('LUTDeCrawl: This is not an 8-10 bit YUV or YCoCg clip')
+    if not isinstance(input, vs.VideoNode) or input.format.color_family != vs.YUV or input.format.bits_per_sample > 10:
+        raise vs.Error('LUTDeCrawl: This is not an 8-10 bit YUV clip')
 
     shift = input.format.bits_per_sample - 8
     peak = (1 << input.format.bits_per_sample) - 1
@@ -2660,8 +2641,8 @@ def LUTDeCrawl(input, ythresh=10, cthresh=10, maxdiff=50, scnchg=25, usemaxdiff=
 #
 ###################
 def LUTDeRainbow(input, cthresh=10, ythresh=10, y=True, linkUV=True, mask=False):
-    if not isinstance(input, vs.VideoNode) or input.format.color_family not in [vs.YUV, vs.YCOCG] or input.format.bits_per_sample > 10:
-        raise vs.Error('LUTDeRainbow: This is not an 8-10 bit YUV or YCoCg clip')
+    if not isinstance(input, vs.VideoNode) or input.format.color_family != vs.YUV or input.format.bits_per_sample > 10:
+        raise vs.Error('LUTDeRainbow: This is not an 8-10 bit YUV clip')
 
     shift = input.format.bits_per_sample - 8
     peak = (1 << input.format.bits_per_sample) - 1
@@ -2754,7 +2735,6 @@ def GSMC(input, p=None, Lmask=None, nrmode=None, radius=1, adapt=-1, rep=13, pla
 
     if planes is None:
         planes = list(range(input.format.num_planes))
-                    
     elif isinstance(planes, int):
         planes = [planes]
 
@@ -2801,7 +2781,7 @@ def GSMC(input, p=None, Lmask=None, nrmode=None, radius=1, adapt=-1, rep=13, pla
     psuper = DitherLumaRebuild(pre_nr, s0=1, chroma=chromamv).mv.Super(pel=1, chroma=chromamv)
     difsuper = dif_nr.mv.Super(pel=1, levels=1, chroma=chromamv)
 
-    analyse_args = dict(blksize=blksize, chroma=chromamv, truemotion=False, _global=True, overlap=overlap)
+    analyse_args = dict(blksize=blksize, chroma=chromamv, truemotion=False, global_=True, overlap=overlap)
     fv1 = psuper.mv.Analyse(isb=False, delta=1, **analyse_args)
     bv1 = psuper.mv.Analyse(isb=True, delta=1, **analyse_args)
     if radius >= 2:
@@ -2862,7 +2842,7 @@ def GSMC(input, p=None, Lmask=None, nrmode=None, radius=1, adapt=-1, rep=13, pla
 ###                          edgeclean, ECrad, ECthr,
 ###                          stabilize, maxr, TTstr,
 ###                          bwbh, owoh, blksize, overlap,
-###                          bt,
+###                          bt, ncpu,
 ###                          thSAD, thSADC, thSAD2, thSADC2, thSCD1, thSCD2,
 ###                          truemotion, MVglobal, pel, pelsearch, search, searchparam, MVsharp, DCT,
 ###                          p, settings)
@@ -2934,6 +2914,7 @@ def GSMC(input, p=None, Lmask=None, nrmode=None, radius=1, adapt=-1, rep=13, pla
 ### | FFT3D |
 ### +-------+--------------------------+
 ### | bt   : FFT3D block temporal size |
+### | ncpu : FFT3DFilter ncpu          |
 ### +----------------------------------+
 ###
 ###
@@ -3007,6 +2988,7 @@ def GSMC(input, p=None, Lmask=None, nrmode=None, radius=1, adapt=-1, rep=13, pla
 ### | overlap     |      HD? 8:4         |      HD? 8:4         |      HD? 8:4         |      HD? 8:4         |      HD? 8:4         |
 ### |-------------+----------------------+----------------------+----------------------+----------------------+----------------------|
 ### | bt          |      1               |      3               |      3               |      3               |      4               |
+### | ncpu        |      1               |      1               |      1               |      1               |      1               |
 ### |-------------+----------------------+----------------------+----------------------+----------------------+----------------------|
 ### | thSAD       |      200             |      300             |      400             |      500             |      600             |
 ### | thSADC      |      thSAD/2         |      thSAD/2         |      thSAD/2         |      thSAD/2         |      thSAD/2         |
@@ -3027,7 +3009,7 @@ def GSMC(input, p=None, Lmask=None, nrmode=None, radius=1, adapt=-1, rep=13, pla
 ###
 ####################################################################################################################################
 def MCTemporalDenoise(i, radius=None, pfMode=3, sigma=None, twopass=None, useTTmpSm=False, limit=None, limit2=None, post=0, chroma=None, refine=False, deblock=False, useQED=None, quant1=None,
-                      quant2=None, edgeclean=False, ECrad=None, ECthr=None, stabilize=None, maxr=None, TTstr=None, bwbh=None, owoh=None, blksize=None, overlap=None, bt=None, thSAD=None,
+                      quant2=None, edgeclean=False, ECrad=None, ECthr=None, stabilize=None, maxr=None, TTstr=None, bwbh=None, owoh=None, blksize=None, overlap=None, bt=None, ncpu=1, thSAD=None,
                       thSADC=None, thSAD2=None, thSADC2=None, thSCD1=None, thSCD2=None, truemotion=False, MVglobal=True, pel=None, pelsearch=None, search=4, searchparam=2, MVsharp=None, DCT=0, p=None,
                       settings='low'):
     if not isinstance(i, vs.VideoNode):
@@ -3040,7 +3022,6 @@ def MCTemporalDenoise(i, radius=None, pfMode=3, sigma=None, twopass=None, useTTm
 
     neutral = 1 << (i.format.bits_per_sample - 1)
     peak = (1 << i.format.bits_per_sample) - 1
-                                               
 
     ### DEFAULTS
     try:
@@ -3127,7 +3108,7 @@ def MCTemporalDenoise(i, radius=None, pfMode=3, sigma=None, twopass=None, useTTm
     i = i.resize.Point(**pointresize_args)
 
     ### PREFILTERING
-    fft3d_args = dict(planes=planes, bw=bwbh, bh=bwbh, bt=bt, ow=owoh, oh=owoh)
+    fft3d_args = dict(planes=planes, bw=bwbh, bh=bwbh, bt=bt, ow=owoh, oh=owoh, ncpu=ncpu)
     if p is not None:
         p = p.resize.Point(**pointresize_args)
     elif pfMode <= -1:
@@ -3135,8 +3116,8 @@ def MCTemporalDenoise(i, radius=None, pfMode=3, sigma=None, twopass=None, useTTm
     elif pfMode == 0:
         if hasattr(core, 'neo_fft3d'):
             p = i.neo_fft3d.FFT3D(sigma=sigma * 0.8, sigma2=sigma * 0.6, sigma3=sigma * 0.4, sigma4=sigma * 0.2, **fft3d_args)
-        else:
-            p = i.fft3fdilter.FFT3DFilter(sigma=sigma * 0.8, sigma2=sigma * 0.6, sigma3=sigma * 0.4, sigma4=sigma * 0.2, **fft3d_args)
+        else:                                                                                                                 
+            p = i.fft3dfilter.FFT3DFilter(sigma=sigma * 0.8, sigma2=sigma * 0.6, sigma3=sigma * 0.4, sigma4=sigma * 0.2, **fft3d_args)
     elif pfMode >= 3:
         p = i.dfttest.DFTTest(tbsize=1, slocation=[0.0,4.0, 0.2,9.0, 1.0,15.0], planes=planes)
     else:
@@ -3160,7 +3141,7 @@ def MCTemporalDenoise(i, radius=None, pfMode=3, sigma=None, twopass=None, useTTm
     if refine:
         rMVS = p.mv.Super(levels=1, **super_args)
 
-    analyse_args = dict(blksize=blksize, search=search, searchparam=searchparam, pelsearch=pelsearch, chroma=chroma, truemotion=truemotion, _global=MVglobal, overlap=overlap, dct=DCT)
+    analyse_args = dict(blksize=blksize, search=search, searchparam=searchparam, pelsearch=pelsearch, chroma=chroma, truemotion=truemotion, global_=MVglobal, overlap=overlap, dct=DCT)
     recalculate_args = dict(thsad=thSAD // 2, blksize=max(blksize // 2, 4), search=search, chroma=chroma, truemotion=truemotion, overlap=max(overlap // 2, 2), dct=DCT)
     f1v = pMVS.mv.Analyse(isb=False, delta=1, **analyse_args)
     b1v = pMVS.mv.Analyse(isb=True, delta=1, **analyse_args)
@@ -3317,7 +3298,7 @@ def MCTemporalDenoise(i, radius=None, pfMode=3, sigma=None, twopass=None, useTTm
     else:
         if hasattr(core, 'neo_fft3d'):
             smP = smL.neo_fft3d.FFT3D(sigma=post * 0.8, sigma2=post * 0.6, sigma3=post * 0.4, sigma4=post * 0.2, **fft3d_args)
-        else:
+        else:                                                                                                                      
             smP = smL.fft3dfilter.FFT3DFilter(sigma=post * 0.8, sigma2=post * 0.6, sigma3=post * 0.4, sigma4=post * 0.2, **fft3d_args)
 
     ### EDGECLEANING
@@ -3369,7 +3350,6 @@ def SMDegrain(input, tr=2, thSAD=300, thSADC=None, RefineMotion=False, contrasha
     if not isinstance(input, vs.VideoNode):
         raise vs.Error('SMDegrain: This is not a clip')
 
-                                                  
     if input.format.color_family == vs.GRAY:
         plane = 0
         chroma = False
@@ -3466,8 +3446,6 @@ def SMDegrain(input, tr=2, thSAD=300, thSADC=None, RefineMotion=False, contrasha
             pref = prefilter
         elif prefilter <= -1:
             pref = inputP
-                            
-                                                    
         elif prefilter == 3:
             expr = 'x {i} < {peak} x {j} > 0 {peak} x {i} - {peak} {j} {i} - / * - ? ?'.format(i=scale(16, peak), j=scale(75, peak), peak=peak)
             pref = core.std.MaskedMerge(inputP.dfttest.DFTTest(tbsize=1, slocation=[0.0,4.0, 0.2,9.0, 1.0,15.0], planes=planes),
@@ -3499,7 +3477,7 @@ def SMDegrain(input, tr=2, thSAD=300, thSADC=None, RefineMotion=False, contrasha
     # Motion vectors search
     global bv6, bv4, bv3, bv2, bv1, fv1, fv2, fv3, fv4, fv6
     super_args = dict(hpad=hpad, vpad=vpad, pel=pel)
-    analyse_args = dict(blksize=blksize, search=search, chroma=chroma, truemotion=truemotion, _global=MVglobal, overlap=overlap, dct=dct)
+    analyse_args = dict(blksize=blksize, search=search, chroma=chroma, truemotion=truemotion, global_=MVglobal, overlap=overlap, dct=dct)
     if RefineMotion:
         recalculate_args = dict(thsad=halfthSAD, blksize=halfblksize, search=search, chroma=chroma, truemotion=truemotion, overlap=halfoverlap, dct=dct)
 
@@ -3617,7 +3595,6 @@ def STPresso(clp, limit=3, bias=24, RGmode=4, tthr=12, tlimit=3, tbias=49, back=
 
     if planes is None:
         planes = list(range(clp.format.num_planes))
-                    
     elif isinstance(planes, int):
         planes = [planes]
 
@@ -3655,7 +3632,6 @@ def STPresso(clp, limit=3, bias=24, RGmode=4, tthr=12, tlimit=3, tbias=49, back=
     if back > 0:
         expr = f'x {back} + y < x {back} + x {back} - y > x {back} - y ? ?'
         last = core.std.Expr([last, clp], expr=[expr if i in planes else '' for i in range(clp.format.num_planes)])
-         
     return last
 
 
@@ -4283,9 +4259,8 @@ def SmoothLevels(input, input_low=0, gamma=1.0, input_high=None, output_low=0, o
         raise vs.Error('SmoothLevels: RGB format is not supported')
 
     isGray = (input.format.color_family == vs.GRAY)
-    isInteger = (input.format.sample_type == vs.INTEGER)
 
-    if isInteger:
+    if input.format.sample_type == vs.INTEGER:
         neutral = [1 << (input.format.bits_per_sample - 1)] * 2
         peak = (1 << input.format.bits_per_sample) - 1
     else:
@@ -4310,11 +4285,11 @@ def SmoothLevels(input, input_low=0, gamma=1.0, input_high=None, output_low=0, o
     if gamma <= 0:
         raise vs.Error('SmoothLevels: gamma must be greater than 0.0')
 
+    if Ecenter <= 0 or Ecenter >= peak:
+        raise vs.Error('SmoothLevels: Ecenter must be greater than 0 and less than maximum value of input format')
+
     if Mfactor <= 0:
         raise vs.Error('SmoothLevels: Mfactor must be greater than 0')
-
-                        
-                          
 
     if RGmode == 4:
         RemoveGrain = partial(core.std.Median)
@@ -4328,13 +4303,11 @@ def SmoothLevels(input, input_low=0, gamma=1.0, input_high=None, output_low=0, o
         RemoveGrain = partial(core.rgvs.RemoveGrain, mode=[RGmode])
 
     ### EXPRESSION
-                   
-    exprY = f'x {input_low} - {input_high - input_low} / {1 / gamma} pow {output_high - output_low} * {output_low} +'
-                                      
-                              
+    exprY = f'x {input_low} - {input_high - input_low + (input_high == input_low)} / {1 / gamma} pow {output_high - output_low} * {output_low} +'
 
-    scaleC = ((output_high - output_low) / (input_high - input_low) + 100 / chroma - 1) / (100 / chroma)
-    exprC = f'x {neutral[1]} - {scaleC} * {neutral[1]} +'
+    if chroma > 0 and not isGray:
+        scaleC = ((output_high - output_low) / (input_high - input_low + (input_high == input_low)) + 100 / chroma - 1) / (100 / chroma)
+        exprC = f'x {neutral[1]} - {scaleC} * {neutral[1]} +'
 
     Dstr = DarkSTR / 100
     Bstr = BrightSTR / 100
@@ -4342,26 +4315,19 @@ def SmoothLevels(input, input_low=0, gamma=1.0, input_high=None, output_low=0, o
     if Lmode <= 0:
         exprL = '1'
     elif Ecurve <= 0:
-        raise vs.Error('SmoothLevels: Ecurve=0 is unusable at the moment due to missing sin operator in Expr')
         if Lmode == 1:
-            exprL = f'x {Ecenter} < x {333 / 106} * {2 * Ecenter} / sin {Dstr} pow x {Ecenter} > {(333 / 106) / 2} x {Ecenter} - {333 / 106} * {2 * (peak - Ecenter)} / + sin {Bstr} pow 1 ? ?'
-                                                                             
-                                 
-                                                                                                                    
-                     
-                             
+            var_d = f'x {Ecenter} /'
+            var_b = f'{peak} x - {peak} {Ecenter} - /'
+            exprL = f'x {Ecenter} < ' + sine_expr(var_d) + f' {Dstr} pow x {Ecenter} > ' + sine_expr(var_b) + f' {Bstr} pow 1 ? ?'
         elif Lmode == 2:
-            exprL = f'x {333 / 106} * {2 * peak} / sin {Dstr} pow'
+            var_d = f'x {peak} /'
+            exprL = sine_expr(var_d) + f' {Dstr} pow'
         else:
-            exprL = f'{(333 / 106) / 2} x {333 / 106} * {2 * peak} / + sin {Bstr} pow'
+            var_b = f'{peak} x - {peak} /'
+            exprL = sine_expr(var_b) + f' {Bstr} pow'
     else:
         if Lmode == 1:
             exprL = f'x {Ecenter} < x {Ecenter} / abs {Dstr} pow x {Ecenter} > 1 x {Ecenter} - {peak - Ecenter} / abs - {Bstr} pow 1 ? ?'
-                                                    
-                                 
-                                                                               
-                     
-                             
         elif Lmode == 2:
             exprL = f'1 x {peak} - {peak} / abs - {Dstr} pow'
         else:
@@ -4370,21 +4336,10 @@ def SmoothLevels(input, input_low=0, gamma=1.0, input_high=None, output_low=0, o
     if protect <= -1:
         exprP = '1'
     elif Ecurve <= 0:
-        raise vs.Error('SmoothLevels: Ecurve=0 is unusable at the moment due to missing sin operator in Expr')
-        exprP = f'x {protect} <= 0 x {protect + scale(16, peak)} >= 1 x {protect} - {333 / 106} * {2 * scale(16, peak)} / sin ? ?'
-                                                
-                         
-                 
-                                                                                     
-             
-                            
-                         
-                                                
-                         
+        var_p = f'x {protect} - {scale(16, peak)} /'
+        exprP = f'x {protect} <= 0 x {protect + scale(16, peak)} >= 1 ' + sine_expr(var_p) + f' ? ?'
     else:
         exprP = f'x {protect} <= 0 x {protect + scale(16, peak)} >= 1 x {protect} - {scale(16, peak)} / abs ? ?'
-
-                                                                         
 
     ### PROCESS
     if limiter == 1 or limiter >= 3:
@@ -4394,8 +4349,6 @@ def SmoothLevels(input, input_low=0, gamma=1.0, input_high=None, output_low=0, o
 
     expr = exprL + ' ' + exprP + ' * ' + exprY + ' x - * x +'
     level = limitI.std.Expr(expr=[expr] if chroma <= 0 or isGray else [expr, exprC])
-                                                                                                            
-                                                                                  
     diff = core.std.Expr([limitI, level], expr=[f'x y - {Mfactor} * {neutral[1]} +'])
     process = RemoveGrain(diff)
     if useDB:
@@ -4606,10 +4559,11 @@ def Toon(input, str=1.0, l_thr=2, u_thr=12, blur=2, depth=32):
 ### preblur [int: 0,1,2,3]
 ### --------------------------------
 ### Mode to avoid noise sharpening & ringing:
-###    =0 : No preblur
-###    =1 : MinBlur(1)
-###    =2 : MinBlur(2)
-###    =3 : DFTTest
+###    =-1 : No preblur
+###    = 0 : MinBlur(0)
+###    = 1 : MinBlur(1)
+###    = 2 : MinBlur(2)
+###    = 3 : DFTTest
 ###
 ### secure [bool]
 ### -------------
@@ -4748,7 +4702,7 @@ def Toon(input, str=1.0, l_thr=2, u_thr=12, blur=2, depth=32):
 ###                   - Smethod     = Smode==1?2:1
 ###                   - kernel      = 11
 ###
-###                   - preblur     = 0
+###                   - preblur     = -1
 ###                   - secure      = false
 ###                   - source      = undefined
 ###
@@ -4781,7 +4735,7 @@ def Toon(input, str=1.0, l_thr=2, u_thr=12, blur=2, depth=32):
 ###                   - Smethod     = 3
 ###                   - kernel      = 11
 ###
-###                   - preblur     = 0
+###                   - preblur     = -1
 ###                   - secure      = true
 ###                   - source      = undefined
 ###
@@ -4809,7 +4763,7 @@ def Toon(input, str=1.0, l_thr=2, u_thr=12, blur=2, depth=32):
 ###                   - dest_y      = oy
 ###
 ###
-### defaults="fast" : - strength    = 100
+### defaults="fast" : - strength    = 80
 ### ----------------- - Smode       = 3
 ###                   - Smethod     = 2
 ###                   - kernel      = 11
@@ -4823,14 +4777,14 @@ def Toon(input, str=1.0, l_thr=2, u_thr=12, blur=2, depth=32):
 ###                   - SdmpLo      = 4
 ###                   - SdmpHi      = 48
 ###
-###                   - Lmode       = 1
+###                   - Lmode       = 0
 ###                   - overshoot   = strength/100
 ###                   - undershoot  = overshoot
 ###                   - overshoot2  = overshoot*2
 ###                   - undershoot2 = overshoot2
 ###
 ###                   - soft        = 0
-###                   - soothe      = true
+###                   - soothe      = false
 ###                   - keep        = 20
 ###
 ###                   - edgemode    = 0
@@ -4842,7 +4796,7 @@ def Toon(input, str=1.0, l_thr=2, u_thr=12, blur=2, depth=32):
 ###                   - dest_y      = oy
 ###
 ################################################################################################
-def LSFmod(input, strength=100, Smode=None, Smethod=None, kernel=11, preblur=0, secure=None, source=None, Szrp=16, Spwr=None, SdmpLo=None, SdmpHi=None, Lmode=None, overshoot=None, undershoot=None,
+def LSFmod(input, strength=None, Smode=None, Smethod=None, kernel=11, preblur=None, secure=None, source=None, Szrp=16, Spwr=None, SdmpLo=None, SdmpHi=None, Lmode=None, overshoot=None, undershoot=None,
            overshoot2=None, undershoot2=None, soft=None, soothe=None, keep=None, edgemode=0, edgemaskHQ=None, ss_x=None, ss_y=None, dest_x=None, dest_y=None, defaults='fast'):
     if not isinstance(input, vs.VideoNode):
         raise vs.Error('LSFmod: This is not a clip')
@@ -4874,10 +4828,14 @@ def LSFmod(input, strength=100, Smode=None, Smethod=None, kernel=11, preblur=0, 
     ox = input.width
     oy = input.height
 
+    if strength is None:
+        strength = [100, 100, 80][num]
     if Smode is None:
         Smode = [1, 2, 3][num]
     if Smethod is None:
         Smethod = [2 if Smode == 1 else 1, 3, 2][num]
+    if preblur is None:
+        preblur = [-1, -1, 0][num]
     if secure is None:
         secure = [False, True, True][num]
     if Spwr is None:
@@ -4887,7 +4845,7 @@ def LSFmod(input, strength=100, Smode=None, Smethod=None, kernel=11, preblur=0, 
     if SdmpHi is None:
         SdmpHi = [0, 48, 48][num]
     if Lmode is None:
-        Lmode = [1, 4, 1][num]
+        Lmode = [1, 4, 0][num]
     if overshoot is None:
         overshoot = [1, strength // 100, strength // 100][num]
     if undershoot is None:
@@ -4899,7 +4857,7 @@ def LSFmod(input, strength=100, Smode=None, Smethod=None, kernel=11, preblur=0, 
     if soft is None:
         soft = [0, -2, 0][num]
     if soothe is None:
-        soothe = [False, True, True][num]
+        soothe = [False, True, False][num]
     if keep is None:
         keep = [25, 20, 20][num]
     if edgemaskHQ is None:
@@ -4914,15 +4872,15 @@ def LSFmod(input, strength=100, Smode=None, Smethod=None, kernel=11, preblur=0, 
         dest_y = oy
 
     if kernel == 4:
-        Filter = partial(core.std.Median)
+        RemoveGrain = partial(core.std.Median)
     elif kernel in [11, 12]:
-        Filter = partial(core.std.Convolution, matrix=[1, 2, 1, 2, 4, 2, 1, 2, 1])
+        RemoveGrain = partial(core.std.Convolution, matrix=[1, 2, 1, 2, 4, 2, 1, 2, 1])
     elif kernel == 19:
-        Filter = partial(core.std.Convolution, matrix=[1, 1, 1, 1, 0, 1, 1, 1, 1])
+        RemoveGrain = partial(core.std.Convolution, matrix=[1, 1, 1, 1, 0, 1, 1, 1, 1])
     elif kernel == 20:
-        Filter = partial(core.std.Convolution, matrix=[1, 1, 1, 1, 1, 1, 1, 1, 1])
+        RemoveGrain = partial(core.std.Convolution, matrix=[1, 1, 1, 1, 1, 1, 1, 1, 1])
     else:
-        Filter = partial(core.rgvs.RemoveGrain, mode=[kernel])
+        RemoveGrain = partial(core.rgvs.RemoveGrain, mode=[kernel])
 
     if soft == -1:
         soft = math.sqrt(((ss_x + ss_y) / 2 - 1) * 100) * 10
@@ -4945,7 +4903,7 @@ def LSFmod(input, strength=100, Smode=None, Smethod=None, kernel=11, preblur=0, 
         tmp_orig = tmp
         tmp = mvf.GetPlane(tmp, 0)
 
-    if preblur <= 0:
+    if preblur <= -1:
         pre = tmp
     elif preblur >= 3:
         expr = 'x {i} < {peak} x {j} > 0 {peak} x {i} - {peak} {j} {i} - / * - ? ?'.format(i=scale(16, peak), j=scale(75, peak), peak=peak)
@@ -4958,16 +4916,16 @@ def LSFmod(input, strength=100, Smode=None, Smethod=None, kernel=11, preblur=0, 
 
     if Smode < 3:
         if Smethod <= 1:
-            method = Filter(pre)
+            method = RemoveGrain(pre)
         elif Smethod == 2:
             method = core.std.Merge(dark_limit, bright_limit)
         else:
-            method = Filter(core.std.Merge(dark_limit, bright_limit))
+            method = RemoveGrain(core.std.Merge(dark_limit, bright_limit))
 
         if secure:
             method = core.std.Expr([method, pre], expr=['x y < x {i} + x y > x {i} - x ? ?'.format(i=scale(1, peak))])
 
-        if preblur > 0:
+        if preblur > -1:
             method = core.std.MakeDiff(tmp, core.std.MakeDiff(pre, method))
 
         if Smode <= 1:
@@ -4983,9 +4941,8 @@ def LSFmod(input, strength=100, Smode=None, Smethod=None, kernel=11, preblur=0, 
         if secure:
             normsharp = core.std.Expr([normsharp, pre], expr=['x y < x {i} + x y > x {i} - x ? ?'.format(i=scale(1, peak))])
 
-        if preblur > 0:
+        if preblur > -1:
             normsharp = core.std.MakeDiff(tmp, core.std.MakeDiff(pre, normsharp))
-
 
     ### LIMIT
     normal = Clamp(normsharp, bright_limit, dark_limit, scale(overshoot, peak), scale(undershoot, peak))
@@ -5171,7 +5128,7 @@ def TemporalDegrain(          \
           denoiseClip = inpClip.neo_fft3d.FFT3D(sigma=sigma\
               , sigma2=sigma2, sigma3=sigma3, sigma4=sigma4, bw=blockWidth\
               , bh=blockHeight, ow=overlapWidth, oh=overlapHeight)
-        else:
+        else:                                                    
           denoiseClip = inpClip.fft3dfilter.FFT3DFilter(sigma=sigma\
               , sigma2=sigma2, sigma3=sigma3, sigma4=sigma4, bw=blockWidth\
               , bh=blockHeight, ow=overlapWidth, oh=overlapHeight)
@@ -5318,8 +5275,6 @@ def aaf(                \
     neutral = 1 << (inputClip.format.bits_per_sample - 1)
     peak = (1 << inputClip.format.bits_per_sample) - 1
 
-                                                       
-
     if aay > 0:
         # Do the upscaling
         if aas < 0:
@@ -5379,7 +5334,6 @@ def AverageFrames(clip, weights, scenechange=None, planes=None):
 
     if scenechange:
         clip = SCDetect(clip, threshold=scenechange)
-                          
     return clip.misc.AverageFrames(weights=weights, scenechange=scenechange, planes=planes)
 
 
@@ -5411,7 +5365,6 @@ def Bob(clip, b=1/3, c=1/3, tff=None):
 
     if clip.format.bits_per_sample != bits_per_sample:
         clip = clip.fmtc.bitdepth(bits=bits_per_sample, dmode=1)
-         
     return clip
 
 
@@ -5450,15 +5403,14 @@ def KNLMeansCL(clip, d=None, a=None, s=None, h=None, wmode=None, wref=None, devi
     if not isinstance(clip, vs.VideoNode):
         raise vs.Error('KNLMeansCL: This is not a clip')
 
-    if clip.format.color_family not in [vs.YUV, vs.YCOCG]:
-        raise vs.Error('KNLMeansCL: This wrapper is intended to be used only for YUV and YCoCg formats')
+    if clip.format.color_family != vs.YUV:
+        raise vs.Error('KNLMeansCL: This wrapper is intended to be used only for YUV format')
 
     if clip.format.subsampling_w > 0 or clip.format.subsampling_h > 0:
         return clip.knlm.KNLMeansCL(d=d, a=a, s=s, h=h, wmode=wmode, wref=wref, device_type=device_type, device_id=device_id).knlm.KNLMeansCL(
                      channels='UV', d=d, a=a, s=s, h=h, wmode=wmode, wref=wref, device_type=device_type, device_id=device_id)
     else:
         return clip.knlm.KNLMeansCL(d=d, a=a, s=s, h=h, channels='YUV', wmode=wmode, wref=wref, device_type=device_type, device_id=device_id)
-
 
 # Available blend modes:
 #  normal
@@ -5473,6 +5425,8 @@ def KNLMeansCL(clip, d=None, a=None, s=None, h=None, wmode=None, wref=None, devi
 #  extremity
 #  freeze
 #  glow
+#  grainextract
+#  grainmerge
 #  hardlight
 #  hardmix
 #  heat
@@ -5485,9 +5439,10 @@ def KNLMeansCL(clip, d=None, a=None, s=None, h=None, wmode=None, wref=None, devi
 #  pinlight
 #  reflect
 #  screen
+#  softlight
 #  subtract
 #  vividlight
-def Overlay(base, overlay, x=0, y=0, mask=None, opacity=1.0, mode='normal', planes=None):
+def Overlay(base, overlay, x=0, y=0, mask=None, opacity=1.0, mode='normal', planes=None, mask_first_plane=True):
     if not (isinstance(base, vs.VideoNode) and isinstance(overlay, vs.VideoNode)):
         raise vs.Error('Overlay: This is not a clip')
 
@@ -5522,11 +5477,8 @@ def Overlay(base, overlay, x=0, y=0, mask=None, opacity=1.0, mode='normal', plan
 
     if mask is None:
         mask = overlay.std.BlankClip(format=overlay.format.replace(color_family=vs.GRAY, subsampling_w=0, subsampling_h=0), color=[peak])
-    elif mask.format.id != overlay.format.id:
-        if mask.format.color_family != vs.GRAY:
-            mask = mask.resize.Point(format=overlay.format, range_s='full')
-        else:
-            mask = mask.std.ShufflePlanes(planes=[0, 0, 0], colorfamily=overlay.format.color_family)
+    elif mask.format.id != overlay.format.id and mask.format.color_family != vs.GRAY:
+        mask = mask.resize.Point(format=overlay.format, range_s='full')
 
     opacity = min(max(opacity, 0.0), 1.0)
     mode = mode.lower()
@@ -5557,7 +5509,7 @@ def Overlay(base, overlay, x=0, y=0, mask=None, opacity=1.0, mode='normal', plan
     elif mode == 'average':
         expr = f'x y + 2 /'
     elif mode == 'burn':
-        expr = f'x 0 <= x 0 {peak} {peak} y - {factor} * x / - max ?'
+        expr = f'x 0 <= x {peak} {peak} y - {factor} * x / - ?'
     elif mode == 'darken':
         expr = f'x y min'
     elif mode == 'difference':
@@ -5565,7 +5517,7 @@ def Overlay(base, overlay, x=0, y=0, mask=None, opacity=1.0, mode='normal', plan
     elif mode == 'divide':
         expr = f'y 0 <= {peak} {peak} x * y / ?'
     elif mode == 'dodge':
-        expr = f'x {peak} >= x {peak} y {factor} * {peak} x - / min ?'
+        expr = f'x {peak} >= x y {factor} * {peak} x - / ?'
     elif mode == 'exclusion':
         expr = f'x y + 2 x * y * {peak} / -'
     elif mode == 'extremity':
@@ -5573,7 +5525,11 @@ def Overlay(base, overlay, x=0, y=0, mask=None, opacity=1.0, mode='normal', plan
     elif mode == 'freeze':
         expr = f'y 0 <= 0 {peak} {peak} x - dup * y / {peak} min - ?'
     elif mode == 'glow':
-        expr = f'x {peak} >= x {peak} y y * {peak} x - / min ?'
+        expr = f'x {peak} >= x y y * {peak} x - / ?'
+    elif mode == 'grainextract':
+        expr = f'x y - {neutral} +'
+    elif mode == 'grainmerge':
+        expr = f'x y + {neutral} -'
     elif mode == 'hardlight':
         expr = f'y {neutral} < 2 y x * {peak} / * {peak} 2 {peak} y - {peak} x - * {peak} / * - ?'
     elif mode == 'hardmix':
@@ -5595,25 +5551,25 @@ def Overlay(base, overlay, x=0, y=0, mask=None, opacity=1.0, mode='normal', plan
     elif mode == 'pinlight':
         expr = f'y {neutral} < x 2 y * min x 2 y {neutral} - * max ?'
     elif mode == 'reflect':
-        expr = f'y {peak} >= y {peak} x x * {peak} y - / min ?'
+        expr = f'y {peak} >= y x x * {peak} y - / ?'
     elif mode =='screen':
         expr = f'{peak} {peak} x - {peak} y - * {peak} / -'
-    # elif mode == 'softlight': # Expr hangs for unknown reason. Disabled until Expr gets fixed.
-        # expr = f'x {neutral} > y {peak} y - x {neutral} - * {neutral} / 0.5 y {neutral} - abs {peak} / - * + y y {neutral} x - {neutral} / * 0.5 y {neutral} - abs {peak} / - * - ?'
+    elif mode == 'softlight':
+        expr = f'x {neutral} > y {peak} y - x {neutral} - * {neutral} / 0.5 y {neutral} - abs {peak} / - * + y y {neutral} x - {neutral} / * 0.5 y {neutral} - abs {peak} / - * - ?'
     elif mode == 'subtract':
         expr = f'x y -'
     elif mode == 'vividlight':
-        expr = f'x {neutral} < x 0 <= 2 x * 0 {peak} {peak} y - {factor} * 2 x * / - max ? 2 x {neutral} - * {peak} >= 2 x {neutral} - * {peak} y {factor} * {peak} 2 x {neutral} - * - / min ? ?'
+        expr = f'x {neutral} < x 0 <= 2 x * {peak} {peak} y - {factor} * 2 x * / - ? 2 x {neutral} - * {peak} >= 2 x {neutral} - * y {factor} * {peak} 2 x {neutral} - * - / ? ?'
     else:
         raise vs.Error("Overlay: invalid 'mode' specified")
 
     if mode != 'normal':
         overlay = core.std.Expr([overlay, base], expr=[expr if i in planes else '' for i in range(base.format.num_planes)])
-    last = core.std.MaskedMerge(base, overlay, mask, planes=planes)
+    last = core.std.MaskedMerge(base, overlay, mask, planes=planes, first_plane=mask_first_plane)
 
     # Return padded clip
     if base_orig is not None:
-        last = core.resize.Point(last, format=base_orig.format)
+        last = last.resize.Point(format=base_orig.format)
     return last
 
 
@@ -5727,7 +5683,6 @@ def ContraSharpening(denoised, original, radius=None, rep=13, planes=None):
 
     if planes is None:
         planes = list(range(denoised.format.num_planes))
-                    
     elif isinstance(planes, int):
         planes = [planes]
 
@@ -5762,7 +5717,6 @@ def MinBlur(clp, r=1, planes=None):
 
     if planes is None:
         planes = list(range(clp.format.num_planes))
-                    
     elif isinstance(planes, int):
         planes = [planes]
 
@@ -5874,8 +5828,6 @@ def DitherLumaRebuild(src, s0=2.0, c=0.0625, chroma=True):
     if src.format.color_family == vs.RGB:
         raise vs.Error('DitherLumaRebuild: RGB format is not supported')
 
-                                          
-                          
     isGray = (src.format.color_family == vs.GRAY)
     isInteger = (src.format.sample_type == vs.INTEGER)
 
@@ -5920,7 +5872,6 @@ def mt_expand_multi(src, mode='rectangle', planes=None, sw=1, sh=1):
 
     if mode_m is not None:
         src = mt_expand_multi(src.std.Maximum(planes=planes, coordinates=mode_m), mode=mode, planes=planes, sw=sw - 1, sh=sh - 1)
-         
     return src
 
 
@@ -5939,7 +5890,6 @@ def mt_inpand_multi(src, mode='rectangle', planes=None, sw=1, sh=1):
 
     if mode_m is not None:
         src = mt_inpand_multi(src.std.Minimum(planes=planes, coordinates=mode_m), mode=mode, planes=planes, sw=sw - 1, sh=sh - 1)
-         
     return src
 
 
@@ -5978,3 +5928,7 @@ def m4(x):
 
 def scale(value, peak):
     return cround(value * peak / 255) if peak != 1 else value / 255
+
+# sin(pi x / 2) for -1 < x < 1 using Taylor series
+def sine_expr(var):
+    return f'{-3.5988432352121e-6} {var} * {var} * {0.00016044118478736} + {var} * {var} * {-0.0046817541353187} + {var} * {var} * {0.079692626246167} + {var} * {var} * {-0.64596409750625} + {var} * {var} * {1.5707963267949} + {var} *'

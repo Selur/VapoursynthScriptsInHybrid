@@ -80,9 +80,6 @@ def FineSharp(clip, mode=1, sstr=2.5, cstr=None, xstr=0, lstr=1.5, pstr=1.28, ld
     if not isinstance(clip, vs.VideoNode):
         raise TypeError("FineSharp: This is not a clip!")
 
-    if clip.format.color_family == vs.COMPAT:
-        raise TypeError("FineSharp: COMPAT color family is not supported!")
-
     if cstr is None:
         cstr = spline(sstr, {0: 0, 0.5: 0.1, 1: 0.6, 2: 0.9, 2.5: 1, 3: 1.1, 3.5: 1.15, 4: 1.2, 8: 1.25, 255: 1.5})
         cstr **= 0.8 if mode > 0 else cstr
@@ -146,9 +143,6 @@ def psharpen(clip, strength=25, threshold=75, ssx=1, ssy=1, dw=None, dh=None):
     
     if clip.format.sample_type != vs.INTEGER:
         raise TypeError("psharpen: clip must be of integer sample type")
-
-    if clip.format.color_family == vs.COMPAT:
-        raise TypeError("psharpen: COMPAT color family is not supported!")
     
     color = clip.format.color_family
     ow = clip.width
@@ -566,8 +560,6 @@ def LSFmod(clip, strength=100, Smode=None, Smethod=None, kernel=11, preblur=Fals
         raise TypeError("LSFmod: source must be the same format as clip")
     if source is not None and (source.width != clip.width or source.height != clip.height):
         raise TypeError("LSFmod: source must be the same size as clip")
-    if clip.format.color_family == vs.COMPAT:
-        raise TypeError("LSFmod: COMPAT color family is not supported!")
     
     color = clip.format.color_family
     bd = clip.format.bits_per_sample
@@ -820,8 +812,7 @@ def SeeSaw(clip, denoised=None, NRlimit=2, NRlimit2=None, sstr=2, Slimit=None, S
 
     if not isinstance(clip, vs.VideoNode):
         raise TypeError("SeeSaw: This is not a clip!")
-    if clip.format.color_family == vs.COMPAT:
-        raise TypeError("SeeSaw: COMPAT color family is not supported!")
+
     if NRlimit2 is None:
         NRlimit2 = NRlimit + 1
     if Slimit is None:
@@ -937,8 +928,6 @@ def Sharpen2(clip, sstr, power, zp, ldmp, hdmp, rg, mode, diff):
 
     if not isinstance(clip, vs.VideoNode):
         raise TypeError("Sharpen2: This is not a clip!")
-    if color == vs.COMPAT:
-        raise TypeError("Sharpen2: COMPAT color family is not supported!")
     
     tmp = core.std.ShufflePlanes(clip, [0], vs.GRAY) if color in [vs.YUV, vs.YCOCG] else clip
 
@@ -979,8 +968,6 @@ def SootheSS(sharp, src, sootheT=50, sootheS=0):
 
     if not isinstance(sharp, vs.VideoNode):
         raise TypeError("SootheSS: sharp must be a clip!")
-    if sharp.format.color_family == vs.COMPAT:
-        raise TypeError("Sharpen2: COMPAT color family is not supported!")
     if not isinstance(src, vs.VideoNode) or src.format.id != sharp.format.id:
         raise TypeError("SootheSS: src must be of the same format as sharp!") 
     if src.width != sharp.width or src.height != sharp.height:
@@ -2588,8 +2575,6 @@ def NonlinUSM(clip, z=6.0, power=1.6, sstr=1, rad=9.0, ldmp=0.01, hdmp=0.01):
     
     if not isinstance(clip, vs.VideoNode):
         raise TypeError("NonlinUSM: This is not a clip!")
-    if color == vs.COMPAT:
-        raise TypeError("NonlinUSM: COMPAT color family is not supported!")
 
     tmp = core.std.ShufflePlanes(clip, [0], vs.GRAY) if color in [vs.YUV, vs.YCOCG] else clip
     gauss = core.resize.Bicubic(tmp, m4(clip.width/rad), m4(clip.height/rad)).resize.Bicubic(clip.width, clip.height, filter_param_a=1, filter_param_b=0)
@@ -2626,8 +2611,6 @@ def DetailSharpen(clip, z=4, sstr=1.5, power=4, ldmp=1, mode=1, med=False):
     
     if not isinstance(clip, vs.VideoNode):
         raise TypeError("DetailSharpen: This is not a clip!")
-    if color == vs.COMPAT:
-        raise TypeError("DetailSharpen: COMPAT color family is not supported!")
 
     tmp = core.std.ShufflePlanes(clip, [0], vs.GRAY) if color in [vs.YUV, vs.YCOCG] else clip
 
@@ -2817,8 +2800,6 @@ def EdgeDetect(clip, mode="kirsch", lthr=0, hthr=255, multi=1):
 
     if not isinstance(clip, vs.VideoNode):
         raise TypeError("EdgeDetect: This is not a clip!")
-    if clip.format.color_family == vs.COMPAT:
-        raise TypeError("EdgeDetect: COMPAT color family is not supported!")
 
     if clip.format.color_family in [vs.YUV, vs.YCOCG]:
         clip = core.std.ShufflePlanes(clip, 0, vs.GRAY)
@@ -3063,8 +3044,7 @@ def HQDeringmod(clip, p=None, ringmask=None, mrad=1, msmooth=1, incedge=False, m
 
     if not isinstance(clip, vs.VideoNode):
         raise TypeError("HQDeringmod: This is not a clip!")
-    if clip.format.color_family in [vs.RGB, vs.COMPAT]:
-        raise TypeError("HQDeringmod: RGB and COMPAT color family are not supported!")
+
     if p is not None and (not isinstance(p, vs.VideoNode) or p.format.id != clip.format.id):
         raise TypeError("HQDeringmod: p must be the same format as clip!")
     if p is not None and (p.width != clip.width or p.height != clip.height):
@@ -3164,8 +3144,6 @@ def MaskedDHA(clip, rx=2, ry=2, darkstr=1, brightstr=1, lowsens=50, highsens=50,
     
     if not isinstance(clip, vs.VideoNode):
         raise TypeError("MaskedDHA: This is not a clip!")
-    if clip.format.color_family in [vs.RGB, vs.COMPAT]:
-        raise TypeError("MaskedDHA: RGB and COMPAT color family are not supported!")
     
     w = clip.width
     h = clip.height
@@ -3218,8 +3196,6 @@ def daamod(c, nsize=None, nns=None, qual=None, pscrn=None, exp=None, opencl=Fals
 
     if not isinstance(c, vs.VideoNode):
         raise TypeError("daamod: This is not a clip")
-    if c.format.color_family == vs.COMPAT:
-        raise TypeError("daamod: COMPAT color family is not supported!")
 
     isFLOAT = c.format.sample_type == vs.FLOAT
     R = core.rgsf.Repair if isFLOAT else core.rgvs.Repair
@@ -3257,8 +3233,6 @@ def LUSM(clip, blur=1, thr=3.0, elast=4.0, brighthr=None):
         
     if not isinstance(clip, vs.VideoNode):
         raise TypeError("LUSM: This is not a clip!")
-    if clip.format.color_family == vs.COMPAT:
-        raise TypeError("LUSM: COMPAT color family is not supported!")
     if blur == 0:
         c2 = MinBlur(clip)
     elif blur == 1:
@@ -3683,9 +3657,6 @@ def ContraSharpening(clip, src, radius=None, rep=13, planes=[0, 1, 2]):
     if not (isinstance(clip, vs.VideoNode) and isinstance(src, vs.VideoNode)):
         raise TypeError("ContraSharpening: This is not a clip")
 
-    if clip.format.color_family == vs.COMPAT:
-        raise TypeError("ContraSharpening: COMPAT color family is not supported!")
-
     if clip.format.id != src.format.id:
         raise TypeError("ContraSharpening: Both clips must have the same format")
 
@@ -3738,9 +3709,6 @@ def MinBlur(clip, r=1, planes=[0, 1, 2]):
     if not isinstance(clip, vs.VideoNode):
         raise TypeError("MinBlur: This is not a clip")
 
-    if clip.format.color_family == vs.COMPAT:
-        raise TypeError("MinBlur: COMPAT color family is not supported!")
-
     if clip.format.num_planes == 1:
         planes = [0]
 
@@ -3774,9 +3742,6 @@ def sbr(clip, r=1, planes=[0, 1, 2]):
     
     if not isinstance(clip, vs.VideoNode):
         raise TypeError("sbr: This is not a clip")
-
-    if clip.format.color_family == vs.COMPAT:
-        raise TypeError("sbr: COMPAT color family is not supported!")
 
     if clip.format.num_planes == 1:
         planes = [0]
@@ -3820,9 +3785,6 @@ def DitherLumaRebuild(src, s0=2., c=0.0625, chroma=True):
     if not isinstance(src, vs.VideoNode):
         raise TypeError("DitherLumaRebuild: This is not a clip!")
     
-    if src.format.color_family == vs.COMPAT:
-        raise TypeError("DitherLumaRebuild: COMPAT color family is not supported!")
-
     bd = src.format.bits_per_sample
     isFLOAT = src.format.sample_type == vs.FLOAT
     i = 0.00390625 if isFLOAT else 1 << (bd - 8)
@@ -3845,8 +3807,8 @@ def Tweak(clip, hue=None, sat=None, bright=None, cont=None, coring=True):
     isGRAY = clip.format.color_family == vs.GRAY
     mid = 0 if isFLOAT else 1 << (bd - 1)
 
-    if clip.format.color_family in [vs.RGB, vs.COMPAT]:
-        raise TypeError("Tweak: RGB and COMPAT color family are not supported!")
+    if clip.format.color_family == vs.RGB:
+        raise TypeError("Tweak: RGB color family are not supported!")
         
     if not (hue is None and sat is None or isGRAY):
         hue = 0.0 if hue is None else hue

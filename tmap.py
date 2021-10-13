@@ -1,7 +1,7 @@
 import vapoursynth as vs
 
 def tm(clip="",source_peak="",desat=50,lin=True,show_satmask=False,show_clipped=False ) :
-    core = vs.get_core()
+    core = vs.core
     c=clip
     o=c
     a=c
@@ -78,7 +78,7 @@ def tm(clip="",source_peak="",desat=50,lin=True,show_satmask=False,show_clipped=
     return c 
 
 def hablehdr10tosdr(clip, source_peak=1000, desat=50, tFormat=vs.YUV420P8, tMatrix="709", tRange="limited", color_loc="center", f_a=0.0, f_b=0.75, show_satmask=False,lin=True,show_clipped=False) :
-  core = vs.get_core()
+  core = vs.core
   clip=core.resize.Bicubic(clip=clip, format=vs.RGBS, filter_param_a=f_a, filter_param_b=f_b, range_in_s="limited", matrix_in_s="2020ncl", primaries_in_s="2020", primaries_s="2020", transfer_in_s="st2084", transfer_s="linear",dither_type="none", nominal_luminance=1000)
   clip=tm(clip=clip,source_peak=source_peak,desat=desat,show_satmask=show_satmask,lin=lin,show_clipped=show_clipped) 
   if tFormat != vs.RGBS:
