@@ -1377,7 +1377,7 @@ def QTGMC(clip, Preset='Slower', TR0=None, TR1=None, TR2=None, Rep0=None, Rep1=0
         srchClip = core.std.Expr([spatialBlur, tweaked], [expr2] if ChromaMotion or isGRAY else [expr2, ''])
 
     # Calculate forward and backward motion vectors from motion search clip
-    analyse_args = dict(blksize=BlockSize, overlap=Overlap, search=Search, searchparam=SearchParam, pelsearch=PelSearch, truemotion=TrueMotion, _lambda=Lambda, lsad=LSAD, pnew=PNew, plevel=PLevel, _global=GlobalMotion, dct=DCT, chroma=ChromaMotion)
+    analyse_args = dict(blksize=BlockSize, overlap=Overlap, search=Search, searchparam=SearchParam, pelsearch=PelSearch, truemotion=TrueMotion, lambda_=Lambda, lsad=LSAD, pnew=PNew, plevel=PLevel, _global=GlobalMotion, dct=DCT, chroma=ChromaMotion)
     srchSuper = S(DitherLumaRebuild(srchClip, s0=1, chroma=ChromaMotion), pel=SubPel, sharp=1, rfilter=4, hpad=hpad, vpad=vpad, chroma=ChromaMotion) if maxTR > 0 else None
     bVec1 = A(srchSuper, isb=True,  delta=1, **analyse_args) if maxTR > 0 else None
     fVec1 = A(srchSuper, isb=False, delta=1, **analyse_args) if maxTR > 0 else None
@@ -1387,7 +1387,7 @@ def QTGMC(clip, Preset='Slower', TR0=None, TR1=None, TR2=None, Rep0=None, Rep1=0
     fVec3 = A(srchSuper, isb=False, delta=3, **analyse_args) if maxTR > 2 else None
 
     if RefineMotion and maxTR > 0:
-        recalculate_args = dict(blksize=BlockSize/2, overlap=Overlap/2, search=Search, searchparam=SearchParam, truemotion=TrueMotion, _lambda=Lambda/4, pnew=PNew, dct=DCT, chroma=ChromaMotion)
+        recalculate_args = dict(blksize=BlockSize/2, overlap=Overlap/2, search=Search, searchparam=SearchParam, truemotion=TrueMotion, lambda_=Lambda/4, pnew=PNew, dct=DCT, chroma=ChromaMotion)
         bVec1 = R(srchSuper, bVec1, **recalculate_args)
         fVec1 = R(srchSuper, fVec1, **recalculate_args)
         bVec2 = R(srchSuper, bVec2, **recalculate_args) if maxTR > 1 else bVec2
@@ -1645,7 +1645,7 @@ def QTGMC(clip, Preset='Slower', TR0=None, TR1=None, TR2=None, Rep0=None, Rep1=0
     rBlockDivide = BlockSize // rBlockSize
     rLambda = Lambda // (rBlockDivide ** 2)
     if ShutterBlur > 1:
-        recalculate_args = dict(blksize=rBlockSize, overlap=rOverlap, search=Search, searchparam=SearchParam, truemotion=TrueMotion, _lambda=rLambda, pnew=PNew, dct=DCT, chroma=ChromaMotion)
+        recalculate_args = dict(blksize=rBlockSize, overlap=rOverlap, search=Search, searchparam=SearchParam, truemotion=TrueMotion, lambda_=rLambda, pnew=PNew, dct=DCT, chroma=ChromaMotion)
         sbBVec1 = R(srchSuper, bVec1, **recalculate_args)
         sbFVec1 = R(srchSuper, fVec1, **recalculate_args)
     elif ShutterBlur > 0:
@@ -2301,8 +2301,8 @@ def TemporalDegrain2(clip, degrainTR=2, degrainPlane=4, meAlg=5, meAlgPar=None, 
         expr = 'x {a} + y < x {b} + x {a} - y > x {b} - x y + 2 / ? ?'.format(a=7*i, b=2*i)
         srchClip = core.std.Expr([spatialBlur, clip], [expr] if ChromaMotion or isGRAY else [expr, ''])
 
-    analyse_args = dict(blksize=meBlksz, overlap=Overlap, search=meAlg, searchparam=meAlgPar, pelsearch=meSubpel, truemotion=meTM, _lambda=Lambda, lsad=LSAD, pnew=PNew, plevel=PLevel, _global=GlobalMotion, dct=DCT, chroma=ChromaMotion)
-    recalculate_args = dict(blksize=Overlap, overlap=Overlap/2, search=meAlg, searchparam=meAlgPar, truemotion=meTM, _lambda=Lambda/4, pnew=PNew, dct=DCT, chroma=ChromaMotion)
+    analyse_args = dict(blksize=meBlksz, overlap=Overlap, search=meAlg, searchparam=meAlgPar, pelsearch=meSubpel, truemotion=meTM, lambda_=Lambda, lsad=LSAD, pnew=PNew, plevel=PLevel, _global=GlobalMotion, dct=DCT, chroma=ChromaMotion)
+    recalculate_args = dict(blksize=Overlap, overlap=Overlap/2, search=meAlg, searchparam=meAlgPar, truemotion=meTM, lambda_=Lambda/4, pnew=PNew, dct=DCT, chroma=ChromaMotion)
     srchSuper = S(DitherLumaRebuild(srchClip, s0=1, chroma=ChromaMotion), pel=meSubpel, sharp=1, rfilter=4, hpad=hpad, vpad=vpad, chroma=ChromaMotion)
     
     if (maxTR > 0) and (degrainTR < 4 or postTR < 4):
@@ -2529,7 +2529,7 @@ def mClean(clip, thSAD=400, chroma=True, sharp=10, rn=14, deband=0, depth=0, str
     super1 = S(c if chroma else cy, hpad=bs, vpad=bs, pel=pel, rfilter=4, sharp=1)
     super2 = S(c if chroma else cy, hpad=bs, vpad=bs, pel=pel, rfilter=1, levels=1)
     analyse_args = dict(blksize=bs, overlap=ov, search=5, truemotion=truemotion)
-    recalculate_args = dict(blksize=bs, overlap=ov, search=5, truemotion=truemotion, thsad=180, _lambda=lampa)
+    recalculate_args = dict(blksize=bs, overlap=ov, search=5, truemotion=truemotion, thsad=180, lambda_=lampa)
 
     # Analysis
     bvec4 = R(super1, A(super1, isb=True,  delta=4, **analyse_args), **recalculate_args) if not icalc else None
@@ -3789,9 +3789,9 @@ def Tweak(clip, hue=None, sat=None, bright=None, cont=None, coring=True):
     return clip
 
 # Modified from mvmulti: https://github.com/IFeelBloated/vapoursynth-mvtools-sf/blob/r9/src/mvmulti.py
-def Analyze(super, blksize=None, blksizev=None, levels=None, search=None, searchparam=None, pelsearch=None, _lambda=None, chroma=None, tr=None, truemotion=None, lsad=None, plevel=None, _global=None, pnew=None, pzero=None, pglobal=None, overlap=None, overlapv=None, divide=None, badsad=None, badrange=None, meander=None, trymany=None, fields=None, TFF=None, search_coarse=None, dct=None, d=False):
+def Analyze(super, blksize=None, blksizev=None, levels=None, search=None, searchparam=None, pelsearch=None, lambda_=None, chroma=None, tr=None, truemotion=None, lsad=None, plevel=None, _global=None, pnew=None, pzero=None, pglobal=None, overlap=None, overlapv=None, divide=None, badsad=None, badrange=None, meander=None, trymany=None, fields=None, TFF=None, search_coarse=None, dct=None, d=False):
     def getvecs(isb, delta):
-        return core.mvsf.Analyze(super, isb=isb, blksize=blksize, blksizev=blksizev, levels=levels, search=search, searchparam=searchparam, pelsearch=pelsearch, _lambda=_lambda, chroma=chroma, delta=delta, truemotion=truemotion, lsad=lsad, plevel=plevel, _global=_global, pnew=pnew, pzero=pzero, pglobal=pglobal, overlap=overlap, overlapv=overlapv, divide=divide, badsad=badsad, badrange=badrange, meander=meander, trymany=trymany, fields=fields, tff=TFF, search_coarse=search_coarse, dct=dct)
+        return core.mvsf.Analyze(super, isb=isb, blksize=blksize, blksizev=blksizev, levels=levels, search=search, searchparam=searchparam, pelsearch=pelsearch, lambda_=lambda_, chroma=chroma, delta=delta, truemotion=truemotion, lsad=lsad, plevel=plevel, _global=_global, pnew=pnew, pzero=pzero, pglobal=pglobal, overlap=overlap, overlapv=overlapv, divide=divide, badsad=badsad, badrange=badrange, meander=meander, trymany=trymany, fields=fields, tff=TFF, search_coarse=search_coarse, dct=dct)
 
     bv = [getvecs(True,  i) for i in range(tr, 0, -1)] if not d else [getvecs(True,  i*2) for i in range(tr, 0, -1)]
     fv = [getvecs(False, i) for i in range(1, tr + 1)] if not d else [getvecs(False, i*2) for i in range(1, tr + 1)]
