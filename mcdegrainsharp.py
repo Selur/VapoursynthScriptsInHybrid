@@ -1,19 +1,15 @@
 import vapoursynth as vs
 """ From https://gist.github.com/4re/b5399b1801072458fc80#file-mcdegrainsharp-py 
-added opencl-option to support TCannyCL
 """
 
-def _sharpen(clip, strength, planes, opencl=False):
+def _sharpen(clip, strength, planes):
     core = vs.core
-    if opencl is True:
-      blur = core.tcanny.TCannyCL(clip, sigma=strength, mode=-1, planes=planes)
-    else:
-      blur = core.tcanny.TCanny(clip, sigma=strength, mode=-1, planes=planes)
+    blur = core.tcanny.TCanny(clip, sigma=strength, mode=-1, planes=planes)
     
     return core.std.Expr([clip, blur], "x x + y -")
 
 
-def mcdegrainsharp(clip, frames=2, bblur=0.3, csharp=0.3, bsrch=True, thsad=400, plane=4, opencl=False):
+def mcdegrainsharp(clip, frames=2, bblur=0.3, csharp=0.3, bsrch=True, thsad=400, plane=4):
     """Based on MCDegrain By Didee:
     http://forum.doom9.org/showthread.php?t=161594
     Also based on DiDee observations in this thread:
@@ -57,18 +53,14 @@ def mcdegrainsharp(clip, frames=2, bblur=0.3, csharp=0.3, bsrch=True, thsad=400,
     else:
         planes = plane
     
-    if opencl is True:
-      c2 = core.tcanny.TCannyCL(clip, sigma=bblur, mode=-1, planes=planes)
-    else:
-      c2 = core.tcanny.TCanny(clip, sigma=bblur, mode=-1, planes=planes)
+    c2 = core.tcanny.TCanny(clip, sigma=bblur, mode=-1, planes=planes)
 
     if bsrch is True:
         super_a = core.mv.Super(c2, pel=2, sharp=1)
     else:
         super_a = core.mv.Super(clip, pel=2, sharp=1)
 
-    super_rend = core.mv.Super(_sharpen(clip, csharp, planes=planes, opencl=opencl),
-                               pel=2, sharp=1, levels=1)
+    super_rend = core.mv.Super(_sharpen(clip, csharp, planes=planes), pel=2, sharp=1, levels=1)
 
     mvbw3 = core.mv.Analyse(super_a, isb=True, delta=3,
                             overlap=blksize//2, blksize=blksize)
