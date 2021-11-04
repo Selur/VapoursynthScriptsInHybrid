@@ -4,7 +4,7 @@ import math
 
 
 def nnedi3_resample(input, target_width=None, target_height=None, src_left=None, src_top=None, src_width=None, src_height=None, csp=None, mats=None, matd=None, cplaces=None, cplaced=None, fulls=None, fulld=None, curves=None, curved=None, sigmoid=None, scale_thr=None, nsize=None, nns=None, qual=None, etype=None, pscrn=None, opt=None, int16_prescreener=None, int16_predictor=None, exp=None, kernel=None, invks=False, taps=None, invkstaps=3, a1=None, a2=None, chromak_up=None, chromak_up_taps=None, chromak_up_a1=None, chromak_up_a2=None, chromak_down=None, chromak_down_invks=False, chromak_down_invkstaps=3, chromak_down_taps=None, chromak_down_a1=None, chromak_down_a2=None, opencl=False, device=None):
-    core = vs.get_core()
+    core = vs.core
     funcName = 'nnedi3_resample'
     
     # Get property about input clip
@@ -293,7 +293,7 @@ def nnedi3_resample(input, target_width=None, target_height=None, src_left=None,
 
 
 def nnedi3_resample_kernel(input, target_width=None, target_height=None, src_left=None, src_top=None, src_width=None, src_height=None, scale_thr=None, nsize=None, nns=None, qual=None, etype=None, pscrn=None, opt=None, int16_prescreener=None, int16_predictor=None, exp=None, kernel=None, taps=None, a1=None, a2=None, invks=False, invkstaps=3, opencl=False, device=None):
-    core = vs.get_core()
+    core = vs.core
     
     # Parameters of scaling
     if target_width is None:
@@ -358,7 +358,7 @@ def nnedi3_resample_kernel(input, target_width=None, target_height=None, src_lef
 
 
 def nnedi3_resample_kernel_vertical(input, target_height=None, src_top=None, src_height=None, scale_thr=None, nsize=None, nns=None, qual=None, etype=None, pscrn=None, opt=None, int16_prescreener=None, int16_predictor=None, exp=None, kernel=None, taps=None, a1=None, a2=None, invks=False, invkstaps=3, opencl=False, device=None):
-    core = vs.get_core()
+    core = vs.core
     
     # Parameters of scaling
     if target_height is None:
@@ -420,7 +420,7 @@ def nnedi3_resample_kernel_vertical(input, target_height=None, src_top=None, src
 
 
 def nnedi3_rpow2_vertical(input, eTimes=1, field=1, nsize=None, nns=None, qual=None, etype=None, pscrn=None, opt=None, int16_prescreener=None, int16_predictor=None, exp=None, opencl=False, device=None):
-    core = vs.get_core()
+    core = vs.core
     
     if eTimes >= 1:
         last = nnedi3_dh(input, field, nsize, nns, qual, etype, pscrn, opt, int16_prescreener, int16_predictor, exp, opencl=opencl, device=device)
@@ -436,7 +436,7 @@ def nnedi3_rpow2_vertical(input, eTimes=1, field=1, nsize=None, nns=None, qual=N
 
 
 def nnedi3_dh(input, field=1, nsize=None, nns=None, qual=None, etype=None, pscrn=None, opt=None, int16_prescreener=None, int16_predictor=None, exp=None, opencl=False, device=None):
-    core = vs.get_core()
+    core = vs.core
     if opencl :
       return core.nnedi3cl.NNEDI3CL(input, field=field, dh=True, nsize=nsize, nns=nns, qual=qual, etype=etype, pscrn=pscrn, opt=opt, device=device)
     elif hasattr(core, 'znedi3'):
@@ -461,7 +461,7 @@ def LinearToGamma(src, fulls=True, fulld=True, curve='709', planes=[0, 1, 2], gc
     return LinearAndGamma(src, True, fulls, fulld, curve.lower(), planes, gcor, sigmoid, thr, cont)
 
 def LinearAndGamma(src, l2g_flag, fulls, fulld, curve, planes, gcor, sigmoid, thr, cont):
-    core = vs.get_core()
+    core = vs.core
     
     if curve == 'srgb':
         c_num = 0
@@ -523,7 +523,7 @@ def LinearAndGamma(src, l2g_flag, fulls, fulld, curve, planes, gcor, sigmoid, th
 
 # Apply the inverse sigmoid curve to a clip in linear luminance
 def SigmoidInverse(src, thr=0.5, cont=6.5, planes=[0, 1, 2]):
-    core = vs.get_core()
+    core = vs.core
     
     if not isinstance(src, vs.VideoNode) or src.format.bits_per_sample != 16:
         raise ValueError('SigmoidInverse: This is not a 16-bit clip')
@@ -540,7 +540,7 @@ def SigmoidInverse(src, thr=0.5, cont=6.5, planes=[0, 1, 2]):
 
 # Convert back a clip to linear luminance
 def SigmoidDirect(src, thr=0.5, cont=6.5, planes=[0, 1, 2]):
-    core = vs.get_core()
+    core = vs.core
     
     if not isinstance(src, vs.VideoNode) or src.format.bits_per_sample != 16:
         raise ValueError('SigmoidDirect: This is not a 16-bit clip')

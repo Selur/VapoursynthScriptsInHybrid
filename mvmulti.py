@@ -1,7 +1,7 @@
 import vapoursynth as vs
 
 def Analyze(super, blksize=8, blksizev=None, levels=0, search=4, searchparam=2, pelsearch=0, _lambda=None, chroma=True, tr=3, truemotion=True, lsad=None, plevel=None, _global=None, pnew=None, pzero=None, pglobal=0, overlap=0, overlapv=None, divide=0, badsad=10000.0, badrange=24, meander=True, trymany=False, fields=False, tff=None, search_coarse=3, dct=0):
-    core         = vs.get_core()
+    core         = vs.core
     def getvecs(isb, delta):
         vectors  = core.mvsf.Analyze(super, isb=isb, blksize=blksize, blksizev=blksizev, levels=levels, search=search, searchparam=searchparam, pelsearch=pelsearch, _lambda=_lambda, chroma=chroma, delta=delta, truemotion=truemotion, lsad=lsad, plevel=plevel, _global=_global, pnew=pnew, pzero=pzero, pglobal=pglobal, overlap=overlap, overlapv=overlapv, divide=divide, badsad=badsad, badrange=badrange, meander=meander, trymany=trymany, fields=fields, tff=tff, search_coarse=search_coarse, dct=dct)
         return vectors
@@ -12,7 +12,7 @@ def Analyze(super, blksize=8, blksizev=None, levels=0, search=4, searchparam=2, 
     return vmulti
 
 def Recalculate(super, vectors, thsad=200.0, smooth=1, blksize=8, blksizev=None, search=4, searchparam=2, _lambda=None, chroma=True, truemotion=True, pnew=None, overlap=0, overlapv=None, divide=0, meander=True, fields=False, tff=None, dct=0, tr=3):
-    core         = vs.get_core()
+    core         = vs.core
     def refine(delta):
         analyzed = core.std.SelectEvery(vectors, 2*tr, delta)
         refined  = core.mvsf.Recalculate(super, analyzed, thsad=thsad, smooth=smooth, blksize=blksize, blksizev=blksizev, search=search, searchparam=searchparam, _lambda=_lambda, chroma=chroma, truemotion=truemotion, pnew=pnew, overlap=overlap, overlapv=overlapv, divide=divide, meander=meander, fields=fields, tff=tff, dct=dct)
@@ -22,7 +22,7 @@ def Recalculate(super, vectors, thsad=200.0, smooth=1, blksize=8, blksizev=None,
     return vmulti
 
 def StoreVect(vectors, log):
-    core         = vs.get_core()
+    core         = vs.core
     w            = vectors.get_frame(0).width
     with open(log, "w") as f:
          print(w, file=f)
@@ -30,7 +30,7 @@ def StoreVect(vectors, log):
     return vectors
 
 def RestoreVect(store, log):
-    core         = vs.get_core()
+    core         = vs.core
     with open(log, "r") as f:
          w       = int(f.readline())
     vectors      = core.raws.Source(store, w, 1, src_fmt="Y8")
@@ -40,7 +40,7 @@ def RestoreVect(store, log):
     return vectors
 
 def Compensate(clip, super, vectors, scbehavior=1, thsad=10000.0, fields=False, time=100.0, thscd1=400.0, thscd2=130.0, tff=None, tr=3, cclip=None):
-    core         = vs.get_core()
+    core         = vs.core
     cclip        = clip if cclip is None else cclip
     def comp(delta):
         mv       = core.std.SelectEvery(vectors, 2*tr, delta)
@@ -53,7 +53,7 @@ def Compensate(clip, super, vectors, scbehavior=1, thsad=10000.0, fields=False, 
     return compmulti
 
 def Flow(clip, super, vectors, time=100.0, mode=0, fields=False, thscd1=400.0, thscd2=130.0, tff=None, tr=3, cclip=None):
-    core         = vs.get_core()
+    core         = vs.core
     cclip        = clip if cclip is None else cclip
     def flow(delta):
         mv       = core.std.SelectEvery(vectors, 2*tr, delta)
@@ -66,7 +66,7 @@ def Flow(clip, super, vectors, time=100.0, mode=0, fields=False, thscd1=400.0, t
     return flowmulti
 
 def DegrainN(clip, super, mvmulti, tr=3, thsad=400.0, plane=4, limit=1.0, thscd1=400.0, thscd2=130.0):
-    core         = vs.get_core()
+    core         = vs.core
     def bvn(n):
         bv       = core.std.SelectEvery(mvmulti, tr*2, tr-n)
         return bv

@@ -22,7 +22,7 @@ def nnedi3_rpow2(clip, rfactor=2, width=None, height=None, correct_shift=True,
         nnedi3_args (mixed): For help with nnedi3 args
             refert to nnedi3 documentation.
     """
-    core = vs.get_core()
+    core = vs.core
 
     # Setting up variables
 

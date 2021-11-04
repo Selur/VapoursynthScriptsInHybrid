@@ -3,7 +3,7 @@ import vapoursynth as vs
 
 
 def tm(clip="",source_peak="" ) :
-    core = vs.get_core()
+    core = vs.core
     c=clip
     o=c
     a=c
@@ -61,7 +61,7 @@ def tm(clip="",source_peak="" ) :
 
    
 def simplehdr10tosdr(clip, source_peak=1000, tFormat=vs.YUV420P8, tMatrix="709", tRange="limited", color_loc="center", f_a=0.0, f_b=0.75) :
-  core = vs.get_core()
+  core = vs.core
   clip=core.resize.Bicubic(clip=clip, format=vs.RGBS,filter_param_a=f_a,filter_param_b=f_b, range_in_s="limited", matrix_in_s="2020ncl", primaries_in_s="2020", primaries_s="2020", transfer_in_s="st2084", transfer_s="linear",dither_type="none", nominal_luminance=1000)
   clip=tm(clip=clip,source_peak=source_peak)
   if tFormat != vs.RGBS:
