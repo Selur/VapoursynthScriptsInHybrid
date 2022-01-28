@@ -45,7 +45,7 @@ def fillWithSVP(clip, firstframe=None, gpu=False):  # Here I go wrong since I se
   join = a + r + b
   return core.std.AssumeFPS(join, src=clip)
     
-def FillSingleDrops(clip, thresh=0.3, method="mv", rifeModel=1, rifeTTA=False, rifeUHD=False, debug=False):
+def FillSingleDrops(clip, thresh=0.3, method="mv", rifeModel=0, rifeTTA=False, rifeUHD=False, debug=False):
   core = vs.core
   if not isinstance(clip, vs.VideoNode):
       raise ValueError('This is not a clip')
