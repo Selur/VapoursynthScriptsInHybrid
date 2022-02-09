@@ -14,8 +14,6 @@ def nnedi3_resample(input, target_width=None, target_height=None, src_left=None,
     sFormat = input.format
     
     sColorFamily = sFormat.color_family
-    if sColorFamily == vs.COMPAT:
-        raise ValueError(funcName + ': Color family *COMPAT* of input clip is not supported!')
     sIsGRAY = sColorFamily == vs.GRAY
     sIsYUV = sColorFamily == vs.YUV or sColorFamily == vs.YCOCG
     sIsRGB = sColorFamily == vs.RGB
@@ -32,8 +30,6 @@ def nnedi3_resample(input, target_width=None, target_height=None, src_left=None,
     dFormat = sFormat if csp is None else core.get_format(csp)
     
     dColorFamily = dFormat.color_family
-    if dColorFamily == vs.COMPAT:
-        raise ValueError(funcName + ': Color family *COMPAT* of output clip is not supported!')
     dIsGRAY = dColorFamily == vs.GRAY
     dIsYUV = dColorFamily == vs.YUV or dColorFamily == vs.YCOCG
     dIsRGB = dColorFamily == vs.RGB
@@ -79,12 +75,12 @@ def nnedi3_resample(input, target_width=None, target_height=None, src_left=None,
     else:
         cplaced = cplaced.lower()
     if fulls is None:
-        fulls = sColorFamily == vs.YCOCG or sColorFamily == vs.RGB
+        fulls = sColorFamily == vs.RGB
     if fulld is None:
         if dColorFamily == sColorFamily:
             fulld = fulls
         else:
-            fulld = dColorFamily == vs.YCOCG or dColorFamily == vs.RGB
+            fulld = dColorFamily == vs.RGB
     if curves is None:
         curves = 'linear'
     else:
@@ -438,7 +434,7 @@ def nnedi3_rpow2_vertical(input, eTimes=1, field=1, nsize=None, nns=None, qual=N
 def nnedi3_dh(input, field=1, nsize=None, nns=None, qual=None, etype=None, pscrn=None, opt=None, int16_prescreener=None, int16_predictor=None, exp=None, opencl=False, device=None):
     core = vs.core
     if opencl :
-      return core.nnedi3cl.NNEDI3CL(input, field=field, dh=True, nsize=nsize, nns=nns, qual=qual, etype=etype, pscrn=pscrn, opt=opt, device=device)
+      return core.nnedi3cl.NNEDI3CL(input, field=field, dh=True, nsize=nsize, nns=nns, qual=qual, etype=etype, pscrn=pscrn, device=device)
     elif hasattr(core, 'znedi3'):
       return core.znedi3.nnedi3(input, field=field, dh=True, nsize=nsize, nns=nns, qual=qual, etype=etype, pscrn=pscrn, opt=opt, int16_prescreener=int16_prescreener, int16_predictor=int16_predictor, exp=exp)
     else:
