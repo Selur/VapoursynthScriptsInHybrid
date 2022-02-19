@@ -1,6 +1,5 @@
 ################################################################################################################################
 ## mvsfunc - mawen1250's VapourSynth functions
-## 2016.10
 ################################################################################################################################
 ## Requirments:
 ##     fmtconv
@@ -47,6 +46,9 @@
 ##     GetPlane
 ##     GrayScale
 ##     Preview
+##     CheckColorFamily
+##     RemoveFrameProp
+##     RegisterFormat
 ################################################################################################################################
 
 
@@ -54,6 +56,7 @@ import vapoursynth as vs
 from vapoursynth import core
 import functools
 import math
+from collections.abc import Iterable, Sequence, MutableSequence
 
 
 ################################################################################################################################
@@ -61,17 +64,12 @@ import math
 
 MvsFuncVersion = 10
 VSMaxPlaneNum = 3
-VSApiVer4 = vs.__api_version__.api_major >= 4
 
 
 ################################################################################################################################
 
 
-if VSApiVer4:
-    vs_YCOCG = vs_COMPAT = -1
-else:
-    vs_YCOCG = vs.YCOCG
-    vs_COMPAT = vs.COMPAT
+
 
 
 ################################################################################################################################
@@ -87,16 +85,16 @@ else:
 ## Main function: Depth()
 ################################################################################################################################
 ## Bit depth conversion with dithering (if needed).
-## It's a wrapper for fmtc.bitdepth and zDepth(core.resize/zimg).
-## Only constant format is supported, frame properties of the input clip is mostly ignored (only zDepth is able to use it).
+## It's a wrapper for fmtc.bitdepth and zDepth (core.resize/zimg).
+## Only constant format is supported, frame properties of the input clip is mostly ignored (only available with zDepth).
 ################################################################################################################################
 ## Basic parameters
 ##     input {clip}: clip to be converted
-##         can be of YUV/RGB/Gray/YCoCg color family, can be of 8-16 bit integer or 16/32 bit float
-##     depth {int}: output bit depth, can be 1-16 bit integer or 16/32 bit float
-##         note that 1-7 bit content is still stored as 8 bit integer format
+##         can be of YUV/RGB/Gray color family, can be of 8~16 bit integer or 16/32 bit float
+##     depth {int}: output bit depth, can be 1~16 bit integer or 16/32 bit float
+##         note that 1~7 bit content is still stored as 8 bit integer format
 ##         default is the same as that of the input clip
-##     sample {int}: output sample type, can be 0(vs.INTEGER) or 1(vs.FLOAT)
+##     sample {int}: output sample type, can be 0 (vs.INTEGER) or 1 (vs.FLOAT)
 ##         default is the same as that of the input clip
 ##     fulls {bool}: define if input clip is of full range
 ##         default: None, assume True for RGB/YCgCo input, assume False for Gray/YUV input
@@ -106,46 +104,42 @@ else:
 ## Advanced parameters
 ##     dither {int|str}: dithering algorithm applied for depth conversion
 ##         - {int}: same as "dmode" in fmtc.bitdepth, will be automatically converted if using zDepth
-##         - {str}: same as "dither" in zDepth, will be automatically converted if using fmtc.bitdepth
+##         - {str}: same as "dither_type" in zDepth, will be automatically converted if using fmtc.bitdepth
 ##         - default:
 ##             - output depth is 32, and conversions without quantization error: 1 | "none"
 ##             - otherwise: 3 | "error_diffusion"
 ##     useZ {bool}: prefer zDepth or fmtc.bitdepth for depth conversion
-##         When 13-,15-bit integer or 16-bit float is involved, zDepth is always used.
+##         When 11,13~15 bit integer or 16 bit float is involved, zDepth is always used.
 ##         - False: prefer fmtc.bitdepth
 ##         - True: prefer zDepth
 ##         default: False
-##     prefer_props {bool}: determines whether frame properties or arguments take precedence when both are present
-##         For now, it only makes sense when zDepth is involved and only affects the _ColorRange property.
-##         - False: prefer arguments
-##         - True: prefer frame properties
-##         default: False
 ################################################################################################################################
 ## Parameters of fmtc.bitdepth
-##     ampo, ampn, dyn, staticnoise, cpuopt, patsize, tpdfo, tpdfn, corplane: same as those in fmtc.bitdepth, ignored when useZ
+##     ampo, ampn, dyn, staticnoise, cpuopt, patsize, tpdfo, tpdfn, corplane:
+##         same as those in fmtc.bitdepth, ignored when useZ=True
+##         *NOTE* no positional arguments, only keyword arguments are accepted
 ################################################################################################################################
-def Depth(input, depth=None, sample=None, fulls=None, fulld=None, \
-dither=None, useZ=None, prefer_props=None, ampo=None, ampn=None, dyn=None, staticnoise=None, \
-cpuopt=None, patsize=None, tpdfo=None, tpdfn=None, corplane=None):
-    # Set function name
-    funcName = 'Depth'
+def Depth(input, depth=None, sample=None, fulls=None, fulld=None,
+    dither=None, useZ=None, **kwargs):
+    # input clip
     clip = input
     
     if not isinstance(input, vs.VideoNode):
-        raise TypeError(funcName + ': \"input\" must be a clip!')
+        raise type_error('"input" must be a clip!')
     
-    prefer_props_range = None
+    ## Default values for kwargs
+    if 'ampn' not in kwargs:
+        kwargs['ampn'] = None
+    if 'ampo' not in kwargs:
+        kwargs['ampo'] = None
     
     # Get properties of input clip
     sFormat = input.format
     
     sColorFamily = sFormat.color_family
-    sIsRGB = sColorFamily == vs.RGB
+    CheckColorFamily(sColorFamily)
     sIsYUV = sColorFamily == vs.YUV
     sIsGRAY = sColorFamily == vs.GRAY
-    sIsYCOCG = sColorFamily == vs_YCOCG
-    if sColorFamily == vs_COMPAT:
-        raise ValueError(funcName + ': color family *COMPAT* is not supported!')
     
     sbitPS = sFormat.bits_per_sample
     sSType = sFormat.sample_type
@@ -154,7 +148,7 @@ cpuopt=None, patsize=None, tpdfo=None, tpdfn=None, corplane=None):
         # If not set, assume limited range for YUV and Gray input
         fulls = False if sIsYUV or sIsGRAY else True
     elif not isinstance(fulls, int):
-        raise TypeError(funcName + ': \"fulls\" must be a bool!')
+        raise type_error('"fulls" must be a bool!')
     
     # Get properties of output clip
     lowDepth = False
@@ -162,7 +156,7 @@ cpuopt=None, patsize=None, tpdfo=None, tpdfn=None, corplane=None):
     if depth is None:
         dbitPS = sbitPS
     elif not isinstance(depth, int):
-        raise TypeError(funcName + ': \"depth\" must be an int!')
+        raise type_error('"depth" must be an int!')
     else:
         if depth < 8:
             dbitPS = 8
@@ -176,9 +170,9 @@ cpuopt=None, patsize=None, tpdfo=None, tpdfn=None, corplane=None):
         else:
             dSType = vs.FLOAT if dbitPS >= 32 else vs.INTEGER
     elif not isinstance(sample, int):
-        raise TypeError(funcName + ': \"sample\" must be an int!')
+        raise type_error('"sample" must be an int!')
     elif sample != vs.INTEGER and sample != vs.FLOAT:
-        raise ValueError(funcName + ': \"sample\" must be either 0(vs.INTEGER) or 1(vs.FLOAT)!')
+        raise value_error('"sample" must be either 0 (vs.INTEGER) or 1 (vs.FLOAT)!')
     else:
         dSType = sample
     if depth is None and sSType != vs.FLOAT and sample == vs.FLOAT:
@@ -186,35 +180,35 @@ cpuopt=None, patsize=None, tpdfo=None, tpdfn=None, corplane=None):
     elif depth is None and sSType != vs.INTEGER and sample == vs.INTEGER:
         dbitPS = 16
     if dSType == vs.INTEGER and (dbitPS < 1 or dbitPS > 16):
-        raise ValueError(funcName + ': {0}-bit integer output is not supported!'.format(dbitPS))
+        raise value_error(f'{dbitPS}-bit integer output is not supported!')
     if dSType == vs.FLOAT and (dbitPS != 16 and dbitPS != 32):
-        raise ValueError(funcName + ': {0}-bit float output is not supported!'.format(dbitPS))
+        raise value_error(f'{dbitPS}-bit float output is not supported!')
     
     if fulld is None:
         fulld = fulls
     elif not isinstance(fulld, int):
-        raise TypeError(funcName + ': \"fulld\" must be a bool!')
+        raise type_error('"fulld" must be a bool!')
     
     # Low-depth support
     if lowDepth:
         if dither == "none" or dither == 1:
-            clip = _quantization_conversion(clip, sbitPS, depth, vs.INTEGER, fulls, fulld, False, False, 8, 0, funcName)
-            clip = _quantization_conversion(clip, depth, 8, vs.INTEGER, fulld, fulld, False, False, 8, 0, funcName)
+            clip = _quantization_conversion(clip, sbitPS, depth, vs.INTEGER, fulls, fulld, False, False, 8, 0)
+            clip = _quantization_conversion(clip, depth, 8, vs.INTEGER, fulld, fulld, False, False, 8, 0)
             return clip
         else:
             full = fulld
-            clip = _quantization_conversion(clip, sbitPS, depth, vs.INTEGER, fulls, full, False, False, 16, 1, funcName)
+            clip = _quantization_conversion(clip, sbitPS, depth, vs.INTEGER, fulls, full, False, False, 16, 1)
             sSType = vs.INTEGER
             sbitPS = 16
             fulls = False
             fulld = False
     
     # Whether to use zDepth or fmtc.bitdepth for conversion
-    # When 13-,15-bit integer or 16-bit float format is involved, force using zDepth
+    # When 11,13~15 bit integer or 16 bit float is involved, force using zDepth
     if useZ is None:
         useZ = False
     elif not isinstance(useZ, int):
-        raise TypeError(funcName + ': \"useZ\" must be a bool!')
+        raise type_error('"useZ" must be a bool!')
     if sSType == vs.INTEGER and (sbitPS == 13 or sbitPS == 15):
         useZ = True
     if dSType == vs.INTEGER and (dbitPS == 11 or 13 <= dbitPS <= 15):
@@ -222,37 +216,30 @@ cpuopt=None, patsize=None, tpdfo=None, tpdfn=None, corplane=None):
     if (sSType == vs.FLOAT and sbitPS < 32) or (dSType == vs.FLOAT and dbitPS < 32):
         useZ = True
     
-    if prefer_props is None:
-        prefer_props = False
-    elif not isinstance(prefer_props, int):
-        raise TypeError(funcName + ': \"prefer_props\" must be a bool!')
-    if prefer_props_range is None:
-        prefer_props_range = prefer_props
-    
     # Dithering type
-    if ampn is not None and not isinstance(ampn, float) and not isinstance(ampn, int):
-            raise TypeError(funcName + ': \"ampn\" must be an int or a float!')
+    if kwargs['ampn'] is not None and not isinstance(kwargs['ampn'], (int, float)):
+        raise type_error('"ampn" must be an int or a float!')
     
     if dither is None:
         if dbitPS == 32 or (dbitPS >= sbitPS and fulld == fulls and fulld == False):
             dither = "none" if useZ else 1
         else:
             dither = "error_diffusion" if useZ else 3
-    elif not isinstance(dither, int) and not isinstance(dither, str):
-        raise TypeError(funcName + ': \"dither\" must be an int or a str!')
+    elif not isinstance(dither, (int, str)):
+        raise type_error('"dither" must be an int or a str!')
     else:
         if isinstance(dither, str):
             dither = dither.lower()
             if dither != "none" and dither != "ordered" and dither != "random" and dither != "error_diffusion":
-                raise ValueError(funcName + ': Unsupported \"dither\" specified!')
+                raise value_error('Unsupported "dither" specified!')
         else:
             if dither < 0 or dither > 9:
-                raise ValueError(funcName + ': Unsupported \"dither\" specified!')
+                raise value_error('Unsupported "dither" specified!')
         if useZ and isinstance(dither, int):
             if dither == 0:
                 dither = "ordered"
             elif dither == 1 or dither == 2:
-                if ampn is not None and ampn > 0:
+                if kwargs['ampn'] is not None and kwargs['ampn'] > 0:
                     dither = "random"
                 else:
                     dither = "none"
@@ -264,10 +251,10 @@ cpuopt=None, patsize=None, tpdfo=None, tpdfn=None, corplane=None):
             elif dither == "ordered":
                 dither = 0
             elif dither == "random":
-                if ampn is None:
+                if kwargs['ampn'] is None:
                     dither = 1
                     ampn = 1
-                elif ampn > 0:
+                elif kwargs['ampn'] > 0:
                     dither = 1
                 else:
                     dither = 3
@@ -275,25 +262,25 @@ cpuopt=None, patsize=None, tpdfo=None, tpdfn=None, corplane=None):
                 dither = 3
     
     if not useZ:
-        if ampo is None:
-            ampo = 1.5 if dither == 0 else 1
-        elif not isinstance(ampo, float) and not isinstance(ampo, int):
-            raise TypeError(funcName + ': \"ampo\" must be an int or a float!')
+        if kwargs['ampo'] is None:
+            kwargs['ampo'] = 1.5 if dither == 0 else 1
+        elif not isinstance(kwargs['ampo'], (int, float)):
+            raise type_error('"ampo" must be an int or a float!')
     
     # Skip processing if not needed
-    if dSType == sSType and dbitPS == sbitPS and (sSType == vs.FLOAT or (fulld == fulls and not prefer_props_range)) and not lowDepth:
+    if dSType == sSType and dbitPS == sbitPS and (sSType == vs.FLOAT or fulld == fulls) and not lowDepth:
         return clip
     
     # Apply conversion
     if useZ:
-        clip = zDepth(clip, sample=dSType, depth=dbitPS, range=fulld, range_in=fulls, dither_type=dither, prefer_props=prefer_props_range)
+        clip = zDepth(clip, sample=dSType, depth=dbitPS, range=fulld, range_in=fulls, dither_type=dither)
     else:
-        clip = core.fmtc.bitdepth(clip, bits=dbitPS, flt=dSType, fulls=fulls, fulld=fulld, dmode=dither, ampo=ampo, ampn=ampn, dyn=dyn, staticnoise=staticnoise, cpuopt=cpuopt, patsize=patsize, tpdfo=tpdfo, tpdfn=tpdfn, corplane=corplane)
+        clip = core.fmtc.bitdepth(clip, bits=dbitPS, flt=dSType, fulls=fulls, fulld=fulld, dmode=dither, **kwargs)
         clip = SetColorSpace(clip, ColorRange=0 if fulld else 1)
     
     # Low-depth support
     if lowDepth:
-        clip = _quantization_conversion(clip, depth, 8, vs.INTEGER, full, full, False, False, 8, 0, funcName)
+        clip = _quantization_conversion(clip, depth, 8, vs.INTEGER, full, full, False, False, 8, 0)
     
     # Output
     return clip
@@ -303,51 +290,45 @@ cpuopt=None, patsize=None, tpdfo=None, tpdfn=None, corplane=None):
 ################################################################################################################################
 ## Main function: ToRGB()
 ################################################################################################################################
-## Convert any color space to full range RGB.
+## A wrapper of fmtconv to convert any color space to full range RGB.
 ## Thus, if input is limited range RGB, it will be converted to full range.
 ## If matrix is 10, "2020cl" or "bt2020c", the output is linear RGB.
-## It's mainly a wrapper for fmtconv.
 ## Only constant format is supported, frame properties of the input clip is mostly ignored.
 ## Note that you may get faster speed with core.resize, or not (for now, dither_type='error_diffusion' is slow).
 ## It's recommended to use Preview() for previewing now.
 ################################################################################################################################
 ## Basic parameters
 ##     input {clip}: clip to be converted
-##         can be of YUV/RGB/Gray/YCoCg color family, can be of 8-16 bit integer or 16/32 bit float
-##     matrix {int|str}: color matrix of input clip, only makes sense for YUV/YCoCg input
+##         can be of YUV/RGB/Gray color family, can be of 8-16 bit integer or 16/32 bit float
+##     matrix {int|str}: color matrix of input clip, only makes sense for YUV input
 ##         decides the conversion coefficients from YUV to RGB
 ##         check GetMatrix() for available values
 ##         default: None, guessed according to the color family and size of input clip
 ##     depth {int}: output bit depth, can be 1-16 bit integer or 16/32 bit float
 ##         note that 1-7 bit content is still stored as 8 bit integer format
 ##         default is the same as that of the input clip
-##     sample {int}: output sample type, can be 0(vs.INTEGER) or 1(vs.FLOAT)
+##     sample {int}: output sample type, can be 0 (vs.INTEGER) or 1 (vs.FLOAT)
 ##         default is the same as that of the input clip
 ##     full {bool}: define if input clip is of full range
 ##         default: guessed according to the color family of input clip and "matrix"
-##     compat {bool}: force CompatBGR32 output, "depth" will be forced to 8
-##         default: False
-################################################################################################################################
-## Parameters of depth conversion
-##     dither, useZ, prefer_props, ampo, ampn, dyn, staticnoise, cpuopt, patsize, tpdfo, tpdfn, corplane:
-##         same as those in Depth()
 ################################################################################################################################
 ## Parameters of resampling
 ##     kernel, taps, a1, a2, cplace:
 ##         used for chroma re-sampling, same as those in fmtc.resample
 ##         default: kernel="bicubic", a1=0, a2=0.5, also known as "Catmull-Rom".
 ################################################################################################################################
-def ToRGB(input, matrix=None, depth=None, sample=None, full=None, \
-dither=None, useZ=None, prefer_props=None, ampo=None, ampn=None, dyn=None, staticnoise=None, \
-cpuopt=None, patsize=None, tpdfo=None, tpdfn=None, corplane=None, \
-kernel=None, taps=None, a1=None, a2=None, cplace=None, \
-compat=None):
-    # Set function name
-    funcName = 'ToRGB'
+## Parameters of depth conversion
+##     dither, useZ, ampo, ampn, dyn, staticnoise, cpuopt, patsize, tpdfo, tpdfn, corplane:
+##         same as those in Depth()
+##         *NOTE* no positional arguments, only keyword arguments are accepted
+################################################################################################################################
+def ToRGB(input, matrix=None, depth=None, sample=None, full=None,
+    kernel=None, taps=None, a1=None, a2=None, cplace=None, **kwargs):
+    # input clip
     clip = input
     
     if not isinstance(input, vs.VideoNode):
-        raise TypeError(funcName + ': \"input\" must be a clip!')
+        raise type_error('"input" must be a clip!')
     
     # Get string format parameter "matrix"
     matrix = GetMatrix(input, matrix, True)
@@ -356,12 +337,10 @@ compat=None):
     sFormat = input.format
     
     sColorFamily = sFormat.color_family
+    CheckColorFamily(sColorFamily)
     sIsRGB = sColorFamily == vs.RGB
     sIsYUV = sColorFamily == vs.YUV
     sIsGRAY = sColorFamily == vs.GRAY
-    sIsYCOCG = sColorFamily == vs_YCOCG
-    if sColorFamily == vs_COMPAT:
-        raise ValueError(funcName + ': color family *COMPAT* is not supported!')
     
     sbitPS = sFormat.bits_per_sample
     sSType = sFormat.sample_type
@@ -372,27 +351,20 @@ compat=None):
     if full is None:
         # If not set, assume limited range for YUV and Gray input
         # Assume full range for YCgCo and OPP input
-        if (sIsGRAY or sIsYUV or sIsYCOCG) and (matrix == "RGB" or matrix == "YCgCo" or matrix == "OPP"):
+        if (sIsGRAY or sIsYUV) and (matrix == "RGB" or matrix == "YCgCo" or matrix == "OPP"):
             fulls = True
         else:
             fulls = False if sIsYUV or sIsGRAY else True
     elif not isinstance(full, int):
-        raise TypeError(funcName + ': \"full\" must be a bool!')
+        raise type_error('"full" must be a bool!')
     else:
         fulls = full
     
     # Get properties of output clip
-    if compat is None:
-        compat = False
-    elif not isinstance(compat, int):
-        raise TypeError(funcName + ': \"compat\" must be an int!')
-    if compat:
-        depth = 8
-        sample = vs.INTEGER
     if depth is None:
         dbitPS = sbitPS
     elif not isinstance(depth, int):
-        raise TypeError(funcName + ': \"depth\" must be an int!')
+        raise type_error('"depth" must be an int!')
     else:
         dbitPS = depth
     if sample is None:
@@ -401,9 +373,9 @@ compat=None):
         else:
             dSType = vs.FLOAT if dbitPS >= 32 else vs.INTEGER
     elif not isinstance(sample, int):
-        raise TypeError(funcName + ': \"sample\" must be an int!')
+        raise type_error('"sample" must be an int!')
     elif sample != vs.INTEGER and sample != vs.FLOAT:
-        raise ValueError(funcName + ': \"sample\" must be either 0(vs.INTEGER) or 1(vs.FLOAT)!')
+        raise value_error('"sample" must be either 0 (vs.INTEGER) or 1 (vs.FLOAT)!')
     else:
         dSType = sample
     if depth is None and sSType != vs.FLOAT and sample == vs.FLOAT:
@@ -411,9 +383,9 @@ compat=None):
     elif depth is None and sSType != vs.INTEGER and sample == vs.INTEGER:
         dbitPS = 16
     if dSType == vs.INTEGER and (dbitPS < 1 or dbitPS > 16):
-        raise ValueError(funcName + ': {0}-bit integer output is not supported!'.format(dbitPS))
+        raise value_error(f'{dbitPS}-bit integer output is not supported!')
     if dSType == vs.FLOAT and (dbitPS != 16 and dbitPS != 32):
-        raise ValueError(funcName + ': {0}-bit float output is not supported!'.format(dbitPS))
+        raise value_error(f'{dbitPS}-bit float output is not supported!')
     
     fulld = True
     
@@ -441,16 +413,16 @@ compat=None):
             a1 = 0
             a2 = 0.5
     elif not isinstance(kernel, str):
-        raise TypeError(funcName + ': \"kernel\" must be a str!')
+        raise type_error('"kernel" must be a str!')
     
     # Conversion
     if sIsRGB:
         # Skip matrix conversion for RGB input
         # Apply depth conversion for output clip
-        clip = Depth(clip, dbitPS, dSType, fulls, fulld, dither, useZ, prefer_props, ampo, ampn, dyn, staticnoise, cpuopt, patsize, tpdfo, tpdfn, corplane)
+        clip = Depth(clip, dbitPS, dSType, fulls, fulld, **kwargs)
     elif sIsGRAY:
         # Apply depth conversion for output clip
-        clip = Depth(clip, dbitPS, dSType, fulls, fulld, dither, useZ, prefer_props, ampo, ampn, dyn, staticnoise, cpuopt, patsize, tpdfo, tpdfn, corplane)
+        clip = Depth(clip, dbitPS, dSType, fulls, fulld, **kwargs)
         # Shuffle planes for Gray input
         clip = core.std.ShufflePlanes([clip,clip,clip], [0,0,0], vs.RGB)
         # Set output frame properties
@@ -461,8 +433,8 @@ compat=None):
             clip = core.fmtc.resample(clip, kernel=kernel, taps=taps, a1=a1, a2=a2, css="444", planes=[2,3,3], fulls=fulls, fulld=fulls, cplace=cplace, flt=pSType==vs.FLOAT)
         # Apply depth conversion for processed clip
         else:
-            clip = Depth(clip, pbitPS, pSType, fulls, fulls, dither, useZ, prefer_props, ampo, ampn, dyn, staticnoise, cpuopt, patsize, tpdfo, tpdfn, corplane)
-        # Apply matrix conversion for YUV or YCoCg input
+            clip = Depth(clip, pbitPS, pSType, fulls, fulls, **kwargs)
+        # Apply matrix conversion for YUV input
         if matrix == "OPP":
             clip = core.fmtc.matrix(clip, fulls=fulls, fulld=fulld, coef=[1,1,2/3,0, 1,0,-4/3,0, 1,-1,2/3,0], col_fam=vs.RGB)
             clip = SetColorSpace(clip, Matrix=0)
@@ -471,10 +443,7 @@ compat=None):
         else:
             clip = core.fmtc.matrix(clip, mat=matrix, fulls=fulls, fulld=fulld, col_fam=vs.RGB)
         # Apply depth conversion for output clip
-        clip = Depth(clip, dbitPS, dSType, fulld, fulld, dither, useZ, prefer_props, ampo, ampn, dyn, staticnoise, cpuopt, patsize, tpdfo, tpdfn, corplane)
-    
-    if compat:
-        raise ValueError(funcName + ': color family *COMPAT* is not supported!')
+        clip = Depth(clip, dbitPS, dSType, fulld, fulld, **kwargs)
     
     # Output
     return clip
@@ -484,17 +453,16 @@ compat=None):
 ################################################################################################################################
 ## Main function: ToYUV()
 ################################################################################################################################
-## Convert any color space to YUV/YCoCg with/without sub-sampling.
+## A wrapper of fmtconv to convert any color space to YUV with/without sub-sampling.
 ## If input is RGB, it's assumed to be of full range.
-##     Thus, limited range RGB clip should first be manually converted to full range before call this function.
+##     Thus, limited range RGB clip should first be manually converted to full range before calling this function.
 ## If matrix is 10, "2020cl" or "bt2020c", the input should be linear RGB.
-## It's mainly a wrapper for fmtconv.
 ## Only constant format is supported, frame properties of the input clip is mostly ignored.
 ## Note that you may get faster speed with core.resize, or not (for now, dither_type='error_diffusion' is slow).
 ################################################################################################################################
 ## Basic parameters
 ##     input {clip}: clip to be converted
-##         can be of YUV/RGB/Gray/YCoCg color family, can be of 8-16 bit integer or 16/32 bit float
+##         can be of YUV/RGB/Gray color family, can be of 8-16 bit integer or 16/32 bit float
 ##     matrix {int|str}: color matrix of output clip
 ##         decides the conversion coefficients from RGB to YUV
 ##         check GetMatrix() for available values
@@ -509,34 +477,32 @@ compat=None):
 ##         - "420" | "4:2:0" | "22"
 ##         - "411" | "4:1:1" | "41"
 ##         - "410" | "4:1:0" | "42"
-##         default: 4:4:4 for RGB/Gray input, same as input is for YUV/YCoCg input
+##         default: 4:4:4 for RGB/Gray input, same as input is for YUV input
 ##     depth {int}: output bit depth, can be 1-16 bit integer or 16/32 bit float
 ##         note that 1-7 bit content is still stored as 8 bit integer format
 ##         default is the same as that of the input clip
-##     sample {int}: output sample type, can be 0(vs.INTEGER) or 1(vs.FLOAT)
+##     sample {int}: output sample type, can be 0 (vs.INTEGER) or 1 (vs.FLOAT)
 ##         default is the same as that of the input clip
-##     full {bool}: define if input/output Gray/YUV/YCoCg clip is of full range
+##     full {bool}: define if input/output Gray/YUV clip is of full range
 ##         default: guessed according to the color family of input clip and "matrix"
-################################################################################################################################
-## Parameters of depth conversion
-##     dither, useZ, prefer_props, ampo, ampn, dyn, staticnoise, cpuopt, patsize, tpdfo, tpdfn, corplane:
-##         same as those in Depth()
 ################################################################################################################################
 ## Parameters of resampling
 ##     kernel, taps, a1, a2, cplace:
 ##         used for chroma re-sampling, same as those in fmtc.resample
 ##         default: kernel="bicubic", a1=0, a2=0.5, also known as "Catmull-Rom"
 ################################################################################################################################
-def ToYUV(input, matrix=None, css=None, depth=None, sample=None, full=None, \
-dither=None, useZ=None, prefer_props=None, ampo=None, ampn=None, dyn=None, staticnoise=None, \
-cpuopt=None, patsize=None, tpdfo=None, tpdfn=None, corplane=None, \
-kernel=None, taps=None, a1=None, a2=None, cplace=None):
-    # Set function name
-    funcName = 'ToYUV'
+## Parameters of depth conversion
+##     dither, useZ, ampo, ampn, dyn, staticnoise, cpuopt, patsize, tpdfo, tpdfn, corplane:
+##         same as those in Depth()
+##         *NOTE* no positional arguments, only keyword arguments are accepted
+################################################################################################################################
+def ToYUV(input, matrix=None, css=None, depth=None, sample=None, full=None,
+    kernel=None, taps=None, a1=None, a2=None, cplace=None, **kwargs):
+    # input clip
     clip = input
     
     if not isinstance(input, vs.VideoNode):
-        raise TypeError(funcName + ': \"input\" must be a clip!')
+        raise type_error('"input" must be a clip!')
     
     # Get string format parameter "matrix"
     matrix = GetMatrix(input, matrix, False)
@@ -545,12 +511,10 @@ kernel=None, taps=None, a1=None, a2=None, cplace=None):
     sFormat = input.format
     
     sColorFamily = sFormat.color_family
+    CheckColorFamily(sColorFamily)
     sIsRGB = sColorFamily == vs.RGB
     sIsYUV = sColorFamily == vs.YUV
     sIsGRAY = sColorFamily == vs.GRAY
-    sIsYCOCG = sColorFamily == vs_YCOCG
-    if sColorFamily == vs_COMPAT:
-        raise ValueError(funcName + ': color family *COMPAT* is not supported!')
     
     sbitPS = sFormat.bits_per_sample
     sSType = sFormat.sample_type
@@ -564,12 +528,12 @@ kernel=None, taps=None, a1=None, a2=None, cplace=None):
     elif full is None:
         # If not set, assume limited range for YUV and Gray input
         # Assume full range for YCgCo and OPP input
-        if (sIsGRAY or sIsYUV or sIsYCOCG) and (matrix == "RGB" or matrix == "YCgCo" or matrix == "OPP"):
+        if (sIsGRAY or sIsYUV) and (matrix == "RGB" or matrix == "YCgCo" or matrix == "OPP"):
             fulls = True
         else:
             fulls = False if sIsYUV or sIsGRAY else True
     elif not isinstance(full, int):
-        raise TypeError(funcName + ': \"full\" must be a bool!')
+        raise type_error('"full" must be a bool!')
     else:
         fulls = full
     
@@ -577,7 +541,7 @@ kernel=None, taps=None, a1=None, a2=None, cplace=None):
     if depth is None:
         dbitPS = sbitPS
     elif not isinstance(depth, int):
-        raise TypeError(funcName + ': \"depth\" must be an int!')
+        raise type_error('"depth" must be an int!')
     else:
         dbitPS = depth
     if sample is None:
@@ -586,9 +550,9 @@ kernel=None, taps=None, a1=None, a2=None, cplace=None):
         else:
             dSType = vs.FLOAT if dbitPS >= 32 else vs.INTEGER
     elif not isinstance(sample, int):
-        raise TypeError(funcName + ': \"sample\" must be an int!')
+        raise type_error('"sample" must be an int!')
     elif sample != vs.INTEGER and sample != vs.FLOAT:
-        raise ValueError(funcName + ': \"sample\" must be either 0(vs.INTEGER) or 1(vs.FLOAT)!')
+        raise value_error('"sample" must be either 0 (vs.INTEGER) or 1 (vs.FLOAT)!')
     else:
         dSType = sample
     if depth is None and sSType != vs.FLOAT and sample == vs.FLOAT:
@@ -596,9 +560,9 @@ kernel=None, taps=None, a1=None, a2=None, cplace=None):
     elif depth is None and sSType != vs.INTEGER and sample == vs.INTEGER:
         dbitPS = 16
     if dSType == vs.INTEGER and (dbitPS < 1 or dbitPS > 16):
-        raise ValueError(funcName + ': {0}-bit integer output is not supported!'.format(dbitPS))
+        raise value_error(f'{dbitPS}-bit integer output is not supported!')
     if dSType == vs.FLOAT and (dbitPS != 16 and dbitPS != 32):
-        raise ValueError(funcName + ': {0}-bit float output is not supported!'.format(dbitPS))
+        raise value_error(f'{dbitPS}-bit float output is not supported!')
     
     if full is None:
         # If not set, assume limited range for YUV and Gray output
@@ -606,9 +570,9 @@ kernel=None, taps=None, a1=None, a2=None, cplace=None):
         if matrix == "RGB" or matrix == "YCgCo" or matrix == "OPP":
             fulld = True
         else:
-            fulld = True if sIsYCOCG else False
+            fulld = False
     elif not isinstance(full, int):
-        raise TypeError(funcName + ': \"full\" must be a bool!')
+        raise type_error('"full" must be a bool!')
     else:
         fulld = full
     
@@ -616,9 +580,9 @@ kernel=None, taps=None, a1=None, a2=None, cplace=None):
     if css is None:
         dHSubS = sHSubS
         dVSubS = sVSubS
-        css = '{ssw}{ssh}'.format(ssw=dHSubS, ssh=dVSubS)
+        css = f'{dHSubS}{dVSubS}'
     elif not isinstance(css, str):
-        raise TypeError(funcName + ': \"css\" must be a str!')
+        raise type_error('"css" must be a str!')
     else:
         if css == "444" or css == "4:4:4":
             css = "11"
@@ -659,30 +623,30 @@ kernel=None, taps=None, a1=None, a2=None, cplace=None):
             a1 = 0
             a2 = 0.5
     elif not isinstance(kernel, str):
-        raise TypeError(funcName + ': \"kernel\" must be a str!')
+        raise type_error('"kernel" must be a str!')
     
     # Conversion
-    if sIsYUV or sIsYCOCG:
-        # Skip matrix conversion for YUV/YCoCg input
+    if sIsYUV:
+        # Skip matrix conversion for YUV input
         # Change chroma sub-sampling if needed
         if dHSubS != sHSubS or dVSubS != sVSubS:
             # Apply depth conversion for processed clip
-            clip = Depth(clip, pbitPS, pSType, fulls, fulls, dither, useZ, prefer_props, ampo, ampn, dyn, staticnoise, cpuopt, patsize, tpdfo, tpdfn, corplane)
+            clip = Depth(clip, pbitPS, pSType, fulls, fulls, **kwargs)
             clip = core.fmtc.resample(clip, kernel=kernel, taps=taps, a1=a1, a2=a2, css=css, planes=[2,3,3], fulls=fulls, fulld=fulls, cplace=cplace)
         # Apply depth conversion for output clip
-        clip = Depth(clip, dbitPS, dSType, fulls, fulld, dither, useZ, prefer_props, ampo, ampn, dyn, staticnoise, cpuopt, patsize, tpdfo, tpdfn, corplane)
+        clip = Depth(clip, dbitPS, dSType, fulls, fulld, **kwargs)
     elif sIsGRAY:
         # Apply depth conversion for output clip
-        clip = Depth(clip, dbitPS, dSType, fulls, fulld, dither, useZ, prefer_props, ampo, ampn, dyn, staticnoise, cpuopt, patsize, tpdfo, tpdfn, corplane)
+        clip = Depth(clip, dbitPS, dSType, fulls, fulld, **kwargs)
         # Shuffle planes for Gray input
         widthc = input.width // dHSubS
         heightc = input.height // dVSubS
-        UV = core.std.BlankClip(clip, width=widthc, height=heightc, \
-        color=1 << (dbitPS - 1) if dSType == vs.INTEGER else 0)
+        UV = core.std.BlankClip(clip, width=widthc, height=heightc,
+            color=1 << (dbitPS - 1) if dSType == vs.INTEGER else 0)
         clip = core.std.ShufflePlanes([clip,UV,UV], [0,0,0], vs.YUV)
     else:
         # Apply depth conversion for processed clip
-        clip = Depth(clip, pbitPS, pSType, fulls, fulls, dither, useZ, prefer_props, ampo, ampn, dyn, staticnoise, cpuopt, patsize, tpdfo, tpdfn, corplane)
+        clip = Depth(clip, pbitPS, pSType, fulls, fulls, **kwargs)
         # Apply matrix conversion for RGB input
         if matrix == "OPP":
             clip = core.fmtc.matrix(clip, fulls=fulls, fulld=fulld, coef=[1/3,1/3,1/3,0, 1/2,0,-1/2,0, 1/4,-1/2,1/4,0], col_fam=vs.YUV)
@@ -695,7 +659,7 @@ kernel=None, taps=None, a1=None, a2=None, cplace=None):
         if dHSubS != sHSubS or dVSubS != sVSubS:
             clip = core.fmtc.resample(clip, kernel=kernel, taps=taps, a1=a1, a2=a2, css=css, planes=[2,3,3], fulls=fulld, fulld=fulld, cplace=cplace)
         # Apply depth conversion for output clip
-        clip = Depth(clip, dbitPS, dSType, fulld, fulld, dither, useZ, prefer_props, ampo, ampn, dyn, staticnoise, cpuopt, patsize, tpdfo, tpdfn, corplane)
+        clip = Depth(clip, dbitPS, dSType, fulld, fulld, **kwargs)
     
     # Output
     return clip
@@ -705,8 +669,8 @@ kernel=None, taps=None, a1=None, a2=None, cplace=None):
 ################################################################################################################################
 ## Main function: BM3D()
 ################################################################################################################################
-## A wrap function for BM3D/V-BM3D denoising filter.
-## The BM3D filtering is always done in 16-bit int or 32-bit float opponent(OPP) color space internally.
+## A wrap function for easy using of BM3D/V-BM3D denoising filter.
+## The BM3D filtering is always done in 16-bit int or 32-bit float opponent (OPP) color space internally.
 ## It can automatically convert any input color space to OPP and convert it back after filtering.
 ## Alternatively, you can specify "output" to force outputting RGB or OPP, and "css" to change chroma subsampling.
 ## For Gray input, no color space conversion is involved, thus "output" and "css" won't take effect.
@@ -714,7 +678,7 @@ kernel=None, taps=None, a1=None, a2=None, cplace=None):
 ################################################################################################################################
 ## Basic parameters
 ##     input {clip}: clip to be filtered
-##         can be of YUV/RGB/Gray/YCoCg color family, can be of 8-16 bit integer or 16/32 bit float
+##         can be of YUV/RGB/Gray color family, can be of 8-16 bit integer or 16/32 bit float
 ##     sigma {float[]}: same as "sigma" in BM3D, used for both basic estimate and final estimate
 ##         the strength of filtering, should be carefully adjusted according to the noise
 ##         set 0 to disable the filtering of corresponding plane
@@ -749,7 +713,7 @@ kernel=None, taps=None, a1=None, a2=None, cplace=None):
 ##         default: 1
 ################################################################################################################################
 ## Parameters of input properties
-##     matrix {int|str}: color matrix of input clip, only makes sense for YUV/YCoCg input
+##     matrix {int|str}: color matrix of input clip, only makes sense for YUV input
 ##         check GetMatrix() for available values
 ##         default: guessed according to the color family and size of input clip
 ##     full {bool}: define if input clip is of full range
@@ -761,18 +725,14 @@ kernel=None, taps=None, a1=None, a2=None, cplace=None):
 ##         - 1: full range RGB (converted from input clip)
 ##         - 2: full range OPP (converted from full range RGB, the color space where the filtering takes place)
 ##         default: 0
-##     css {str}: chroma subsampling of output clip, only valid when output=0 and input clip is YUV/YCoCg
+##     css {str}: chroma subsampling of output clip, only valid when output=0 and input clip is YUV
 ##         check ToYUV() for available values
 ##         default is the same as that of the input clip
 ##     depth {int}: bit depth of output clip, can be 1-16 for integer or 16/32 for float
 ##         note that 1-7 bit content is still stored as 8 bit integer format
 ##         default is the same as that of the input clip
-##     sample {int}: sample type of output clip, can be 0(vs.INTEGER) or 1(vs.FLOAT)
+##     sample {int}: sample type of output clip, can be 0 (vs.INTEGER) or 1 (vs.FLOAT)
 ##         default is the same as that of the input clip
-################################################################################################################################
-## Parameters of depth conversion
-##     dither, useZ, prefer_props, ampo, ampn, dyn, staticnoise, cpuopt, patsize, tpdfo, tpdfn, corplane:
-##         same as those in Depth()
 ################################################################################################################################
 ## Parameters of resampling
 ##     cu_kernel, cu_taps, cu_a1, cu_a2, cu_cplace:
@@ -790,22 +750,25 @@ kernel=None, taps=None, a1=None, a2=None, cplace=None):
 ##     block_size2, block_step2, group_size2, bm_range2, bm_step2, ps_num2, ps_range2, ps_step2, th_mse2:
 ##         same as those in bm3d.Final/bm3d.VFinal
 ################################################################################################################################
-def BM3D(input, sigma=None, radius1=None, radius2=None, profile1=None, profile2=None, \
-refine=None, pre=None, ref=None, psample=None, \
-matrix=None, full=None, \
-output=None, css=None, depth=None, sample=None, \
-dither=None, useZ=None, prefer_props=None, ampo=None, ampn=None, dyn=None, staticnoise=None, \
-cpuopt=None, patsize=None, tpdfo=None, tpdfn=None, corplane=None, \
-cu_kernel=None, cu_taps=None, cu_a1=None, cu_a2=None, cu_cplace=None, \
-cd_kernel=None, cd_taps=None, cd_a1=None, cd_a2=None, cd_cplace=None, \
-block_size1=None, block_step1=None, group_size1=None, bm_range1=None, bm_step1=None, ps_num1=None, ps_range1=None, ps_step1=None, th_mse1=None, hard_thr=None, \
-block_size2=None, block_step2=None, group_size2=None, bm_range2=None, bm_step2=None, ps_num2=None, ps_range2=None, ps_step2=None, th_mse2=None):
-    # Set function name
-    funcName = 'BM3D'
+## Parameters of depth conversion
+##     dither, useZ, ampo, ampn, dyn, staticnoise, cpuopt, patsize, tpdfo, tpdfn, corplane:
+##         same as those in Depth()
+##         *NOTE* no positional arguments, only keyword arguments are accepted
+################################################################################################################################
+def BM3D(input, sigma=None, radius1=None, radius2=None, profile1=None, profile2=None,
+    refine=None, pre=None, ref=None, psample=None,
+    matrix=None, full=None,
+    output=None, css=None, depth=None, sample=None,
+    cu_kernel=None, cu_taps=None, cu_a1=None, cu_a2=None, cu_cplace=None,
+    cd_kernel=None, cd_taps=None, cd_a1=None, cd_a2=None, cd_cplace=None,
+    block_size1=None, block_step1=None, group_size1=None, bm_range1=None, bm_step1=None, ps_num1=None, ps_range1=None, ps_step1=None, th_mse1=None, hard_thr=None,
+    block_size2=None, block_step2=None, group_size2=None, bm_range2=None, bm_step2=None, ps_num2=None, ps_range2=None, ps_step2=None, th_mse2=None,
+    **kwargs):
+    # input clip
     clip = input
     
     if not isinstance(input, vs.VideoNode):
-        raise TypeError(funcName + ': \"input\" must be a clip!')
+        raise type_error('"input" must be a clip!')
     
     # Get string format parameter "matrix"
     matrix = GetMatrix(input, matrix, True)
@@ -814,12 +777,10 @@ block_size2=None, block_step2=None, group_size2=None, bm_range2=None, bm_step2=N
     sFormat = input.format
     
     sColorFamily = sFormat.color_family
+    CheckColorFamily(sColorFamily)
     sIsRGB = sColorFamily == vs.RGB
     sIsYUV = sColorFamily == vs.YUV
     sIsGRAY = sColorFamily == vs.GRAY
-    sIsYCOCG = sColorFamily == vs_YCOCG
-    if sColorFamily == vs_COMPAT:
-        raise ValueError(funcName + ': color family *COMPAT* is not supported!')
     
     sbitPS = sFormat.bits_per_sample
     sSType = sFormat.sample_type
@@ -830,12 +791,12 @@ block_size2=None, block_step2=None, group_size2=None, bm_range2=None, bm_step2=N
     if full is None:
         # If not set, assume limited range for YUV and Gray input
         # Assume full range for YCgCo and OPP input
-        if (sIsGRAY or sIsYUV or sIsYCOCG) and (matrix == "RGB" or matrix == "YCgCo" or matrix == "OPP"):
+        if (sIsGRAY or sIsYUV) and (matrix == "RGB" or matrix == "YCgCo" or matrix == "OPP"):
             fulls = True
         else:
             fulls = False if sIsYUV or sIsGRAY else True
     elif not isinstance(full, int):
-        raise TypeError(funcName + ': \"full\" must be a bool!')
+        raise type_error('"full" must be a bool!')
     else:
         fulls = full
     
@@ -843,9 +804,9 @@ block_size2=None, block_step2=None, group_size2=None, bm_range2=None, bm_step2=N
     if psample is None:
         psample = vs.FLOAT
     elif not isinstance(psample, int):
-        raise TypeError(funcName + ': \"psample\" must be an int!')
+        raise type_error('"psample" must be an int!')
     elif psample != vs.INTEGER and psample != vs.FLOAT:
-        raise ValueError(funcName + ': \"psample\" must be either 0(vs.INTEGER) or 1(vs.FLOAT)!')
+        raise value_error('"psample" must be either 0 (vs.INTEGER) or 1 (vs.FLOAT)!')
     pbitPS = 16 if psample == vs.INTEGER else 32
     pSType = psample
     
@@ -853,9 +814,9 @@ block_size2=None, block_step2=None, group_size2=None, bm_range2=None, bm_step2=N
     if css is None:
         dHSubS = sHSubS
         dVSubS = sVSubS
-        css = '{ssw}{ssh}'.format(ssw=dHSubS, ssh=dVSubS)
+        css = f'{dHSubS}{dVSubS}'
     elif not isinstance(css, str):
-        raise TypeError(funcName + ': \"css\" must be a str!')
+        raise type_error('"css" must be a str!')
     else:
         if css == "444" or css == "4:4:4":
             css = "11"
@@ -888,7 +849,7 @@ block_size2=None, block_step2=None, group_size2=None, bm_range2=None, bm_step2=N
             while len(sigma) < 3:
                 sigma.append(sigma[len(sigma) - 1])
         else:
-            raise TypeError(funcName + ': sigma must be a float[] or an int[]!')
+            raise type_error('sigma must be a float[] or an int[]!')
     if sIsGRAY:
         sigma = [sigma[0],0,0]
     skip = sigma[0] <= 0 and sigma[1] <= 0 and sigma[2] <= 0
@@ -896,54 +857,54 @@ block_size2=None, block_step2=None, group_size2=None, bm_range2=None, bm_step2=N
     if radius1 is None:
         radius1 = 0
     elif not isinstance(radius1, int):
-        raise TypeError(funcName + ': \"radius1\" must be an int!')
+        raise type_error('"radius1" must be an int!')
     elif radius1 < 0:
-        raise ValueError(funcName + ': valid range of \"radius1\" is [0, +inf)!')
+        raise value_error('valid range of "radius1" is [0, +inf)!')
     if radius2 is None:
         radius2 = radius1
     elif not isinstance(radius2, int):
-        raise TypeError(funcName + ': \"radius2\" must be an int!')
+        raise type_error('"radius2" must be an int!')
     elif radius2 < 0:
-        raise ValueError(funcName + ': valid range of \"radius2\" is [0, +inf)!')
+        raise value_error('valid range of "radius2" is [0, +inf)!')
     
     if profile1 is None:
         profile1 = "fast"
     elif not isinstance(profile1, str):
-        raise TypeError(funcName + ': \"profile1\" must be a str!')
+        raise type_error('"profile1" must be a str!')
     if profile2 is None:
         profile2 = profile1
     elif not isinstance(profile2, str):
-        raise TypeError(funcName + ': \"profile2\" must be a str!')
+        raise type_error('"profile2" must be a str!')
     
     if refine is None:
         refine = 1
     elif not isinstance(refine, int):
-        raise TypeError(funcName + ': \"refine\" must be an int!')
+        raise type_error('"refine" must be an int!')
     elif refine < 0:
-        raise ValueError(funcName + ': valid range of \"refine\" is [0, +inf)!')
+        raise value_error('valid range of "refine" is [0, +inf)!')
     
     if output is None:
         output = 0
     elif not isinstance(output, int):
-        raise TypeError(funcName + ': \"output\" must be an int!')
+        raise type_error('"output" must be an int!')
     elif output < 0 or output > 2:
-        raise ValueError(funcName + ': valid values of \"output\" are 0, 1 and 2!')
+        raise value_error('valid values of "output" are 0, 1 and 2!')
     
     if pre is not None:
         if not isinstance(pre, vs.VideoNode):
-            raise TypeError(funcName + ': \"pre\" must be a clip!')
+            raise type_error('"pre" must be a clip!')
         if pre.format.id != sFormat.id:
-            raise ValueError(funcName + ': clip \"pre\" must be of the same format as the input clip!')
+            raise value_error('clip "pre" must be of the same format as the input clip!')
         if pre.width != input.width or pre.height != input.height:
-            raise ValueError(funcName + ': clip \"pre\" must be of the same size as the input clip!')
+            raise value_error('clip "pre" must be of the same size as the input clip!')
     
     if ref is not None:
         if not isinstance(ref, vs.VideoNode):
-            raise TypeError(funcName + ': \"ref\" must be a clip!')
+            raise type_error('"ref" must be a clip!')
         if ref.format.id != sFormat.id:
-            raise ValueError(funcName + ': clip \"ref\" must be of the same format as the input clip!')
+            raise value_error('clip "ref" must be of the same format as the input clip!')
         if ref.width != input.width or ref.height != input.height:
-            raise ValueError(funcName + ': clip \"ref\" must be of the same size as the input clip!')
+            raise value_error('clip "ref" must be of the same size as the input clip!')
     
     # Get properties of output clip
     if depth is None:
@@ -952,7 +913,7 @@ block_size2=None, block_step2=None, group_size2=None, bm_range2=None, bm_step2=N
         else:
             dbitPS = pbitPS
     elif not isinstance(depth, int):
-        raise TypeError(funcName + ': \"depth\" must be an int!')
+        raise type_error('"depth" must be an int!')
     else:
         dbitPS = depth
     if sample is None:
@@ -964,9 +925,9 @@ block_size2=None, block_step2=None, group_size2=None, bm_range2=None, bm_step2=N
         else:
             dSType = vs.FLOAT if dbitPS >= 32 else vs.INTEGER
     elif not isinstance(sample, int):
-        raise TypeError(funcName + ': \"sample\" must be an int!')
+        raise type_error('"sample" must be an int!')
     elif sample != vs.INTEGER and sample != vs.FLOAT:
-        raise ValueError(funcName + ': \"sample\" must be either 0(vs.INTEGER) or 1(vs.FLOAT)!')
+        raise value_error('"sample" must be either 0 (vs.INTEGER) or 1 (vs.FLOAT)!')
     else:
         dSType = sample
     if depth is None and sSType != vs.FLOAT and sample == vs.FLOAT:
@@ -974,9 +935,9 @@ block_size2=None, block_step2=None, group_size2=None, bm_range2=None, bm_step2=N
     elif depth is None and sSType != vs.INTEGER and sample == vs.INTEGER:
         dbitPS = 16
     if dSType == vs.INTEGER and (dbitPS < 1 or dbitPS > 16):
-        raise ValueError(funcName + ': {0}-bit integer output is not supported!'.format(dbitPS))
+        raise value_error(f'{dbitPS}-bit integer output is not supported!')
     if dSType == vs.FLOAT and (dbitPS != 16 and dbitPS != 32):
-        raise ValueError(funcName + ': {0}-bit float output is not supported!'.format(dbitPS))
+        raise value_error(f'{dbitPS}-bit float output is not supported!')
     
     if output == 0:
         fulld = fulls
@@ -985,36 +946,36 @@ block_size2=None, block_step2=None, group_size2=None, bm_range2=None, bm_step2=N
         fulld = True
     
     # Convert to processed format
-    # YUV/YCoCg/RGB input is converted to opponent color space as full range YUV
+    # YUV/RGB input is converted to opponent color space as full range YUV
     # Gray input is converted to full range Gray
     onlyY = False
     if sIsGRAY:
         onlyY = True
         # Convert Gray input to full range Gray in processed format
-        clip = Depth(clip, pbitPS, pSType, fulls, True, dither, useZ, prefer_props, ampo, ampn, dyn, staticnoise, cpuopt, patsize, tpdfo, tpdfn, corplane)
+        clip = Depth(clip, pbitPS, pSType, fulls, True, **kwargs)
         if pre is not None:
-            pre = Depth(pre, pbitPS, pSType, fulls, True, dither, useZ, prefer_props, ampo, ampn, dyn, staticnoise, cpuopt, patsize, tpdfo, tpdfn, corplane)
+            pre = Depth(pre, pbitPS, pSType, fulls, True, **kwargs)
         if ref is not None:
-            ref = Depth(ref, pbitPS, pSType, fulls, True, dither, useZ, prefer_props, ampo, ampn, dyn, staticnoise, cpuopt, patsize, tpdfo, tpdfn, corplane)
+            ref = Depth(ref, pbitPS, pSType, fulls, True, **kwargs)
     else:
         # Convert input to full range RGB
-        clip = ToRGB(clip, matrix, pbitPS, pSType, fulls, \
-        dither, useZ, prefer_props, ampo, ampn, dyn, staticnoise, cpuopt, patsize, tpdfo, tpdfn, corplane, cu_kernel, cu_taps, cu_a1, cu_a2, cu_cplace, False)
+        clip = ToRGB(clip, matrix, pbitPS, pSType, fulls,
+            cu_kernel, cu_taps, cu_a1, cu_a2, cu_cplace, **kwargs)
         if pre is not None:
-            pre = ToRGB(pre, matrix, pbitPS, pSType, fulls, \
-            dither, useZ, prefer_props, ampo, ampn, dyn, staticnoise, cpuopt, patsize, tpdfo, tpdfn, corplane, cu_kernel, cu_taps, cu_a1, cu_a2, cu_cplace, False)
+            pre = ToRGB(pre, matrix, pbitPS, pSType, fulls,
+                cu_kernel, cu_taps, cu_a1, cu_a2, cu_cplace, **kwargs)
         if ref is not None:
-            ref = ToRGB(ref, matrix, pbitPS, pSType, fulls, \
-            dither, useZ, prefer_props, ampo, ampn, dyn, staticnoise, cpuopt, patsize, tpdfo, tpdfn, corplane, cu_kernel, cu_taps, cu_a1, cu_a2, cu_cplace, False)
+            ref = ToRGB(ref, matrix, pbitPS, pSType, fulls,
+                cu_kernel, cu_taps, cu_a1, cu_a2, cu_cplace, **kwargs)
         # Convert full range RGB to full range OPP
-        clip = ToYUV(clip, "OPP", "444", pbitPS, pSType, True, \
-        dither, useZ, prefer_props, ampo, ampn, dyn, staticnoise, cpuopt, patsize, tpdfo, tpdfn, corplane, cu_kernel, cu_taps, cu_a1, cu_a2, cu_cplace)
+        clip = ToYUV(clip, "OPP", "444", pbitPS, pSType, True,
+            cu_kernel, cu_taps, cu_a1, cu_a2, cu_cplace, **kwargs)
         if pre is not None:
-            pre = ToYUV(pre, "OPP", "444", pbitPS, pSType, True, \
-            dither, useZ, prefer_props, ampo, ampn, dyn, staticnoise, cpuopt, patsize, tpdfo, tpdfn, corplane, cu_kernel, cu_taps, cu_a1, cu_a2, cu_cplace)
+            pre = ToYUV(pre, "OPP", "444", pbitPS, pSType, True,
+                cu_kernel, cu_taps, cu_a1, cu_a2, cu_cplace, **kwargs)
         if ref is not None:
-            ref = ToYUV(ref, "OPP", "444", pbitPS, pSType, True, \
-            dither, useZ, prefer_props, ampo, ampn, dyn, staticnoise, cpuopt, patsize, tpdfo, tpdfn, corplane, cu_kernel, cu_taps, cu_a1, cu_a2, cu_cplace)
+            ref = ToYUV(ref, "OPP", "444", pbitPS, pSType, True,
+                cu_kernel, cu_taps, cu_a1, cu_a2, cu_cplace, **kwargs)
         # Convert OPP to Gray if only Y is processed
         srcOPP = clip
         if sigma[1] <= 0 and sigma[2] <= 0:
@@ -1034,16 +995,16 @@ block_size2=None, block_step2=None, group_size2=None, bm_range2=None, bm_step2=N
     elif radius1 < 1:
         # Apply BM3D basic estimate
         # Optional pre-filtered clip for block-matching can be specified by "pre"
-        flt = core.bm3d.Basic(clip, ref=pre, profile=profile1, sigma=sigma, \
-        block_size=block_size1, block_step=block_step1, group_size=group_size1, \
-        bm_range=bm_range1, bm_step=bm_step1, th_mse=th_mse1, hard_thr=hard_thr, matrix=100)
+        flt = core.bm3d.Basic(clip, ref=pre, profile=profile1, sigma=sigma,
+            block_size=block_size1, block_step=block_step1, group_size=group_size1,
+            bm_range=bm_range1, bm_step=bm_step1, th_mse=th_mse1, hard_thr=hard_thr, matrix=100)
     else:
         # Apply V-BM3D basic estimate
         # Optional pre-filtered clip for block-matching can be specified by "pre"
-        flt = core.bm3d.VBasic(clip, ref=pre, profile=profile1, sigma=sigma, radius=radius1, \
-        block_size=block_size1, block_step=block_step1, group_size=group_size1, \
-        bm_range=bm_range1, bm_step=bm_step1, ps_num=ps_num1, ps_range=ps_range1, ps_step=ps_step1, \
-        th_mse=th_mse1, hard_thr=hard_thr, matrix=100).bm3d.VAggregate(radius=radius1, sample=pSType)
+        flt = core.bm3d.VBasic(clip, ref=pre, profile=profile1, sigma=sigma, radius=radius1,
+            block_size=block_size1, block_step=block_step1, group_size=group_size1,
+            bm_range=bm_range1, bm_step=bm_step1, ps_num=ps_num1, ps_range=ps_range1, ps_step=ps_step1,
+            th_mse=th_mse1, hard_thr=hard_thr, matrix=100).bm3d.VAggregate(radius=radius1, sample=pSType)
         # Shuffle Y plane back if not processed
         if not onlyY and sigma[0] <= 0:
             flt = core.std.ShufflePlanes([clip,flt,flt], [0,1,2], vs.YUV)
@@ -1054,43 +1015,43 @@ block_size2=None, block_step2=None, group_size2=None, bm_range2=None, bm_step2=N
             flt = clip
         elif radius2 < 1:
             # Apply BM3D final estimate
-            flt = core.bm3d.Final(clip, ref=flt, profile=profile2, sigma=sigma, \
-            block_size=block_size2, block_step=block_step2, group_size=group_size2, \
-            bm_range=bm_range2, bm_step=bm_step2, th_mse=th_mse2, matrix=100)
+            flt = core.bm3d.Final(clip, ref=flt, profile=profile2, sigma=sigma,
+                block_size=block_size2, block_step=block_step2, group_size=group_size2,
+                bm_range=bm_range2, bm_step=bm_step2, th_mse=th_mse2, matrix=100)
         else:
             # Apply V-BM3D final estimate
-            flt = core.bm3d.VFinal(clip, ref=flt, profile=profile2, sigma=sigma, radius=radius2, \
-            block_size=block_size2, block_step=block_step2, group_size=group_size2, \
-            bm_range=bm_range2, bm_step=bm_step2, ps_num=ps_num2, ps_range=ps_range2, ps_step=ps_step2, \
-            th_mse=th_mse2, matrix=100).bm3d.VAggregate(radius=radius2, sample=pSType)
+            flt = core.bm3d.VFinal(clip, ref=flt, profile=profile2, sigma=sigma, radius=radius2,
+                block_size=block_size2, block_step=block_step2, group_size=group_size2,
+                bm_range=bm_range2, bm_step=bm_step2, ps_num=ps_num2, ps_range=ps_range2, ps_step=ps_step2,
+                th_mse=th_mse2, matrix=100).bm3d.VAggregate(radius=radius2, sample=pSType)
             # Shuffle Y plane back if not processed
             if not onlyY and sigma[0] <= 0:
                 flt = core.std.ShufflePlanes([clip,flt,flt], [0,1,2], vs.YUV)
     
     # Convert to output format
     if sIsGRAY:
-        clip = Depth(flt, dbitPS, dSType, True, fulld, dither, useZ, prefer_props, ampo, ampn, dyn, staticnoise, cpuopt, patsize, tpdfo, tpdfn, corplane)
+        clip = Depth(flt, dbitPS, dSType, True, fulld, **kwargs)
     else:
         # Shuffle back to YUV if not all planes are processed
         if onlyY:
             clip = core.std.ShufflePlanes([flt,srcOPP,srcOPP], [0,1,2], vs.YUV)
         elif sigma[1] <= 0 or sigma[2] <= 0:
-            clip = core.std.ShufflePlanes([flt, clip if sigma[1] <= 0 else flt, \
-            clip if sigma[2] <= 0 else flt], [0,1,2], vs.YUV)
+            clip = core.std.ShufflePlanes([flt, clip if sigma[1] <= 0 else flt,
+                clip if sigma[2] <= 0 else flt], [0,1,2], vs.YUV)
         else:
             clip = flt
         # Convert to final output format
         if output <= 1:
             # Convert full range OPP to full range RGB
-            clip = ToRGB(clip, "OPP", pbitPS, pSType, True, \
-            dither, useZ, prefer_props, ampo, ampn, dyn, staticnoise, cpuopt, patsize, tpdfo, tpdfn, corplane, cu_kernel, cu_taps, cu_a1, cu_a2, cu_cplace, False)
+            clip = ToRGB(clip, "OPP", pbitPS, pSType, True,
+                cu_kernel, cu_taps, cu_a1, cu_a2, cu_cplace, **kwargs)
         if output <= 0 and not sIsRGB:
-            # Convert full range RGB to YUV/YCoCg
-            clip = ToYUV(clip, matrix, css, dbitPS, dSType, fulld, \
-            dither, useZ, prefer_props, ampo, ampn, dyn, staticnoise, cpuopt, patsize, tpdfo, tpdfn, corplane, cd_kernel, cd_taps, cd_a1, cd_a2, cd_cplace)
+            # Convert full range RGB to YUV
+            clip = ToYUV(clip, matrix, css, dbitPS, dSType, fulld,
+                cd_kernel, cd_taps, cd_a1, cd_a2, cd_cplace, **kwargs)
         else:
             # Depth conversion for RGB or OPP output
-            clip = Depth(clip, dbitPS, dSType, True, fulld, dither, useZ, prefer_props, ampo, ampn, dyn, staticnoise, cpuopt, patsize, tpdfo, tpdfn, corplane)
+            clip = Depth(clip, dbitPS, dSType, True, fulld, **kwargs)
     
     # Output
     return clip
@@ -1101,8 +1062,8 @@ block_size2=None, block_step2=None, group_size2=None, bm_range2=None, bm_step2=N
 ## Main function: VFRSplice()
 ################################################################################################################################
 ## Splice multiple clips with different frame rate, and output timecode file.
-## Each input clip is CFR(constant frame rate).
-## The output clip is VFR(variational frame rate).
+## Each input clip is of CFR (constant frame rate).
+## The output clip is of VFR (variational frame rate).
 ################################################################################################################################
 ## Basic parameters
 ##     clips {clip}: any number of clips to splice
@@ -1117,37 +1078,34 @@ block_size2=None, block_step2=None, group_size2=None, bm_range2=None, bm_step2=N
 ##         default: 6
 ################################################################################################################################
 def VFRSplice(clips, tcfile=None, v2=None, precision=None):
-    # Set function name
-    funcName = 'VFRSplice'
-    
     # Arguments
     if isinstance(clips, vs.VideoNode):
         clips = [clips]
-    elif isinstance(clips, list):
+    elif isinstance(clips, Sequence):
         for clip in clips:
             if not isinstance(clip, vs.VideoNode):
-                raise TypeError(funcName + ': each element in \"clips\" must be a clip!')
+                raise type_error('each element in "clips" must be a clip!')
             if clip.fps_num == 0 or clip.fps_den == 0:
-                raise ValueError(funcName + ': each clip in \"clips\" must be CFR!')
+                raise value_error('each clip in "clips" must be CFR!')
     else:
-        raise TypeError(funcName + ': \"clips\" must be a clip or a list of clips!')
+        raise type_error('"clips" must be a clip or a sequence of clips!')
     
     if tcfile is not None and not isinstance(tcfile, str):
-        raise TypeError(funcName + ': \"tcfile\" must be a str!')
+        raise type_error('"tcfile" must be a str!')
     
     if v2 is None:
         v2 = True
     elif not isinstance(v2, int):
-        raise TypeError(funcName + ': \"v2\" must be a bool!')
+        raise type_error('"v2" must be a bool!')
     
     if precision is None:
         precision = 6
     elif not isinstance(precision, int):
-        raise TypeError(funcName + ': \"precision\" must be an int!')
+        raise type_error('"precision" must be an int!')
     
     # Fraction to str function
     def frac2str(num, den, precision=6):
-        return '{:<.{precision}F}'.format(num / den, precision=precision)
+        return f'{num / den : <.{precision}F}'
     
     # Timecode file
     if tcfile is None:
@@ -1174,12 +1132,15 @@ def VFRSplice(clips, tcfile=None, v2=None, precision=None):
             for tc in tc_list:
                 frame_duration = 1000 * tc[3] / tc[2] # ms
                 for frame in range(tc[0], tc[1] + 1):
-                    olines.append('{:<.{precision}F}\n'.format(time, precision=precision))
+                    olines.append(f'{time : <.{precision}F}\n')
                     time += frame_duration
         else: # timecode v1
-            olines = ['# timecode format v1\n', 'Assume {}\n'.format(frac2str(tc_list[0][2], tc_list[0][3], precision))]
+            olines = [
+                '# timecode format v1\n',
+                f'Assume {frac2str(tc_list[0][2], tc_list[0][3], precision)}\n'
+            ]
             for tc in tc_list:
-                olines.append('{},{},{}\n'.format(tc[0], tc[1], frac2str(tc[2], tc[3], precision)))
+                olines.append(f'{tc[0]},{tc[1]},{frac2str(tc[2], tc[3], precision)}\n')
         try:
             ofile.writelines(olines)
         finally:
@@ -1216,7 +1177,7 @@ def VFRSplice(clips, tcfile=None, v2=None, precision=None):
 ################################################################################################################################
 ## Basic parameters
 ##     clip {clip}: clip to be evaluated
-##         can be of YUV/RGB/Gray/YCoCg color family, can be of 8-16 bit integer or 32 bit float
+##         can be of YUV/RGB/Gray color family, can be of 8-16 bit integer or 32 bit float
 ##     plane {int}: specify which plane to evaluate
 ##         default: 0
 ##     mean {bool}: whether to calculate mean
@@ -1231,11 +1192,9 @@ def VFRSplice(clips, tcfile=None, v2=None, precision=None):
 ##         default: True
 ################################################################################################################################
 def PlaneStatistics(clip, plane=None, mean=True, mad=True, var=True, std=True, rms=True):
-    # Set function name
-    funcName = 'PlaneStatistics'
-    
+    # input clip
     if not isinstance(clip, vs.VideoNode):
-        raise TypeError(funcName + ': \"clip\" must be a clip!')
+        raise type_error('"clip" must be a clip!')
     
     # Get properties of input clip
     sFormat = clip.format
@@ -1250,11 +1209,11 @@ def PlaneStatistics(clip, plane=None, mean=True, mad=True, var=True, std=True, r
     if plane is None:
         plane = 0
     elif not isinstance(plane, int):
-        raise TypeError(funcName + ': \"plane\" must be an int!')
+        raise type_error('"plane" must be an int!')
     elif plane < 0 or plane > sNumPlanes:
-        raise ValueError(funcName + ': valid range of \"plane\" is [0, sNumPlanes)!'.format(sNumPlanes=sNumPlanes))
+        raise value_error(f'valid range of "plane" is [0, {sNumPlanes})!')
     
-    floatFormat = core.register_format(vs.GRAY, vs.FLOAT, 32, 0, 0) if not VSApiVer4 else core.query_video_format(vs.GRAY, vs.FLOAT, 32, 0, 0)
+    floatFormat = RegisterFormat(vs.GRAY, vs.FLOAT, 32, 0, 0)
     floatBlk = core.std.BlankClip(clip, format=floatFormat.id)
     
     clipPlane = GetPlane(clip, plane)
@@ -1267,7 +1226,8 @@ def PlaneStatistics(clip, plane=None, mean=True, mad=True, var=True, std=True, r
         '''# always float precision
         def _PlaneADFrame(n, f, clip):
             mean = f.props.PlaneMean
-            expr = "x {gain} * {mean} - abs".format(gain=1 / valueRange, mean=mean)
+            scale = 1 / valueRange
+            expr = f"x {scale} * {mean} - abs"
             return core.std.Expr(clip, expr, floatFormat.id)
         ADclip = core.std.FrameEval(floatBlk, functools.partial(_PlaneADFrame, clip=clipPlane), clip)'''
         if hasattr(core, 'akarin'):
@@ -1275,7 +1235,7 @@ def PlaneStatistics(clip, plane=None, mean=True, mad=True, var=True, std=True, r
         else:
             def _PlaneADFrame(n, f, clip):
                 mean = f.props.PlaneMean * valueRange
-                expr = "x {mean} - abs".format(mean=mean)
+                expr = f"x {mean} - abs"
                 return core.std.Expr(clip, expr)
             ADclip = core.std.FrameEval(clipPlane, functools.partial(_PlaneADFrame, clip=clipPlane), clip)
         ADclip = PlaneAverage(ADclip, 0, "PlaneMAD")
@@ -1293,7 +1253,7 @@ def PlaneStatistics(clip, plane=None, mean=True, mad=True, var=True, std=True, r
         else:
             def _PlaneSDFrame(n, f, clip):
                 mean = f.props.PlaneMean * valueRange
-                expr = "x {mean} - dup *".format(mean=mean)
+                expr = f"x {mean} - dup *"
                 return core.std.Expr(clip, expr, floatFormat.id)
             SDclip = core.std.FrameEval(floatBlk, functools.partial(_PlaneSDFrame, clip=clipPlane), clip)
         SDclip = PlaneAverage(SDclip, 0, "PlaneVar")
@@ -1321,7 +1281,7 @@ def PlaneStatistics(clip, plane=None, mean=True, mad=True, var=True, std=True, r
     
     # Delete frame property "PlaneMean" if not needed
     if not mean:
-        clip = core.std.SetFrameProp(clip, "PlaneMean", delete=True) if not VSApiVer4 else clip.std.RemoveFrameProps("PlaneMean")
+        clip = RemoveFrameProp(clip, "PlaneMean")
     
     # Output
     return clip
@@ -1342,7 +1302,7 @@ def PlaneStatistics(clip, plane=None, mean=True, mad=True, var=True, std=True, r
 ################################################################################################################################
 ## Basic parameters
 ##     clip1 {clip}: the first clip to be evaluated, will be copied to output
-##         can be of YUV/RGB/Gray/YCoCg color family, can be of 8-16 bit integer or 32 bit float
+##         can be of YUV/RGB/Gray color family, can be of 8-16 bit integer or 32 bit float
 ##     clip2 {clip}: the second clip, to be compared with the first one
 ##         must be of the same format and dimension as the "clip1"
 ##     plane {int}: specify which plane to evaluate
@@ -1359,20 +1319,18 @@ def PlaneStatistics(clip, plane=None, mean=True, mad=True, var=True, std=True, r
 ##         default: True
 ################################################################################################################################
 def PlaneCompare(clip1, clip2, plane=None, mae=True, rmse=True, psnr=True, cov=True, corr=True):
-    # Set function name
-    funcName = 'PlaneCompare'
-    
+    # input clip
     if not isinstance(clip1, vs.VideoNode):
-        raise TypeError(funcName + ': \"clip1\" must be a clip!')
+        raise type_error('"clip1" must be a clip!')
     if not isinstance(clip2, vs.VideoNode):
-        raise TypeError(funcName + ': \"clip2\" must be a clip!')
+        raise type_error('"clip2" must be a clip!')
     
     # Get properties of input clip
     sFormat = clip1.format
     if sFormat.id != clip2.format.id:
-        raise ValueError(funcName + ': \"clip1\" and \"clip2\" must be of the same format!')
+        raise value_error('"clip1" and "clip2" must be of the same format!')
     if clip1.width != clip2.width or clip1.height != clip2.height:
-        raise ValueError(funcName + ': \"clip1\" and \"clip2\" must be of the same width and height!')
+        raise value_error('"clip1" and "clip2" must be of the same width and height!')
     
     sSType = sFormat.sample_type
     sbitPS = sFormat.bits_per_sample
@@ -1384,11 +1342,11 @@ def PlaneCompare(clip1, clip2, plane=None, mae=True, rmse=True, psnr=True, cov=T
     if plane is None:
         plane = 0
     elif not isinstance(plane, int):
-        raise TypeError(funcName + ': \"plane\" must be an int!')
+        raise type_error('"plane" must be an int!')
     elif plane < 0 or plane > sNumPlanes:
-        raise ValueError(funcName + ': valid range of \"plane\" is [0, sNumPlanes)!'.format(sNumPlanes=sNumPlanes))
+        raise value_error(f'valid range of "plane" is [0, {sNumPlanes})!')
     
-    floatFormat = core.register_format(vs.GRAY, vs.FLOAT, 32, 0, 0) if not VSApiVer4 else core.query_video_format(vs.GRAY, vs.FLOAT, 32, 0, 0)
+    floatFormat = RegisterFormat(vs.GRAY, vs.FLOAT, 32, 0, 0)
     floatBlk = core.std.BlankClip(clip1, format=floatFormat.id)
     
     clip1Plane = GetPlane(clip1, plane)
@@ -1432,7 +1390,7 @@ def PlaneCompare(clip1, clip2, plane=None, mae=True, rmse=True, psnr=True, cov=T
             def _PlaneCoDFrame(n, f, clip1, clip2):
                 mean1 = f[0].props.PlaneMean * valueRange
                 mean2 = f[1].props.PlaneMean * valueRange
-                expr = "x {mean1} - y {mean2} - *".format(mean1=mean1, mean2=mean2)
+                expr = f"x {mean1} - y {mean2} - *"
                 return core.std.Expr([clip1, clip2], expr, floatFormat.id)
             CoDclip = core.std.FrameEval(floatBlk, functools.partial(_PlaneCoDFrame, clip1=clip1Plane, clip2=clip2Plane), [clip1Mean, clip2Mean])
 
@@ -1447,7 +1405,7 @@ def PlaneCompare(clip1, clip2, plane=None, mae=True, rmse=True, psnr=True, cov=T
             else:
                 def _PlaneSDFrame(n, f, clip):
                     mean = f.props.PlaneMean * valueRange
-                    expr = "x {mean} - dup *".format(mean=mean)
+                    expr = f"x {mean} - dup *"
                     return core.std.Expr(clip, expr, floatFormat.id)
                 SDclip1 = core.std.FrameEval(floatBlk, functools.partial(_PlaneSDFrame, clip=clip1Plane), clip1Mean)
                 SDclip2 = core.std.FrameEval(floatBlk, functools.partial(_PlaneSDFrame, clip=clip2Plane), clip2Mean)
@@ -1479,43 +1437,41 @@ def PlaneCompare(clip1, clip2, plane=None, mae=True, rmse=True, psnr=True, cov=T
 ################################################################################################################################
 ## Basic parameters
 ##     clip {clip}: clip to be evaluated
-##         can be of YUV/RGB/Gray/YCoCg color family, can be of 8-16 bit integer or 16/32 bit float
+##         can be of YUV/RGB/Gray color family, can be of 8-16 bit integer or 16/32 bit float
 ################################################################################################################################
 ## Advanced parameters
 ##     alignment {int}: same as the one in text.Text()
 ##         default: 7
 ################################################################################################################################
 def ShowAverage(clip, alignment=None):
-    # Set function name
-    funcName = 'ShowAverage'
-    
+    # input clip
     if not isinstance(clip, vs.VideoNode):
-        raise TypeError(funcName + ': \"clip\" must be a clip!')
+        raise type_error('"clip" must be a clip!')
     
     # Get properties of input clip
     sFormat = clip.format
     
     sColorFamily = sFormat.color_family
+    CheckColorFamily(sColorFamily)
     sIsYUV = sColorFamily == vs.YUV
-    sIsYCOCG = sColorFamily == vs_YCOCG
     
     sSType = sFormat.sample_type
     sbitPS = sFormat.bits_per_sample
     sNumPlanes = sFormat.num_planes
     
     valueRange = (1 << sbitPS) - 1 if sSType == vs.INTEGER else 1
-    offset = [0, -0.5, -0.5] if sSType == vs.FLOAT and (sIsYUV or sIsYCOCG) else [0, 0, 0]
+    offset = [0, -0.5, -0.5] if sSType == vs.FLOAT and sIsYUV else [0, 0, 0]
     
     # Process and output
     def _ShowAverageFrame(n, f):
         text = ""
         if sNumPlanes == 1:
             average = f.props.PlaneAverage * valueRange + offset[0]
-            text += "PlaneAverage[{plane}]={average}".format(plane=0, average=average)
+            text += f"PlaneAverage[{0}]={average}"
         else:
             for p in range(sNumPlanes):
                 average = f[p].props.PlaneAverage * valueRange + offset[p]
-                text += "PlaneAverage[{plane}]={average}\n".format(plane=p, average=average)
+                text += f"PlaneAverage[{p}]={average}\n"
         return core.text.Text(clip, text, alignment)
     
     avg = []
@@ -1544,27 +1500,25 @@ def ShowAverage(clip, alignment=None):
 ##         default: None (use "src")
 ################################################################################################################################
 def FilterIf(src, flt, prop_name, props=None):
-    # Set function name
-    funcName = 'FilterIf'
-    
+    # input clip
     if not isinstance(src, vs.VideoNode):
-        raise TypeError(funcName + ': \"src\" must be a clip!')
+        raise type_error('"src" must be a clip!')
     if not isinstance(flt, vs.VideoNode):
-        raise TypeError(funcName + ': \"flt\" must be a clip!')
+        raise type_error('"flt" must be a clip!')
     if props is not None and not isinstance(props, vs.VideoNode):
-        raise TypeError(funcName + ': \"props\" must be a clip!')
+        raise type_error('"props" must be a clip!')
     
     # Get properties of input clip
     sFormat = src.format
     if sFormat.id != flt.format.id:
-        raise ValueError(funcName + ': \"src\" and \"flt\" must be of the same format!')
+        raise value_error('"src" and "flt" must be of the same format!')
     if src.width != flt.width or src.height != flt.height:
-        raise ValueError(funcName + ': \"src\" and \"flt\" must be of the same width and height!')
+        raise value_error('"src" and "flt" must be of the same width and height!')
     
     if prop_name is None or not isinstance(prop_name, str):
-        raise TypeError(funcName + ': \"prop_name\" must be specified and must be a str!')
+        raise type_error('"prop_name" must be specified and must be a str!')
     else:
-        prop_name = _check_arg_prop(prop_name, None, None, 'prop_name', funcName)
+        prop_name = _check_arg_prop(prop_name, None, None, 'prop_name')
     
     if props is None:
         props = src
@@ -1601,7 +1555,7 @@ def FilterIf(src, flt, prop_name, props=None):
 ################################################################################################################################
 def FilterCombed(src, flt, props=None):
     clip = FilterIf(src, flt, '_Combed', props)
-    clip = clip.std.SetFrameProp('_Combed', delete=True) if not VSApiVer4 else clip.std.RemoveFrameProps('_Combed')
+    clip = RemoveFrameProp(clip, '_Combed')
     return AssumeFrame(clip)
 ################################################################################################################################
 
@@ -1626,14 +1580,14 @@ def FilterCombed(src, flt, props=None):
 ################################################################################################################################
 ## Basic parameters
 ##     clip1 {clip}: the first clip
-##         can be of YUV/RGB/Gray/YCoCg color family, can be of 8-16 bit integer or 16/32 bit float
+##         can be of YUV/RGB/Gray color family, can be of 8-16 bit integer or 16/32 bit float
 ##     clip2 {clip}: the second clip
 ##         must be of the same format and dimension as "clip1"
 ##     mode {int[]}: specify processing mode for each plane
 ##         - 0: don't process, copy "clip1" to output
 ##         - 1: normal minimum, output = min(clip1, clip2)
 ##         - 2: difference minimum, output = abs(clip2 - neutral) < abs(clip1 - neutral) ? clip2 : clip1
-##         default: [1,1,1] for YUV/RGB/YCoCg input, [1] for Gray input
+##         default: [1,1,1] for YUV/RGB input, [1] for Gray input
 ################################################################################################################################
 ## Advanced parameters
 ##     neutral {int|float}: specfy the neutral value used for mode=2
@@ -1652,14 +1606,14 @@ def Min(clip1, clip2, mode=None, neutral=None):
 ################################################################################################################################
 ## Basic parameters
 ##     clip1 {clip}: the first clip
-##         can be of YUV/RGB/Gray/YCoCg color family, can be of 8-16 bit integer or 16/32 bit float
+##         can be of YUV/RGB/Gray color family, can be of 8-16 bit integer or 16/32 bit float
 ##     clip2 {clip}: the second clip
 ##         must be of the same format and dimension as "clip1"
 ##     mode {int[]}: specify processing mode for each plane
 ##         - 0: don't process, copy "clip1" to output
 ##         - 1: normal maximum, output = max(clip1, clip2)
 ##         - 2: difference maximum, output = abs(clip2 - neutral) > abs(clip1 - neutral) ? clip2 : clip1
-##         default: [1,1,1] for YUV/RGB/YCoCg input, [1] for Gray input
+##         default: [1,1,1] for YUV/RGB input, [1] for Gray input
 ################################################################################################################################
 ## Advanced parameters
 ##     neutral {int|float}: specfy the neutral value used for mode=2
@@ -1677,13 +1631,13 @@ def Max(clip1, clip2, mode=None, neutral=None):
 ################################################################################################################################
 ## Basic parameters
 ##     clip1 {clip}: the first clip
-##         can be of YUV/RGB/Gray/YCoCg color family, can be of 8-16 bit integer or 16/32 bit float
+##         can be of YUV/RGB/Gray color family, can be of 8-16 bit integer or 16/32 bit float
 ##     clip2 {clip}: the second clip
 ##         must be of the same format and dimension as "clip1"
 ##     mode {int[]}: specify processing mode for each plane
 ##         - 0: don't process, copy "clip1" to output
 ##         - 1: average, output = (clip1 + clip2) / 2
-##         default: [1,1,1] for YUV/RGB/YCoCg input, [1] for Gray input
+##         default: [1,1,1] for YUV/RGB input, [1] for Gray input
 ################################################################################################################################
 def Avg(clip1, clip2, mode=None):
     return _operator2(clip1, clip2, mode, None, 'Avg')
@@ -1697,14 +1651,14 @@ def Avg(clip1, clip2, mode=None):
 ################################################################################################################################
 ## Basic parameters
 ##     src {clip}: source clip
-##         can be of YUV/RGB/Gray/YCoCg color family, can be of 8-16 bit integer or 16/32 bit float
+##         can be of YUV/RGB/Gray color family, can be of 8-16 bit integer or 16/32 bit float
 ##     flt1 {clip}: filtered clip 1
 ##         must be of the same format and dimension as "src"
 ##     flt2 {clip}: filtered clip 2
 ##         must be of the same format and dimension as "src"
 ##     planes {int[]}: specify which planes to process
 ##         unprocessed planes will be copied from "src"
-##         default: all planes will be processed, [0,1,2] for YUV/RGB/YCoCg input, [0] for Gray input
+##         default: all planes will be processed, [0,1,2] for YUV/RGB input, [0] for Gray input
 ################################################################################################################################
 def MinFilter(src, flt1, flt2, planes=None):
     return _min_max_filter(src, flt1, flt2, planes, 'MinFilter')
@@ -1718,14 +1672,14 @@ def MinFilter(src, flt1, flt2, planes=None):
 ################################################################################################################################
 ## Basic parameters
 ##     src {clip}: source clip
-##         can be of YUV/RGB/Gray/YCoCg color family, can be of 8-16 bit integer or 16/32 bit float
+##         can be of YUV/RGB/Gray color family, can be of 8-16 bit integer or 16/32 bit float
 ##     flt1 {clip}: filtered clip 1
 ##         must be of the same format and dimension as "src"
 ##     flt2 {clip}: filtered clip 2
 ##         must be of the same format and dimension as "src"
 ##     planes {int[]}: specify which planes to process
 ##         unprocessed planes will be copied from "src"
-##         default: all planes will be processed, [0,1,2] for YUV/RGB/YCoCg input, [0] for Gray input
+##         default: all planes will be processed, [0,1,2] for YUV/RGB input, [0] for Gray input
 ################################################################################################################################
 def MaxFilter(src, flt1, flt2, planes=None):
     return _min_max_filter(src, flt1, flt2, planes, 'MaxFilter')
@@ -1765,7 +1719,7 @@ def MaxFilter(src, flt1, flt2, planes=None):
 ################################################################################################################################
 ## Basic parameters
 ##     flt {clip}: filtered clip, to compute the filtering diff
-##         can be of YUV/RGB/Gray/YCoCg color family, can be of 8-16 bit integer or 16/32 bit float
+##         can be of YUV/RGB/Gray color family, can be of 8-16 bit integer or 16/32 bit float
 ##     src {clip}: source clip, to apply the filtering diff
 ##         must be of the same format and dimension as "flt"
 ##     ref {clip} (optional): reference clip, to compute the weight to be applied on filtering diff
@@ -1777,7 +1731,7 @@ def MaxFilter(src, flt1, flt2, planes=None):
 ##         default: 2.0
 ##     planes {int[]}: specify which planes to process
 ##         unprocessed planes will be copied from "flt"
-##         default: all planes will be processed, [0,1,2] for YUV/RGB/YCoCg input, [0] for Gray input
+##         default: all planes will be processed, [0,1,2] for YUV/RGB input, [0] for Gray input
 ################################################################################################################################
 ## Advanced parameters
 ##     brighten_thr {float}: threshold (8-bit scale) for filtering diff that brightening the image (Y/R/G/B plane)
@@ -1787,36 +1741,34 @@ def MaxFilter(src, flt1, flt2, planes=None):
 ##         default is the same as "thr"
 ##     force_expr {bool}
 ##         - True: force to use the std.Expr implementation
-##         - False: use the std.Lut implementation if possible
+##         - False: use the std.Lut implementation if available
 ##         default: True
 ################################################################################################################################
 def LimitFilter(flt, src, ref=None, thr=None, elast=None, brighten_thr=None, thrc=None, force_expr=None, planes=None):
-    # Set function name
-    funcName = 'LimitFilter'
-    
+    # input clip
     if not isinstance(flt, vs.VideoNode):
-        raise TypeError(funcName + ': \"flt\" must be a clip!')
+        raise type_error('"flt" must be a clip!')
     if not isinstance(src, vs.VideoNode):
-        raise TypeError(funcName + ': \"src\" must be a clip!')
+        raise type_error('"src" must be a clip!')
     if ref is not None and not isinstance(ref, vs.VideoNode):
-        raise TypeError(funcName + ': \"ref\" must be a clip!')
+        raise type_error('"ref" must be a clip!')
     
     # Get properties of input clip
     sFormat = flt.format
     if sFormat.id != src.format.id:
-        raise ValueError(funcName + ': \"flt\" and \"src\" must be of the same format!')
+        raise value_error('"flt" and "src" must be of the same format!')
     if flt.width != src.width or flt.height != src.height:
-        raise ValueError(funcName + ': \"flt\" and \"src\" must be of the same width and height!')
+        raise value_error('"flt" and "src" must be of the same width and height!')
     
     if ref is not None:
         if sFormat.id != ref.format.id:
-            raise ValueError(funcName + ': \"flt\" and \"ref\" must be of the same format!')
+            raise value_error('"flt" and "ref" must be of the same format!')
         if flt.width != ref.width or flt.height != ref.height:
-            raise ValueError(funcName + ': \"flt\" and \"ref\" must be of the same width and height!')
+            raise value_error('"flt" and "ref" must be of the same width and height!')
     
     sColorFamily = sFormat.color_family
+    CheckColorFamily(sColorFamily)
     sIsYUV = sColorFamily == vs.YUV
-    sIsYCOCG = sColorFamily == vs_YCOCG
     
     sSType = sFormat.sample_type
     sbitPS = sFormat.bits_per_sample
@@ -1827,38 +1779,38 @@ def LimitFilter(flt, src, ref=None, thr=None, elast=None, brighten_thr=None, thr
         thr = 1.0
     elif isinstance(thr, int) or isinstance(thr, float):
         if thr < 0:
-            raise ValueError(funcName + ':valid range of \"thr\" is [0, +inf)')
+            raise value_error('valid range of "thr" is [0, +inf)')
     else:
-        raise TypeError(funcName + ': \"thr\" must be an int or a float!')
+        raise type_error('"thr" must be an int or a float!')
     
     if elast is None:
         elast = 2.0
     elif isinstance(elast, int) or isinstance(elast, float):
         if elast < 1:
-            raise ValueError(funcName + ':valid range of \"elast\" is [1, +inf)')
+            raise value_error('valid range of "elast" is [1, +inf)')
     else:
-        raise TypeError(funcName + ': \"elast\" must be an int or a float!')
+        raise type_error('"elast" must be an int or a float!')
     
     if brighten_thr is None:
         brighten_thr = thr
     elif isinstance(brighten_thr, int) or isinstance(brighten_thr, float):
         if brighten_thr < 0:
-            raise ValueError(funcName + ':valid range of \"brighten_thr\" is [0, +inf)')
+            raise value_error('valid range of "brighten_thr" is [0, +inf)')
     else:
-        raise TypeError(funcName + ': \"brighten_thr\" must be an int or a float!')
+        raise type_error('"brighten_thr" must be an int or a float!')
     
     if thrc is None:
         thrc = thr
     elif isinstance(thrc, int) or isinstance(thrc, float):
         if thrc < 0:
-            raise ValueError(funcName + ':valid range of \"thrc\" is [0, +inf)')
+            raise value_error('valid range of "thrc" is [0, +inf)')
     else:
-        raise TypeError(funcName + ': \"thrc\" must be an int or a float!')
+        raise type_error('"thrc" must be an int or a float!')
     
     if force_expr is None:
         force_expr = True
     elif not isinstance(force_expr, int):
-        raise TypeError(funcName + ': \"force_expr\" must be a bool!')
+        raise type_error('"force_expr" must be a bool!')
     if ref is not None or sSType != vs.INTEGER:
         force_expr = True
     
@@ -1869,27 +1821,27 @@ def LimitFilter(flt, src, ref=None, thr=None, elast=None, brighten_thr=None, thr
         process = [1 for i in range(VSMaxPlaneNum)]
     elif isinstance(planes, int):
         if planes < 0 or planes >= VSMaxPlaneNum:
-            raise ValueError(funcName + ': valid range of \"planes\" is [0, {VSMaxPlaneNum})!'.format(VSMaxPlaneNum=VSMaxPlaneNum))
+            raise value_error(f'valid range of "planes" is [0, {VSMaxPlaneNum})!')
         process[planes] = 1
-    elif isinstance(planes, list):
+    elif isinstance(planes, Sequence):
         for p in planes:
             if not isinstance(p, int):
-                raise TypeError(funcName + ': \"planes\" must be a (list of) int!')
+                raise type_error('"planes" must be a (sequence of) int!')
             elif p < 0 or p >= VSMaxPlaneNum:
-                raise ValueError(funcName + ': valid range of \"planes\" is [0, {VSMaxPlaneNum})!'.format(VSMaxPlaneNum=VSMaxPlaneNum))
+                raise value_error(f'valid range of "planes" is [0, {VSMaxPlaneNum})!')
             process[p] = 1
     else:
-        raise TypeError(funcName + ': \"planes\" must be a (list of) int!')
+        raise type_error('"planes" must be a (sequence of) int!')
     
     # Process
     if thr <= 0 and brighten_thr <= 0:
-        if sIsYUV or sIsYCOCG:
+        if sIsYUV:
             if thrc <= 0:
                 return src
         else:
             return src
     if thr >= 255 and brighten_thr >= 255:
-        if sIsYUV or sIsYCOCG:
+        if sIsYUV:
             if thrc >= 255:
                 return flt
         else:
@@ -1904,7 +1856,7 @@ def LimitFilter(flt, src, ref=None, thr=None, elast=None, brighten_thr=None, thr
         expr = []
         for i in range(sNumPlanes):
             if process[i]:
-                if i > 0 and (sIsYUV or sIsYCOCG):
+                if i > 0 and (sIsYUV):
                     expr.append(limitExprC)
                 else:
                     expr.append(limitExprY)
@@ -1917,7 +1869,7 @@ def LimitFilter(flt, src, ref=None, thr=None, elast=None, brighten_thr=None, thr
             clip = core.std.Expr([flt, src, ref], expr)
     else: # implementation with std.MakeDiff, std.Lut and std.MergeDiff
         diff = core.std.MakeDiff(flt, src, planes=planes)
-        if sIsYUV or sIsYCOCG:
+        if sIsYUV:
             if process[0]:
                 diff = _limit_diff_lut(diff, thr, elast, brighten_thr, [0])
             if process[1] or process[2]:
@@ -1926,7 +1878,7 @@ def LimitFilter(flt, src, ref=None, thr=None, elast=None, brighten_thr=None, thr
                     _planes.append(1)
                 if process[2]:
                     _planes.append(2)
-                diff = _limit_diff_lut(diff, thrc, elast, thrc, [1, 2])
+                diff = _limit_diff_lut(diff, thrc, elast, thrc, _planes)
         else:
             diff = _limit_diff_lut(diff, thr, elast, brighten_thr, planes)
         clip = core.std.MakeDiff(flt, diff, planes=planes)
@@ -1952,26 +1904,24 @@ def LimitFilter(flt, src, ref=None, thr=None, elast=None, brighten_thr=None, thr
 ##         default: 0
 ################################################################################################################################
 def PointPower(clip, vpow=None, hpow=None):
-    # Set function name
-    funcName = 'PointPower'
-    
+    # input clip
     if not isinstance(clip, vs.VideoNode):
-        raise TypeError(funcName + ': \"clip\" must be a clip!')
+        raise type_error('"clip" must be a clip!')
     
     # Parameters
     if vpow is None:
         vpow = 1
     elif not isinstance(vpow, int):
-        raise TypeError(funcName + ': \"vpow\" must be an int!')
+        raise type_error('"vpow" must be an int!')
     elif vpow < 0:
-        raise ValueError(funcName + ': valid range of \"vpow\" is [0, +inf)!')
+        raise value_error('valid range of "vpow" is [0, +inf)!')
     
     if hpow is None:
         hpow = 0
     elif not isinstance(hpow, int):
-        raise TypeError(funcName + ': \"hpow\" must be an int!')
+        raise type_error('"hpow" must be an int!')
     elif hpow < 0:
-        raise ValueError(funcName + ': valid range of \"hpow\" is [0, +inf)!')
+        raise value_error('valid range of "hpow" is [0, +inf)!')
     
     # Process
     if hpow > 0:
@@ -2001,56 +1951,49 @@ def PointPower(clip, vpow=None, hpow=None):
 ################################################################################################################################
 ## Basic parameters
 ##     clip {clip}: clip to evaluate
-##         must be of YUV or YCoCg color family
-##     matrices {str[]}: specify a (list of) matrix to test
+##         must be of YUV color family
+##     matrices {str[]}: specify a (sequence of) matrix to test
 ##         default: ['601', '709', '2020', '240', 'FCC', 'YCgCo']
 ##     full {bool}: define if input clip is of full range
-##         default: False for YUV input, True for YCoCg input
+##         default: False for YUV input
 ##     lower {float}: lower boundary for valid range (inclusive)
 ##         default: -0.02
 ##     upper {float}: upper boundary for valid range (inclusive)
 ##         default: 1.02
 ################################################################################################################################
 def CheckMatrix(clip, matrices=None, full=None, lower=None, upper=None):
-    # Set function name
-    funcName = 'CheckMatrix'
-    
+    # input clip
     if not isinstance(clip, vs.VideoNode):
-        raise TypeError(funcName + ': \"clip\" must be a clip!')
+        raise type_error('"clip" must be a clip!')
     
     # Get properties of input clip
     sFormat = clip.format
     
     sColorFamily = sFormat.color_family
-    sIsRGB = sColorFamily == vs.RGB
-    sIsYUV = sColorFamily == vs.YUV
-    sIsGRAY = sColorFamily == vs.GRAY
-    sIsYCOCG = sColorFamily == vs_YCOCG
-    if sColorFamily == vs_COMPAT:
-        raise ValueError(funcName + ': color family *COMPAT* is not supported!')
-    if not (sIsYUV or sIsYCOCG):
-        raise ValueError(funcName + ': only YUV or YCoCg color family is allowed!')
+    CheckColorFamily(sColorFamily, ('YUV'))
     
     # Parameters
     if matrices is None:
         matrices = ['601', '709', '2020', '240', 'FCC', 'YCgCo']
-    elif not isinstance(matrices, list) and isinstance(matrices, str):
-        raise TypeError(funcName + ': \'matrices\' must be a (list of) str!')
+    elif isinstance(matrices, str):
+        matrices = [matrices]
+    elif not isinstance(matrices, Sequence):
+        raise type_error('\'matrices\' must be a (sequence of) str!')
     
     if full is None:
-        full = sIsYCOCG
+        full = False
     elif not isinstance(full, int):
-        raise TypeError(funcName + ': \'full\' must be a bool!')
+        raise type_error('\'full\' must be a bool!')
     
     if lower is None:
         lower = -0.02
     elif not (isinstance(lower, float) or isinstance(lower, int)):
-        raise TypeError(funcName + ': \'lower\' must be an int or a float!')
+        raise type_error('\'lower\' must be an int or a float!')
     
     if upper is None:
         upper = 1.02
     elif not (isinstance(upper, float) or isinstance(upper, int)):
-        raise TypeError(funcName + ': \'upper\' must be an int or a float!')
+        raise type_error('\'upper\' must be an int or a float!')
     
     # Process
     clip = ToYUV(clip, css='444', depth=32, full=full)
@@ -2064,7 +2007,7 @@ def CheckMatrix(clip, matrices=None, full=None, lower=None, upper=None):
     rgb_clips = []
     for matrix in matrices:
         rgb_clip = ToRGB(clip, matrix=matrix)
-        rgb_clip = rgb_clip.std.Expr('x {lower} < 1 x - x {upper} > x 0 ? ?'.format(lower=lower, upper=upper))
+        rgb_clip = rgb_clip.std.Expr(f'x {lower} < 1 x - x {upper} > x 0 ? ?')
         rgb_clip = PlaneAverage(rgb_clip, 0, props[0])
         rgb_clip = PlaneAverage(rgb_clip, 1, props[1])
         rgb_clip = PlaneAverage(rgb_clip, 2, props[2])
@@ -2088,7 +2031,6 @@ def CheckMatrix(clip, matrices=None, full=None, lower=None, upper=None):
 ##     expr {str}: the postfix expression to be converted
 ################################################################################################################################
 def postfix2infix(expr):
-    funcName = 'postfix2infix'
     op1 = ['exp', 'log', 'sqrt', 'abs', 'not', 'dup']
     op2 = ['+', '-', '*', '/', 'max', 'min', '>', '<', '=', '>=', '<=', 'and', 'or', 'xor', 'swap', 'pow']
     op3 = ['?']
@@ -2108,7 +2050,7 @@ def postfix2infix(expr):
         return x
 
     if not isinstance(expr, str):
-        raise TypeError(funcName + ': \'expr\' must be a str!')
+        raise type_error('\'expr\' must be a str!')
     expr_list = expr.split()
 
     stack = []
@@ -2117,32 +2059,32 @@ def postfix2infix(expr):
             try:
                 operand1 = stack.pop()
             except IndexError:
-                raise ValueError(funcName + ': Invalid expression, require operands.')
+                raise value_error('Invalid expression, require operands.')
             if item == 'dup':
                 stack.append(operand1)
                 stack.append(operand1)
             else:
-                stack.append('{}({})'.format(item, remove_brackets(operand1)))
+                stack.append(f'{item}({remove_brackets(operand1)})')
         elif op2.count(item) > 0:
             try:
                 operand2 = stack.pop()
                 operand1 = stack.pop()
             except IndexError:
-                raise ValueError(funcName + ': Invalid expression, require operands.')
-            stack.append('({} {} {})'.format(operand1, item, operand2))
+                raise value_error('Invalid expression, require operands.')
+            stack.append(f'({operand1} {item} {operand2})')
         elif op3.count(item) > 0:
             try:
                 operand3 = stack.pop()
                 operand2 = stack.pop()
                 operand1 = stack.pop()
             except IndexError:
-                raise ValueError(funcName + ': Invalid expression, require operands.')
-            stack.append('({} {} {} {} {})'.format(operand1, item, operand2, ':', operand3))
+                raise value_error('Invalid expression, require operands.')
+            stack.append(f'({operand1} {item} {operand2} : {operand3})')
         else:
             stack.append(item)
 
     if len(stack) > 1:
-        raise ValueError(funcName + ': Invalid expression, require operators.')
+        raise value_error('Invalid expression, require operators.')
     return remove_brackets(stack[0])
 ################################################################################################################################
 
@@ -2173,71 +2115,66 @@ def postfix2infix(expr):
 ##         - {int}: set to this value
 ################################################################################################################################
 def SetColorSpace(clip, ChromaLocation=None, ColorRange=None, Primaries=None, Matrix=None, Transfer=None):
-    # Set function name
-    funcName = 'SetColorSpace'
-    
+    # input clip
     if not isinstance(clip, vs.VideoNode):
-        raise TypeError(funcName + ': \"clip\" must be a clip!')
-    
-    def RemoveFrameProp(clip, prop):
-        return core.std.SetFrameProp(clip, prop, delete=True) if not VSApiVer4 else clip.std.RemoveFrameProps(prop)
+        raise type_error('"clip" must be a clip!')
     
     # Modify frame properties
     if ChromaLocation is None:
         pass
     elif isinstance(ChromaLocation, bool):
         if ChromaLocation is False:
-            clip = RemoveFrameProp(clip, prop='_ChromaLocation')
+            clip = RemoveFrameProp(clip, '_ChromaLocation')
     elif isinstance(ChromaLocation, int):
         if ChromaLocation >= 0 and ChromaLocation <=5:
             clip = core.std.SetFrameProp(clip, prop='_ChromaLocation', intval=ChromaLocation)
         else:
-            raise ValueError(funcName + ': valid range of \"ChromaLocation\" is [0, 5]!')
+            raise value_error('valid range of "ChromaLocation" is [0, 5]!')
     else:
-        raise TypeError(funcName + ': \"ChromaLocation\" must be an int or a bool!')
+        raise type_error('"ChromaLocation" must be an int or a bool!')
     
     if ColorRange is None:
         pass
     elif isinstance(ColorRange, bool):
         if ColorRange is False:
-            clip = RemoveFrameProp(clip, prop='_ColorRange')
+            clip = RemoveFrameProp(clip, '_ColorRange')
     elif isinstance(ColorRange, int):
         if ColorRange >= 0 and ColorRange <=1:
             clip = core.std.SetFrameProp(clip, prop='_ColorRange', intval=ColorRange)
         else:
-            raise ValueError(funcName + ': valid range of \"ColorRange\" is [0, 1]!')
+            raise value_error('valid range of "ColorRange" is [0, 1]!')
     else:
-        raise TypeError(funcName + ': \"ColorRange\" must be an int or a bool!')
+        raise type_error('"ColorRange" must be an int or a bool!')
     
     if Primaries is None:
         pass
     elif isinstance(Primaries, bool):
         if Primaries is False:
-            clip = RemoveFrameProp(clip, prop='_Primaries')
+            clip = RemoveFrameProp(clip, '_Primaries')
     elif isinstance(Primaries, int):
         clip = core.std.SetFrameProp(clip, prop='_Primaries', intval=Primaries)
     else:
-        raise TypeError(funcName + ': \"Primaries\" must be an int or a bool!')
+        raise type_error('"Primaries" must be an int or a bool!')
     
     if Matrix is None:
         pass
     elif isinstance(Matrix, bool):
         if Matrix is False:
-            clip = RemoveFrameProp(clip, prop='_Matrix')
+            clip = RemoveFrameProp(clip, '_Matrix')
     elif isinstance(Matrix, int):
         clip = core.std.SetFrameProp(clip, prop='_Matrix', intval=Matrix)
     else:
-        raise TypeError(funcName + ': \"Matrix\" must be an int or a bool!')
+        raise type_error('"Matrix" must be an int or a bool!')
     
     if Transfer is None:
         pass
     elif isinstance(Transfer, bool):
         if Transfer is False:
-            clip = RemoveFrameProp(clip, prop='_Transfer')
+            clip = RemoveFrameProp(clip, '_Transfer')
     elif isinstance(Transfer, int):
         clip = core.std.SetFrameProp(clip, prop='_Transfer', intval=Transfer)
     else:
-        raise TypeError(funcName + ': \"Transfer\" must be an int or a bool!')
+        raise type_error('"Transfer" must be an int or a bool!')
     
     # Output
     return clip
@@ -2252,15 +2189,13 @@ def SetColorSpace(clip, ChromaLocation=None, ColorRange=None, Primaries=None, Ma
 ## Also it may be useful to be applied before upscaling or anti-aliasing scripts using EEDI3/nnedi3, etc.(whose field order should be specified explicitly)
 ################################################################################################################################
 def AssumeFrame(clip):
-    # Set function name
-    funcName = 'AssumeFrame'
-    
+    # input clip
     if not isinstance(clip, vs.VideoNode):
-        raise TypeError(funcName + ': \"clip\" must be a clip!')
+        raise type_error('"clip" must be a clip!')
     
     # Modify frame properties
     clip = core.std.SetFrameProp(clip, prop='_FieldBased', intval=0)
-    clip = core.std.SetFrameProp(clip, prop='_Field', delete=True) if not VSApiVer4 else clip.std.RemoveFrameProps('_Field')
+    clip = RemoveFrameProp(clip, '_Field')
     
     # Output
     return clip
@@ -2274,15 +2209,13 @@ def AssumeFrame(clip):
 ## This frame property will override the field order set in those de-interlace filters.
 ################################################################################################################################
 def AssumeTFF(clip):
-    # Set function name
-    funcName = 'AssumeTFF'
-    
+    # input clip
     if not isinstance(clip, vs.VideoNode):
-        raise TypeError(funcName + ': \"clip\" must be a clip!')
+        raise type_error('"clip" must be a clip!')
     
     # Modify frame properties
     clip = core.std.SetFrameProp(clip, prop='_FieldBased', intval=2)
-    clip = core.std.SetFrameProp(clip, prop='_Field', delete=True) if not VSApiVer4 else clip.std.RemoveFrameProps('_Field')
+    clip = RemoveFrameProp(clip, '_Field')
     
     # Output
     return clip
@@ -2296,15 +2229,13 @@ def AssumeTFF(clip):
 ## This frame property will override the field order set in those de-interlace filters.
 ################################################################################################################################
 def AssumeBFF(clip):
-    # Set function name
-    funcName = 'AssumeBFF'
-    
+    # input clip
     if not isinstance(clip, vs.VideoNode):
-        raise TypeError(funcName + ': \"clip\" must be a clip!')
+        raise type_error('"clip" must be a clip!')
     
     # Modify frame properties
     clip = core.std.SetFrameProp(clip, prop='_FieldBased', intval=1)
-    clip = core.std.SetFrameProp(clip, prop='_Field', delete=True) if not VSApiVer4 else clip.std.RemoveFrameProps('_Field')
+    clip = RemoveFrameProp(clip, '_Field')
     
     # Output
     return clip
@@ -2322,17 +2253,15 @@ def AssumeBFF(clip):
 ##         - False: bottom-field-based
 ################################################################################################################################
 def AssumeField(clip, top):
-    # Set function name
-    funcName = 'AssumeField'
-    
+    # input clip
     if not isinstance(clip, vs.VideoNode):
-        raise TypeError(funcName + ': \"clip\" must be a clip!')
+        raise type_error('"clip" must be a clip!')
     
     if not isinstance(top, int):
-        raise TypeError(funcName + ': \"top\" must be a bool!')
+        raise type_error('"top" must be a bool!')
     
     # Modify frame properties
-    clip = core.std.SetFrameProp(clip, prop='_FieldBased', delete=True) if not VSApiVer4 else clip.std.RemoveFrameProps('_FieldBased')
+    clip = RemoveFrameProp(clip, '_FieldBased')
     clip = core.std.SetFrameProp(clip, prop='_Field', intval=1 if top else 0)
     
     # Output
@@ -2353,17 +2282,15 @@ def AssumeField(clip, top):
 ##         default: True
 ################################################################################################################################
 def AssumeCombed(clip, combed=True):
-    # Set function name
-    funcName = 'AssumeCombed'
-    
+    # input clip
     if not isinstance(clip, vs.VideoNode):
-        raise TypeError(funcName + ': \"clip\" must be a clip!')
+        raise type_error('"clip" must be a clip!')
     
     # Modify frame properties
     if combed is None:
-        clip = core.std.SetFrameProp(clip, prop='_Combed', delete=True) if not VSApiVer4 else clip.std.RemoveFrameProps('_Combed')
+        clip = RemoveFrameProp(clip, '_Combed')
     elif not isinstance(combed, int):
-        raise TypeError(funcName + ': \"combed\" must be a bool!')
+        raise type_error('"combed" must be a bool!')
     else:
         clip = core.std.SetFrameProp(clip, prop='_Combed', intval=combed)
     
@@ -2400,14 +2327,12 @@ def AssumeCombed(clip, combed=True):
 ##         default: True
 ################################################################################################################################
 def CheckVersion(version, less=False, equal=True, greater=True):
-    funcName = 'CheckVersion'
-    
     if not less and MvsFuncVersion < version:
-        raise ImportWarning('mvsfunc version(={0}) is less than the version(={1}) specified!'.format(MvsFuncVersion, version))
+        raise ImportWarning(f'mvsfunc version ({MvsFuncVersion}) is less than the version ({version}) specified!')
     if not equal and MvsFuncVersion == version:
-        raise ImportWarning('mvsfunc version(={0}) is equal to the version(={1}) specified!'.format(MvsFuncVersion, version))
+        raise ImportWarning(f'mvsfunc version ({MvsFuncVersion}) is equal to the version ({version}) specified!')
     if not greater and MvsFuncVersion > version:
-        raise ImportWarning('mvsfunc version(={0}) is greater than the version(={1}) specified!'.format(MvsFuncVersion, version))
+        raise ImportWarning(f'mvsfunc version ({MvsFuncVersion}) is greater than the version ({version}) specified!')
     
     return True
 ################################################################################################################################
@@ -2442,32 +2367,26 @@ def CheckVersion(version, less=False, equal=True, greater=True):
 ##         default: False
 ################################################################################################################################
 def GetMatrix(clip, matrix=None, dIsRGB=None, id=False):
-    # Set function name
-    funcName = 'GetMatrix'
-    
+    # input clip
     if not isinstance(clip, vs.VideoNode):
-        raise TypeError(funcName + ': \"clip\" must be a clip!')
+        raise type_error('"clip" must be a clip!')
     
     # Get properties of input clip
     sFormat = clip.format
     
     sColorFamily = sFormat.color_family
+    CheckColorFamily(sColorFamily)
     sIsRGB = sColorFamily == vs.RGB
-    sIsYUV = sColorFamily == vs.YUV
-    sIsGRAY = sColorFamily == vs.GRAY
-    sIsYCOCG = sColorFamily == vs_YCOCG
-    if sColorFamily == vs_COMPAT:
-        raise ValueError(funcName + ': color family *COMPAT* is not supported!')
     
     # Get properties of output clip
     if dIsRGB is None:
         dIsRGB = not sIsRGB
     elif not isinstance(dIsRGB, int):
-        raise TypeError(funcName + ': \"dIsRGB\" must be a bool!')
+        raise type_error('"dIsRGB" must be a bool!')
     
     # id
     if not isinstance(id, int):
-        raise TypeError(funcName + ': \"id\" must be a bool!')
+        raise type_error('"id" must be a bool!')
     
     # Resolution level
     noneD = False
@@ -2487,8 +2406,8 @@ def GetMatrix(clip, matrix=None, dIsRGB=None, id=False):
     # Convert to string format
     if matrix is None:
         matrix = "Unspecified"
-    elif not isinstance(matrix, int) and not isinstance(matrix, str):
-        raise TypeError(funcName + ': \"matrix\" must be an int or a str!')
+    elif not isinstance(matrix, (int, str)):
+        raise type_error('"matrix" must be an int or a str!')
     else:
         if isinstance(matrix, str):
             matrix = matrix.lower()
@@ -2515,14 +2434,12 @@ def GetMatrix(clip, matrix=None, dIsRGB=None, id=False):
         elif matrix == 100 or matrix == "opp" or matrix == "opponent": # opponent color space
             matrix = 100 if id else "OPP"
         else:
-            raise ValueError(funcName + ': Unsupported matrix specified!')
+            raise value_error('Unsupported matrix specified!')
     
     # If unspecified, automatically determine it based on color family and resolution level
     if matrix == 2 or matrix == "Unspecified":
         if dIsRGB and sIsRGB:
             matrix = 0 if id else "RGB"
-        elif sIsYCOCG:
-            matrix = 8 if id else "YCgCo"
         else:
             matrix = (6 if id else "601") if SD else (9 if id else "2020") if UHD else (1 if id else "709")
     
@@ -2537,12 +2454,10 @@ def GetMatrix(clip, matrix=None, dIsRGB=None, id=False):
 ## Smart function to utilize zimg depth conversion for both 1.0 and 2.0 API of vszimg as well as core.resize.
 ## core.resize is preferred now.
 ################################################################################################################################
-def zDepth(clip, sample=None, depth=None, range=None, range_in=None, dither_type=None, cpu_type=None, prefer_props=None):
-    # Set function name
-    funcName = 'zDepth'
-    
+def zDepth(clip, sample=None, depth=None, range=None, range_in=None, dither_type=None, cpu_type=None):
+    # input clip
     if not isinstance(clip, vs.VideoNode):
-        raise TypeError(funcName + ': \"clip\" must be a clip!')
+        raise type_error('"clip" must be a clip!')
     
     # Get properties of input clip
     sFormat = clip.format
@@ -2551,26 +2466,26 @@ def zDepth(clip, sample=None, depth=None, range=None, range_in=None, dither_type
     if sample is None:
         sample = sFormat.sample_type
     elif not isinstance(sample, int):
-        raise TypeError(funcName + ': \"sample\" must be an int!')
+        raise type_error('"sample" must be an int!')
     
     if depth is None:
         depth = sFormat.bits_per_sample
     elif not isinstance(depth, int):
-        raise TypeError(funcName + ': \"depth\" must be an int!')
+        raise type_error('"depth" must be an int!')
     
-    format = core.register_format(sFormat.color_family, sample, depth, sFormat.subsampling_w, sFormat.subsampling_h) if not VSApiVer4 else core.query_video_format(sFormat.color_family, sample, depth, sFormat.subsampling_w, sFormat.subsampling_h)
+    format = RegisterFormat(sFormat.color_family, sample, depth, sFormat.subsampling_w, sFormat.subsampling_h)
     
     # Process
-    zimgResize = core.version_number() >= 29
-    zimgPlugin = core.get_plugins().__contains__('the.weather.channel') if not VSApiVer4 else hasattr(core, 'z')
+    zimgResize = hasattr(core, 'resize')
+    zimgPlugin = hasattr(core, 'z')
     if zimgResize:
-        clip = core.resize.Bicubic(clip, format=format.id, range=range, range_in=range_in, dither_type=dither_type, prefer_props=prefer_props)
-    elif zimgPlugin and core.z.get_functions().__contains__('Format'):
+        clip = core.resize.Bicubic(clip, format=format.id, range=range, range_in=range_in, dither_type=dither_type, cpu_type=cpu_type)
+    elif zimgPlugin and hasattr(core.z, 'Format'):
         clip = core.z.Format(clip, format=format.id, range=range, range_in=range_in, dither_type=dither_type, cpu_type=cpu_type)
-    elif zimgPlugin and core.z.get_functions().__contains__('Depth'):
+    elif zimgPlugin and hasattr(core.z, 'Depth'):
         clip = core.z.Depth(clip, dither=dither_type, sample=sample, depth=depth, fullrange_in=range_in, fullrange_out=range)
     else:
-        raise AttributeError(funcName + ': Available zimg not found!')
+        raise attribute_error('no available core.resize or zimg found!')
     
     # Output
     return clip
@@ -2592,11 +2507,9 @@ def zDepth(clip, sample=None, depth=None, range=None, range_in=None, dither_type
 ##         default: 'PlaneAverage'
 ################################################################################################################################
 def PlaneAverage(clip, plane=None, prop=None):
-    # Set function name
-    funcName = 'PlaneAverage'
-    
+    # input clip
     if not isinstance(clip, vs.VideoNode):
-        raise TypeError(funcName + ': \"clip\" must be a clip!')
+        raise type_error('"clip" must be a clip!')
     
     # Get properties of input clip
     sFormat = clip.format
@@ -2606,14 +2519,14 @@ def PlaneAverage(clip, plane=None, prop=None):
     if plane is None:
         plane = 0
     elif not isinstance(plane, int):
-        raise TypeError(funcName + ': \"plane\" must be an int!')
+        raise type_error('"plane" must be an int!')
     elif plane < 0 or plane > sNumPlanes:
-        raise ValueError(funcName + ': valid range of \"plane\" is [0, {})!'.format(sNumPlanes))
+        raise value_error(f'valid range of "plane" is [0, {sNumPlanes})!')
     
     if prop is None:
         prop = 'PlaneAverage'
     elif not isinstance(prop, str):
-        raise TypeError(funcName + ': \"prop\" must be a str!')
+        raise type_error('"prop" must be a str!')
     
     # Process
     if core.std.get_functions().__contains__('PlaneAverage'):
@@ -2628,7 +2541,7 @@ def PlaneAverage(clip, plane=None, prop=None):
             return fout
         clip = core.std.ModifyFrame(clip, clip, selector=_PlaneAverageTransfer)
     else:
-        raise AttributeError(funcName + ': Available plane average function not found!')
+        raise attribute_error('no available plane average function found!')
     
     # output
     return clip
@@ -2647,11 +2560,9 @@ def PlaneAverage(clip, plane=None, prop=None):
 ##         default: 0
 ################################################################################################################################
 def GetPlane(clip, plane=None):
-    # Set function name
-    funcName = 'GetPlane'
-    
+    # input clip
     if not isinstance(clip, vs.VideoNode):
-        raise TypeError(funcName + ': \"clip\" must be a clip!')
+        raise type_error('"clip" must be a clip!')
     
     # Get properties of input clip
     sFormat = clip.format
@@ -2661,9 +2572,9 @@ def GetPlane(clip, plane=None):
     if plane is None:
         plane = 0
     elif not isinstance(plane, int):
-        raise TypeError(funcName + ': \"plane\" must be an int!')
+        raise type_error('"plane" must be an int!')
     elif plane < 0 or plane > sNumPlanes:
-        raise ValueError(funcName + ': valid range of \"plane\" is [0, {})!'.format(sNumPlanes))
+        raise value_error(f'valid range of "plane" is [0, {sNumPlanes})!')
     
     # Process
     return core.std.ShufflePlanes(clip, plane, vs.GRAY)
@@ -2681,22 +2592,17 @@ def GetPlane(clip, plane=None):
 ##     matrix {int|str}: for RGB input only, same as the one in ToYUV()
 ################################################################################################################################
 def GrayScale(clip, matrix=None):
-    # Set function name
-    funcName = 'GrayScale'
-    
+    # input clip
     if not isinstance(clip, vs.VideoNode):
-        raise TypeError(funcName + ': \"clip\" must be a clip!')
+        raise type_error('"clip" must be a clip!')
     
     # Get properties of input clip
     sFormat = clip.format
     
     sColorFamily = sFormat.color_family
+    CheckColorFamily(sColorFamily)
     sIsRGB = sColorFamily == vs.RGB
-    sIsYUV = sColorFamily == vs.YUV
     sIsGRAY = sColorFamily == vs.GRAY
-    sIsYCOCG = sColorFamily == vs_YCOCG
-    if sColorFamily == vs_COMPAT:
-        raise ValueError(funcName + ': color family *COMPAT* is not supported!')
     
     # Process
     if sIsGRAY:
@@ -2720,42 +2626,36 @@ def GrayScale(clip, matrix=None):
 ## When multiple clips is given, they will be interleaved together, and resized to the same dimension using "Catmull-Rom".
 ################################################################################################################################
 ## Set "plane" if you want to output a specific plane.
-## Set compat=True for COMPATBGR32 format output, usually used for VirtualDub, AvsPmod, etc.
 ################################################################################################################################
-## matrix, full, dither, kernel, a1, a2, prefer_props correspond to matrix_in, range_in, dither_type,
-## resample_filter_uv, filter_param_a_uv, filter_param_b_uv, prefer_props in resize.Bicubic.
+## matrix, full, dither, kernel, a1, a2 correspond to matrix_in, range_in, dither_type,
+## resample_filter_uv, filter_param_a_uv, filter_param_b_uv in resize.Bicubic.
 ## "matrix" is passed to GetMatrix(id=True) first.
 ## default dither: random
 ## default chroma resampler: kernel="bicubic", a1=0, a2=0.5, also known as "Catmull-Rom"
 ################################################################################################################################
-def Preview(clips, plane=None, compat=None, matrix=None, full=None, depth=None,\
-dither=None, kernel=None, a1=None, a2=None, prefer_props=None):
-    # Set function name
-    funcName = 'Preview'
-    
+def Preview(clips, plane=None, matrix=None, full=None, depth=None,
+    dither=None, kernel=None, a1=None, a2=None):
+    # input clip
     if isinstance(clips, vs.VideoNode):
         ref = clips
-    elif isinstance(clips, list):
+    elif isinstance(clips, Sequence):
         for c in clips:
             if not isinstance(c, vs.VideoNode):
-                raise TypeError(funcName + ': \"clips\" must be a clip or a list of clips!')
+                raise type_error('"clips" must be a clip or a sequence of clips!')
         ref = clips[0]
     else:
-        raise TypeError(funcName + ': \"clips\" must be a clip or a list of clips!')
+        raise type_error('"clips" must be a clip or a sequence of clips!')
     
     # Get properties of output clip
-    if compat:
-        raise ValueError(funcName + ': color family *COMPAT* is not supported!')
+    if depth is None:
+        depth = 8
+    elif not isinstance(depth, int):
+        raise type_error('"depth" must be an int!')
+    if depth >= 32:
+        sample = vs.FLOAT
     else:
-        if depth is None:
-            depth = 8
-        elif not isinstance(depth, int):
-            raise TypeError(funcName + ': \"depth\" must be an int!')
-        if depth >= 32:
-            sample = vs.FLOAT
-        else:
-            sample = vs.INTEGER
-        dFormat = core.register_format(vs.RGB, sample, depth, 0, 0).id if not VSApiVer4 else core.query_video_format(vs.RGB, sample, depth, 0, 0).id
+        sample = vs.INTEGER
+    dFormat = RegisterFormat(vs.RGB, sample, depth, 0, 0).id
     
     # Parameters
     if dither is None:
@@ -2770,17 +2670,59 @@ dither=None, kernel=None, a1=None, a2=None, prefer_props=None):
     def _Conv(clip):
         if plane is not None:
             clip = GetPlane(clip, plane)
-        return core.resize.Bicubic(clip, ref.width, ref.height, format=dFormat, matrix_in=GetMatrix(clip, matrix, True, True), range_in=full, filter_param_a=0, filter_param_b=0.5, resample_filter_uv=kernel, filter_param_a_uv=a1, filter_param_b_uv=a2, dither_type=dither, prefer_props=prefer_props)
+        return core.resize.Bicubic(clip, ref.width, ref.height, format=dFormat,
+            matrix_in=GetMatrix(clip, matrix, True, True), range_in=full,
+            filter_param_a=0, filter_param_b=0.5,
+            resample_filter_uv=kernel, filter_param_a_uv=a1, filter_param_b_uv=a2,
+            dither_type=dither)
     
     if isinstance(clips, vs.VideoNode):
         clip = _Conv(clips)
-    elif isinstance(clips, list):
-        for i in range(len(clips)):
-            clips[i] = _Conv(clips[i])
+    elif isinstance(clips, Sequence):
+        clips = [_Conv(c) for c in clips]
         clip = core.std.Interleave(clips)
     
     # Output
     return clip
+################################################################################################################################
+
+
+################################################################################################################################
+## Helper function: CheckColorFamily()
+################################################################################################################################
+def CheckColorFamily(color_family, valid_list=None, invalid_list=None):
+    if valid_list is None:
+        valid_list = ('RGB', 'YUV', 'GRAY')
+    if invalid_list is None:
+        invalid_list = ('COMPAT', 'UNDEFINED')
+    # check invalid list
+    for cf in invalid_list:
+        if color_family == getattr(vs, cf, None):
+            raise value_error(f'color family *{cf}* is not supported!')
+    # check valid list
+    if valid_list:
+        if color_family not in [getattr(vs, cf, None) for cf in valid_list]:
+            raise value_error(f'color family not supported, only {valid_list} are accepted')
+################################################################################################################################
+
+
+################################################################################################################################
+## Helper function: RemoveFrameProp()
+################################################################################################################################
+def RemoveFrameProp(clip, prop):
+    if vs.__api_version__.api_major >= 4:
+        return core.std.RemoveFrameProps(clip, prop)
+    return core.std.SetFrameProp(clip, prop, delete=True)
+################################################################################################################################
+
+
+################################################################################################################################
+## Helper function: RegisterFormat()
+################################################################################################################################
+def RegisterFormat(color_family, sample_type, bits_per_sample, subsampling_w, subsampling_h):
+    if vs.__api_version__.api_major >= 4:
+        return core.query_video_format(color_family, sample_type, bits_per_sample, subsampling_w, subsampling_h)
+    return core.register_format(color_family, sample_type, bits_per_sample, subsampling_w, subsampling_h)
 ################################################################################################################################
 
 
@@ -2797,9 +2739,35 @@ dither=None, kernel=None, a1=None, a2=None, prefer_props=None):
 
 
 ################################################################################################################################
+def get_func_name(num_of_call_stacks=1):
+    import inspect
+    frame = inspect.currentframe()
+    for stack in range(num_of_call_stacks):
+        frame = frame.f_back
+    return frame.f_code.co_name
+################################################################################################################################
+def exception(obj1, *args, num_stacks=1):
+    name = get_func_name(num_stacks + 1)
+    return Exception(f'[mvsfunc.{name}] {obj1}', *args)
+################################################################################################################################
+def type_error(obj1, *args, num_stacks=1):
+    name = get_func_name(num_stacks + 1)
+    return TypeError(f'[mvsfunc.{name}] {obj1}', *args)
+################################################################################################################################
+def value_error(obj1, *args, num_stacks=1):
+    name = get_func_name(num_stacks + 1)
+    return ValueError(f'[mvsfunc.{name}] {obj1}', *args)
+################################################################################################################################
+def attribute_error(obj1, *args, num_stacks=1):
+    name = get_func_name(num_stacks + 1)
+    return AttributeError(f'[mvsfunc.{name}] {obj1}', *args)
+################################################################################################################################
+
+
+################################################################################################################################
 ## Internal used function to calculate quantization parameters
 ################################################################################################################################
-def _quantization_parameters(sample=None, depth=None, full=None, chroma=None, funcName='_quantization_parameters'):
+def _quantization_parameters(sample=None, depth=None, full=None, chroma=None):
     qp = {}
     
     if sample is None:
@@ -2807,7 +2775,7 @@ def _quantization_parameters(sample=None, depth=None, full=None, chroma=None, fu
     if depth is None:
         depth = 8
     elif depth < 1:
-        raise ValueError(funcName + ': \"depth\" should not be less than 1!')
+        raise value_error('"depth" should not be less than 1!', num_stacks=2)
     if full is None:
         full = True
     if chroma is None:
@@ -2839,7 +2807,7 @@ def _quantization_parameters(sample=None, depth=None, full=None, chroma=None, fu
             qp['ceil'] = 1.0
             qp['range'] = qp['ceil'] - qp['floor']
     else:
-        raise ValueError(funcName + ': Unsupported \"sample\" specified!')
+        raise value_error('Unsupported "sample" specified!', num_stacks=2)
     
     return qp
 ################################################################################################################################
@@ -2848,23 +2816,19 @@ def _quantization_parameters(sample=None, depth=None, full=None, chroma=None, fu
 ################################################################################################################################
 ## Internal used function to do quantization conversion with std.Expr
 ################################################################################################################################
-def _quantization_conversion(clip, depths=None, depthd=None, sample=None, fulls=None, fulld=None, chroma=None,\
-clamp=None, dbitPS=None, mode=None, funcName='_quantization_conversion'):
-    # Set function name
-    
+def _quantization_conversion(clip, depths=None, depthd=None, sample=None, fulls=None, fulld=None,
+    chroma=None, clamp=None, dbitPS=None, mode=None):
+    # input clip
     if not isinstance(clip, vs.VideoNode):
-        raise TypeError(funcName + ': \"clip\" must be a clip!')
+        raise type_error('"clip" must be a clip!', num_stacks=2)
     
     # Get properties of input clip
     sFormat = clip.format
     
     sColorFamily = sFormat.color_family
-    sIsRGB = sColorFamily == vs.RGB
+    CheckColorFamily(sColorFamily)
     sIsYUV = sColorFamily == vs.YUV
     sIsGRAY = sColorFamily == vs.GRAY
-    sIsYCOCG = sColorFamily == vs_YCOCG
-    if sColorFamily == vs_COMPAT:
-        raise ValueError(funcName + ': color family *COMPAT* is not supported!')
     
     sbitPS = sFormat.bits_per_sample
     sSType = sFormat.sample_type
@@ -2872,18 +2836,18 @@ clamp=None, dbitPS=None, mode=None, funcName='_quantization_conversion'):
     if depths is None:
         depths = sbitPS
     elif not isinstance(depths, int):
-        raise TypeError(funcName + ': \"depths\" must be an int!')
+        raise type_error('"depths" must be an int!', num_stacks=2)
     
     if fulls is None:
         # If not set, assume limited range for YUV and Gray input
         fulls = False if sIsYUV or sIsGRAY else True
     elif not isinstance(fulls, int):
-        raise TypeError(funcName + ': \"fulls\" must be a bool!')
+        raise type_error('"fulls" must be a bool!', num_stacks=2)
     
     if chroma is None:
         chroma = False
     elif not isinstance(chroma, int):
-        raise TypeError(funcName + ': \"chroma\" must be a bool!')
+        raise type_error('"chroma" must be a bool!', num_stacks=2)
     elif not sIsGRAY:
         chroma = False
     
@@ -2891,7 +2855,7 @@ clamp=None, dbitPS=None, mode=None, funcName='_quantization_conversion'):
     if depthd is None:
         pass
     elif not isinstance(depthd, int):
-        raise TypeError(funcName + ': \"depthd\" must be an int!')
+        raise type_error('"depthd" must be an int!', num_stacks=2)
     if sample is None:
         if depthd is None:
             dSType = sSType
@@ -2899,25 +2863,25 @@ clamp=None, dbitPS=None, mode=None, funcName='_quantization_conversion'):
         else:
             dSType = vs.FLOAT if dbitPS >= 32 else vs.INTEGER
     elif not isinstance(sample, int):
-        raise TypeError(funcName + ': \"sample\" must be an int!')
+        raise type_error('"sample" must be an int!', num_stacks=2)
     elif sample != vs.INTEGER and sample != vs.FLOAT:
-        raise ValueError(funcName + ': \"sample\" must be either 0(vs.INTEGER) or 1(vs.FLOAT)!')
+        raise value_error('"sample" must be either 0 (vs.INTEGER) or 1 (vs.FLOAT)!', num_stacks=2)
     else:
         dSType = sample
     if dSType == vs.INTEGER and (dbitPS < 1 or dbitPS > 16):
-        raise ValueError(funcName + ': {0}-bit integer output is not supported!'.format(dbitPS))
+        raise value_error(f'{dbitPS}-bit integer output is not supported!', num_stacks=2)
     if dSType == vs.FLOAT and (dbitPS != 16 and dbitPS != 32):
-        raise ValueError(funcName + ': {0}-bit float output is not supported!'.format(dbitPS))
+        raise value_error(f'{dbitPS}-bit float output is not supported!', num_stacks=2)
     
     if fulld is None:
         fulld = fulls
     elif not isinstance(fulld, int):
-        raise TypeError(funcName + ': \"fulld\" must be a bool!')
+        raise type_error('"fulld" must be a bool!', num_stacks=2)
     
     if clamp is None:
         clamp = dSType == vs.INTEGER
     elif not isinstance(clamp, int):
-        raise TypeError(funcName + ': \"clamp\" must be a bool!')
+        raise type_error('"clamp" must be a bool!', num_stacks=2)
     
     if dbitPS is None:
         if depthd < 8:
@@ -2925,16 +2889,16 @@ clamp=None, dbitPS=None, mode=None, funcName='_quantization_conversion'):
         else:
             dbitPS = depthd
     elif not isinstance(dbitPS, int):
-        raise TypeError(funcName + ': \"dbitPS\" must be an int!')
+        raise type_error('"dbitPS" must be an int!', num_stacks=2)
     
     if mode is None:
         mode = 0
     elif not isinstance(mode, int):
-        raise TypeError(funcName + ': \"mode\" must be an int!')
+        raise type_error('"mode" must be an int!', num_stacks=2)
     elif depthd >= 8:
         mode = 0
     
-    dFormat = core.register_format(sFormat.color_family, dSType, dbitPS, sFormat.subsampling_w, sFormat.subsampling_h) if not VSApiVer4 else core.query_video_format(sFormat.color_family, dSType, dbitPS, sFormat.subsampling_w, sFormat.subsampling_h)
+    dFormat = RegisterFormat(sFormat.color_family, dSType, dbitPS, sFormat.subsampling_w, sFormat.subsampling_h)
     
     # Expression function
     def gen_expr(chroma, mode):
@@ -2945,8 +2909,8 @@ clamp=None, dbitPS=None, mode=None, funcName='_quantization_conversion'):
             exprLower = float('-inf')
             exprUpper = float('inf')
         
-        sQP = _quantization_parameters(sSType, depths, fulls, chroma, funcName)
-        dQP = _quantization_parameters(dSType, depthd, fulld, chroma, funcName)
+        sQP = _quantization_parameters(sSType, depths, fulls, chroma)
+        dQP = _quantization_parameters(dSType, depthd, fulld, chroma)
         
         gain = dQP['range'] / sQP['range']
         offset = dQP['neutral' if chroma else 'floor'] - sQP['neutral' if chroma else 'floor'] * gain
@@ -2960,11 +2924,11 @@ clamp=None, dbitPS=None, mode=None, funcName='_quantization_conversion'):
         
         if gain != 1 or offset != 0 or clamp:
             expr = " x "
-            if gain != 1: expr = expr + " {} * ".format(gain)
-            if offset != 0: expr = expr + " {} + ".format(offset)
+            if gain != 1: expr = expr + f" {gain} * "
+            if offset != 0: expr = expr + f" {offset} + "
             if clamp:
-                if dQP['floor'] * scale > exprLower: expr = expr + " {} max ".format(dQP['floor'] * scale)
-                if dQP['ceil'] * scale < exprUpper: expr = expr + " {} min ".format(dQP['ceil'] * scale)
+                if dQP['floor'] * scale > exprLower: expr = expr + f" {dQP['floor'] * scale} max "
+                if dQP['ceil'] * scale < exprUpper: expr = expr + f" {dQP['ceil'] * scale} min "
         else:
             expr = ""
         
@@ -2974,7 +2938,7 @@ clamp=None, dbitPS=None, mode=None, funcName='_quantization_conversion'):
     Yexpr = gen_expr(False, mode)
     Cexpr = gen_expr(True, mode)
     
-    if sIsYUV or sIsYCOCG:
+    if sIsYUV:
         expr = [Yexpr, Cexpr]
     elif sIsGRAY and chroma:
         expr = Cexpr
@@ -2992,7 +2956,7 @@ clamp=None, dbitPS=None, mode=None, funcName='_quantization_conversion'):
 ################################################################################################################################
 ## Internal used function to check the argument for frame property
 ################################################################################################################################
-def _check_arg_prop(arg, default=None, defaultTrue=None, argName='arg', funcName='_check_arg_prop'):
+def _check_arg_prop(arg, default=None, defaultTrue=None, argName='arg'):
     if defaultTrue is None:
         defaultTrue = default
     
@@ -3004,11 +2968,11 @@ def _check_arg_prop(arg, default=None, defaultTrue=None, argName='arg', funcName
     elif isinstance(arg, str):
         if arg:
             if not arg.isidentifier():
-                raise ValueError(funcName + ': {argName}=\"{arg}\" is not a valid identifier!'.format(argName=argName, arg=arg))
+                raise value_error(f'{argName}="{arg}" is not a valid identifier!', num_stacks=2)
         else:
             arg = False
     else:
-        raise TypeError(funcName + ': \"{argName}\" must be a str or a bool!'.format(argName=argName))
+        raise type_error(f'"{argName}" must be a str or a bool!', num_stacks=2)
     
     return arg
 ################################################################################################################################
@@ -3017,21 +2981,19 @@ def _check_arg_prop(arg, default=None, defaultTrue=None, argName='arg', funcName
 ################################################################################################################################
 ## Internal used function for Min(), Max() and Avg()
 ################################################################################################################################
-def _operator2(clip1, clip2, mode, neutral, funcName):
-    # Set VS core
-    core = vs.core
-    
+def _operator2(clip1, clip2, mode, neutral, name):
+    # input clip
     if not isinstance(clip1, vs.VideoNode):
-        raise TypeError(funcName + ': \"clip1\" must be a clip!')
+        raise type_error('"clip1" must be a clip!', num_stacks=2)
     if not isinstance(clip2, vs.VideoNode):
-        raise TypeError(funcName + ': \"clip2\" must be a clip!')
+        raise type_error('"clip2" must be a clip!', num_stacks=2)
     
     # Get properties of input clip
     sFormat = clip1.format
     if sFormat.id != clip2.format.id:
-        raise ValueError(funcName + ': \"clip1\" and \"clip2\" must be of the same format!')
+        raise value_error('"clip1" and "clip2" must be of the same format!', num_stacks=2)
     if clip1.width != clip2.width or clip1.height != clip2.height:
-        raise ValueError(funcName + ': \"clip1\" and \"clip2\" must be of the same width and height!')
+        raise value_error('"clip1" and "clip2" must be of the same width and height!', num_stacks=2)
     
     sSType = sFormat.sample_type
     sbitPS = sFormat.bits_per_sample
@@ -3045,42 +3007,42 @@ def _operator2(clip1, clip2, mode, neutral, funcName):
     elif isinstance(mode, list):
         for m in mode:
             if not isinstance(m, int):
-                raise TypeError(funcName + ': \"mode\" must be a (list of) int!')
+                raise type_error('"mode" must be a (sequence of) int!', num_stacks=2)
         while len(mode) < VSMaxPlaneNum:
             mode.append(mode[len(mode) - 1])
     else:
-        raise TypeError(funcName + ': \"mode\" must be a (list of) int!')
+        raise type_error('"mode" must be a (sequence of) int!', num_stacks=2)
     
     # neutral
     if neutral is None:
         neutral = 1 << (sbitPS - 1) if sSType == vs.INTEGER else 0
     elif not (isinstance(neutral, int) or isinstance(neutral, float)):
-        raise TypeError(funcName + ': \"neutral\" must be an int or a float!')
+        raise type_error('"neutral" must be an int or a float!', num_stacks=2)
     
     # Process and output
     expr = []
     for i in range(sNumPlanes):
-        if funcName == 'Min':
+        if name == 'Min':
             if mode[i] >= 2:
-                expr.append("y {neutral} - abs x {neutral} - abs < y x ?".format(neutral=neutral))
+                expr.append(f"y {neutral} - abs x {neutral} - abs < y x ?")
             elif mode[i] == 1:
                 expr.append("x y min")
             else:
                 expr.append("")
-        elif funcName == 'Max':
+        elif name == 'Max':
             if mode[i] >= 2:
-                expr.append("y {neutral} - abs x {neutral} - abs > y x ?".format(neutral=neutral))
+                expr.append(f"y {neutral} - abs x {neutral} - abs > y x ?")
             elif mode[i] == 1:
                 expr.append("x y max")
             else:
                 expr.append("")
-        elif funcName == 'Avg':
+        elif name == 'Avg':
             if mode[i] >= 1:
                 expr.append("x y + 2 /")
             else:
                 expr.append("")
         else:
-            raise ValueError('_operator2: Unknown \"funcName\" specified!')
+            raise value_error('Unknown "name" specified!', num_stacks=1)
     
     return core.std.Expr([clip1, clip2], expr)
 ################################################################################################################################
@@ -3089,22 +3051,21 @@ def _operator2(clip1, clip2, mode, neutral, funcName):
 ################################################################################################################################
 ## Internal used function for MinFilter() and MaxFilter()
 ################################################################################################################################
-def _min_max_filter(src, flt1, flt2, planes, funcName):
-    # Set function name
-    
+def _min_max_filter(src, flt1, flt2, planes, name):
+    # input clip
     if not isinstance(src, vs.VideoNode):
-        raise TypeError(funcName + ': \"src\" must be a clip!')
+        raise type_error('"src" must be a clip!', num_stacks=2)
     if not isinstance(flt1, vs.VideoNode):
-        raise TypeError(funcName + ': \"flt1\" must be a clip!')
+        raise type_error('"flt1" must be a clip!', num_stacks=2)
     if not isinstance(flt2, vs.VideoNode):
-        raise TypeError(funcName + ': \"flt2\" must be a clip!')
+        raise type_error('"flt2" must be a clip!', num_stacks=2)
     
     # Get properties of input clip
     sFormat = src.format
     if sFormat.id != flt1.format.id or sFormat.id != flt2.format.id:
-        raise ValueError(funcName + ': \"src\", \"flt1\" and \"flt2\" must be of the same format!')
+        raise value_error('"src", "flt1" and "flt2" must be of the same format!', num_stacks=2)
     if src.width != flt1.width or src.height != flt1.height or src.width != flt2.width or src.height != flt2.height:
-        raise ValueError(funcName + ': \"src\", \"flt1\" and \"flt2\" must be of the same width and height!')
+        raise value_error('"src", "flt1" and "flt2" must be of the same width and height!', num_stacks=2)
     
     sNumPlanes = sFormat.num_planes
     
@@ -3115,28 +3076,28 @@ def _min_max_filter(src, flt1, flt2, planes, funcName):
         process = [1 for i in range(VSMaxPlaneNum)]
     elif isinstance(planes, int):
         if planes < 0 or planes >= VSMaxPlaneNum:
-            raise ValueError(funcName + ': valid range of \"planes\" is [0, {VSMaxPlaneNum})!'.format(VSMaxPlaneNum=VSMaxPlaneNum))
+            raise value_error(f'valid range of "planes" is [0, {VSMaxPlaneNum})!', num_stacks=2)
         process[planes] = 1
-    elif isinstance(planes, list):
+    elif isinstance(planes, Sequence):
         for p in planes:
             if not isinstance(p, int):
-                raise TypeError(funcName + ': \"planes\" must be a (list of) int!')
+                raise type_error('"planes" must be a (sequence of) int!')
             elif p < 0 or p >= VSMaxPlaneNum:
-                raise ValueError(funcName + ': valid range of \"planes\" is [0, {VSMaxPlaneNum})!'.format(VSMaxPlaneNum=VSMaxPlaneNum))
+                raise value_error(f'valid range of "planes" is [0, {VSMaxPlaneNum})!', num_stacks=2)
             process[p] = 1
     else:
-        raise TypeError(funcName + ': \"planes\" must be a (list of) int!')
+        raise type_error('"planes" must be a (sequence of) int!', num_stacks=2)
     
     # Process and output
     expr = []
     for i in range(sNumPlanes):
         if process[i]:
-            if funcName == 'MinFilter':
+            if name == 'MinFilter':
                 expr.append("x z - abs x y - abs < z y ?")
-            elif funcName == 'MaxFilter':
+            elif name == 'MaxFilter':
                 expr.append("x z - abs x y - abs > z y ?")
             else:
-                raise ValueError('_min_max_filter: Unknown \"funcName\" specified!')
+                raise value_error('Unknown "name" specified!', num_stacks=1)
         else:
             expr.append("")
     
@@ -3152,50 +3113,47 @@ def _limit_filter_expr(defref, thr, elast, largen_thr, value_range):
     src = " y "
     ref = " z " if defref else src
     
-    dif = " {flt} {src} - ".format(flt=flt, src=src)
-    dif_ref = " {flt} {ref} - ".format(flt=flt, ref=ref)
+    dif = f" {flt} {src} - "
+    dif_ref = f" {flt} {ref} - "
     dif_abs = dif_ref + " abs "
     
     thr = thr * value_range / 255
     largen_thr = largen_thr * value_range / 255
     
     if thr <= 0 and largen_thr <= 0:
-        limitExpr = " {src} ".format(src=src)
+        limitExpr = f" {src} "
     elif thr >= value_range and largen_thr >= value_range:
         limitExpr = ""
     else:
         if thr <= 0:
-            limitExpr = " {src} ".format(src=src)
+            limitExpr = f" {src} "
         elif thr >= value_range:
-            limitExpr = " {flt} ".format(flt=flt)
+            limitExpr = f" {flt} "
         elif elast <= 1:
-            limitExpr = " {dif_abs} {thr} <= {flt} {src} ? ".format(dif_abs=dif_abs, thr=thr, flt=flt, src=src)
+            limitExpr = f" {dif_abs} {thr} <= {flt} {src} ? "
         else:
             thr_1 = thr
             thr_2 = thr * elast
             thr_slope = 1 / (thr_2 - thr_1)
             # final = src + dif * (thr_2 - dif_abs) / (thr_2 - thr_1)
-            limitExpr = " {src} {dif} {thr_2} {dif_abs} - * {thr_slope} * + "
-            limitExpr = " {dif_abs} {thr_1} <= {flt} {dif_abs} {thr_2} >= {src} " + limitExpr + " ? ? "
-            limitExpr = limitExpr.format(dif=dif, dif_abs=dif_abs, thr_1=thr_1, thr_2=thr_2, thr_slope=thr_slope, flt=flt, src=src)
+            limitExpr = f" {src} {dif} {thr_2} {dif_abs} - * {thr_slope} * + "
+            limitExpr = f" {dif_abs} {thr_1} <= {flt} {dif_abs} {thr_2} >= {src} " + limitExpr + " ? ? "
         
         if largen_thr != thr:
             if largen_thr <= 0:
-                limitExprLargen = " {src} ".format(src=src)
+                limitExprLargen = f" {src} "
             elif largen_thr >= value_range:
-                limitExprLargen = " {flt} ".format(flt=flt)
+                limitExprLargen = f" {flt} "
             elif elast <= 1:
-                limitExprLargen = " {dif_abs} {thr} <= {flt} {src} ? ".format(dif_abs=dif_abs, thr=largen_thr, flt=flt, src=src)
+                limitExprLargen = f" {dif_abs} {largen_thr} <= {flt} {src} ? "
             else:
                 thr_1 = largen_thr
                 thr_2 = largen_thr * elast
                 thr_slope = 1 / (thr_2 - thr_1)
                 # final = src + dif * (thr_2 - dif_abs) / (thr_2 - thr_1)
-                limitExprLargen = " {src} {dif} {thr_2} {dif_abs} - * {thr_slope} * + "
-                limitExprLargen = " {dif_abs} {thr_1} <= {flt} {dif_abs} {thr_2} >= {src} " + limitExprLargen + " ? ? "
-                limitExprLargen = limitExprLargen.format(dif=dif, dif_abs=dif_abs, thr_1=thr_1, thr_2=thr_2, thr_slope=thr_slope, flt=flt, src=src)
-            limitExpr = " {flt} {ref} > " + limitExprLargen + " " + limitExpr + " ? "
-            limitExpr = limitExpr.format(flt=flt, ref=ref)
+                limitExprLargen = f" {src} {dif} {thr_2} {dif_abs} - * {thr_slope} * + "
+                limitExprLargen = f" {dif_abs} {thr_1} <= {flt} {dif_abs} {thr_2} >= {src} " + limitExprLargen + " ? ? "
+            limitExpr = f" {flt} {ref} > " + limitExprLargen + " " + limitExpr + " ? "
     
     return limitExpr
 ################################################################################################################################
@@ -3205,11 +3163,9 @@ def _limit_filter_expr(defref, thr, elast, largen_thr, value_range):
 ## Internal used functions for LimitFilter()
 ################################################################################################################################
 def _limit_diff_lut(diff, thr, elast, largen_thr, planes):
-    # Set function name
-    funcName = '_limit_diff_lut'
-    
+    # input clip
     if not isinstance(diff, vs.VideoNode):
-        raise TypeError(funcName + ': \"diff\" must be a clip!')
+        raise type_error('"diff" must be a clip!', num_stacks=2)
     
     # Get properties of input clip
     sFormat = diff.format
@@ -3223,7 +3179,7 @@ def _limit_diff_lut(diff, thr, elast, largen_thr, planes):
     else:
         neutral = 0
         value_range = 1
-        raise ValueError(funcName + ': \"diff\" must be of integer format!')
+        raise value_error('"diff" must be an int!', num_stacks=2)
     
     # Process
     thr = thr * value_range / 255
