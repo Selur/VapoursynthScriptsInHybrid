@@ -7,13 +7,15 @@ def fillWithMVTools(clip):
   vbe = core.mv.Analyse(super, truemotion=True, isb=True, delta=1)
   return core.mv.FlowInter(clip, super, mvbw=vbe, mvfw=vfe, time=50)
     
-def fillWithRIFE(clip, firstframe=None, rifeModel=1, rifeTTA=False, rifeUHD=False):
+def fillWithRIFE(clip, firstframe=None, rifeModel=1, rifeTTA=False, rifeUHD=False, rifeThresh=0.15):
   clip1 = core.std.AssumeFPS(clip, fpsnum=1, fpsden=1)
   start = core.std.Trim(clip1, first=firstframe-1, length=1)
   end = core.std.Trim(clip1, first=firstframe+1, length=1)
   startend = start + end
   if clip.format != vs.RGBS:
     r = core.resize.Point(startend, format=vs.RGBS, matrix_in_s="709")
+  if rifeThresh != 0:
+    r = core.misc.SCDetect(clip=r,threshold=rifeThresh)
   r = core.rife.RIFE(r, model=rifeModel, tta=rifeTTA,uhd=rifeUHD)
   if clip.format != vs.RGBS:
     r = core.resize.Point(r, format=clip.format, matrix_s="709")
@@ -45,7 +47,7 @@ def fillWithSVP(clip, firstframe=None, gpu=False):  # Here I go wrong since I se
   join = a + r + b
   return core.std.AssumeFPS(join, src=clip)
     
-def FillSingleDrops(clip, thresh=0.3, method="mv", rifeModel=0, rifeTTA=False, rifeUHD=False, debug=False):
+def FillSingleDrops(clip, thresh=0.3, method="mv", rifeModel=0, rifeTTA=False, rifeUHD=False, rifeThresh=0.15, debug=False):
   core = vs.core
   if not isinstance(clip, vs.VideoNode):
       raise ValueError('This is not a clip')
@@ -63,7 +65,7 @@ def FillSingleDrops(clip, thresh=0.3, method="mv", rifeModel=0, rifeTTA=False, r
       elif method == "svp_gpu":
         filldrops=fillWithSVP(clip,n,gpu=True)
       elif method == "rife":
-        filldrops = fillWithRIFE(clip,n,rifeModel,rifeTTA,rifeUHD)
+        filldrops = fillWithRIFE(clip,n,rifeModel,rifeTTA,rifeUHD,rifeThresh)
       else:
         raise vs.Error('FillDrops: Unknown method '+method)   
         
