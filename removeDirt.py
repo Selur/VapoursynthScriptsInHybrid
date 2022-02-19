@@ -5,8 +5,6 @@ import vapoursynth as vs
 # RemoveDirt (https://github.com/pinterf/removedirtvs)
 # ChangeFPS (https://github.com/Selur/VapoursynthScriptsInHybrid/blob/master/ChangeFPS.py)
 
-import ChangeFPS
-
 def RemoveDirt(input, repmode=16, remgrainmode=17, limit=10):
   core = vs.core
   cleansed = core.rgvs.Clense(input)
