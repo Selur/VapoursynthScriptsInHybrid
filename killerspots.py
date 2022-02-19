@@ -16,9 +16,8 @@ import vapoursynth as vs
 
 def KillerSpots(clip: vs.VideoNode, limit: int =10, advanced: bool =True):
   core = vs.core  
-  # advanced: default True, use for best for the original KillerSpots
+  # advanced: Use 'False' for best speed and original KillerSpots. Use 'True' to specify a 'limit'. Default True;
   # limit: default 10, spot removal limit (for advanced=true only)
-  # comp: default False, for compare results
   osup = core.mv.Super(clip=clip, pel=2, sharp=2)
   bv1  = core.mv.Analyse(super=osup, isb=True, delta=1, blksize=8, overlap=4, search=4)
   fv1  = core.mv.Analyse(super=osup, isb=False, delta=1, blksize=8, overlap=4, search=4)
