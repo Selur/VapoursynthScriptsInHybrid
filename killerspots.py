@@ -1,6 +1,5 @@
 import vapoursynth as vs
 # dependencies:
-# rgtools; https://github.com/Irrational-Encoding-Wizardry/RgToolsVS
 # RemoveGrain (http://www.vapoursynth.com/doc/plugins/rgvs.html)
 # MVTools (https://github.com/dubhater/vapoursynth-mvtools) or SVP dlls when gpu=True is used
 # RemoveDirt (https://github.com/pinterf/removedirtvs)
