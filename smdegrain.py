@@ -23,6 +23,7 @@ import vapoursynth as vs
 core = vs.core
 
 import havsfunc
+import mvsfunc as mvf
 
 ################################################################################################
 ###                                                                                          ###
@@ -150,7 +151,8 @@ def SMDegrain(input, tr=2, thSAD=300, thSADC=None, RefineMotion=False, contrasha
         elif prefilter <= -1:
             pref = inputP
         elif prefilter == 3:
-            expr = 'x {i} < {peak} x {j} > 0 {peak} x {i} - {peak} {j} {i} - / * - ? ?'.format(i=scale(16, peak), j=scale(75, peak), peak=peak)
+            expr = 'x {i} < {peak} x {j} > 0 {peak} x {i} - {peak} {j} {i} - / * - ? ?'.format(i=havsfunc
+            .scale(16, peak), j=havsfunc.scale(75, peak), peak=peak)
             pref = core.std.MaskedMerge(inputP.dfttest.DFTTest(tbsize=1, slocation=[0.0,4.0, 0.2,9.0, 1.0,15.0], planes=planes),
                                         inputP,
                                         mvf.GetPlane(inputP, 0).std.Expr(expr=[expr]),
