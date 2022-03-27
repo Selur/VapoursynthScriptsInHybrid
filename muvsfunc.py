@@ -5396,7 +5396,7 @@ def Cdeblend(input: vs.VideoNode, omode: int = 0, bthresh: float = 0.1, mthresh:
     # process
     blendclip = input if dclip is None else dclip
     blendclip = mvf.GetPlane(blendclip, 0)
-    blendclip = core.median.TemporalMedian(blendclip, radius=1) # type: ignore
+    blendclip = core.tmedian.TemporalMedian(blendclip, radius=1) # type: ignore
     blendclip = core.resize.Bilinear(blendclip, int(blendclip.width * 0.125 / xr) * 8, int(blendclip.height * 0.125 / yr) * 8)
 
     diff = core.std.MakeDiff(blendclip, blendclip[1:])
