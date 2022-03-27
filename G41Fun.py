@@ -1377,7 +1377,7 @@ def QTGMC(clip, Preset='Slower', TR0=None, TR1=None, TR2=None, Rep0=None, Rep1=0
         srchClip = core.std.Expr([spatialBlur, tweaked], [expr2] if ChromaMotion or isGRAY else [expr2, ''])
 
     # Calculate forward and backward motion vectors from motion search clip
-    analyse_args = dict(blksize=BlockSize, overlap=Overlap, search=Search, searchparam=SearchParam, pelsearch=PelSearch, truemotion=TrueMotion, lambda_=Lambda, lsad=LSAD, pnew=PNew, plevel=PLevel, _global=GlobalMotion, dct=DCT, chroma=ChromaMotion)
+    analyse_args = dict(blksize=BlockSize, overlap=Overlap, search=Search, searchparam=SearchParam, pelsearch=PelSearch, truemotion=TrueMotion, lambda_=Lambda, lsad=LSAD, pnew=PNew, plevel=PLevel, global_=GlobalMotion, dct=DCT, chroma=ChromaMotion)
     srchSuper = S(DitherLumaRebuild(srchClip, s0=1, chroma=ChromaMotion), pel=SubPel, sharp=1, rfilter=4, hpad=hpad, vpad=vpad, chroma=ChromaMotion) if maxTR > 0 else None
     bVec1 = A(srchSuper, isb=True,  delta=1, **analyse_args) if maxTR > 0 else None
     fVec1 = A(srchSuper, isb=False, delta=1, **analyse_args) if maxTR > 0 else None
@@ -2039,7 +2039,7 @@ def SMDegrain(clip, tr=2, thSAD=314, thSADC=None, RefineMotion=False, contrashar
     # Subpixel 3
     # Motion vectors search
     super_args = dict(hpad=blksize, vpad=blksize, pel=pel)
-    analyse_args = dict(blksize=blksize, search=search, chroma=chroma, truemotion=truemotion, _global=MVglobal, overlap=overlap, dct=DCT, searchparam=searchparam)
+    analyse_args = dict(blksize=blksize, search=search, chroma=chroma, truemotion=truemotion, global_=MVglobal, overlap=overlap, dct=DCT, searchparam=searchparam)
 
     if RefineMotion:
         recalculate_args = dict(thsad=halfthSAD, blksize=halfblksize, search=search, chroma=chroma, truemotion=truemotion, overlap=halfoverlap, dct=DCT, searchparam=searchparam)
@@ -2301,7 +2301,7 @@ def TemporalDegrain2(clip, degrainTR=2, degrainPlane=4, meAlg=5, meAlgPar=None, 
         expr = 'x {a} + y < x {b} + x {a} - y > x {b} - x y + 2 / ? ?'.format(a=7*i, b=2*i)
         srchClip = core.std.Expr([spatialBlur, clip], [expr] if ChromaMotion or isGRAY else [expr, ''])
 
-    analyse_args = dict(blksize=meBlksz, overlap=Overlap, search=meAlg, searchparam=meAlgPar, pelsearch=meSubpel, truemotion=meTM, lambda_=Lambda, lsad=LSAD, pnew=PNew, plevel=PLevel, _global=GlobalMotion, dct=DCT, chroma=ChromaMotion)
+    analyse_args = dict(blksize=meBlksz, overlap=Overlap, search=meAlg, searchparam=meAlgPar, pelsearch=meSubpel, truemotion=meTM, lambda_=Lambda, lsad=LSAD, pnew=PNew, plevel=PLevel, global_=GlobalMotion, dct=DCT, chroma=ChromaMotion)
     recalculate_args = dict(blksize=Overlap, overlap=Overlap/2, search=meAlg, searchparam=meAlgPar, truemotion=meTM, lambda_=Lambda/4, pnew=PNew, dct=DCT, chroma=ChromaMotion)
     srchSuper = S(DitherLumaRebuild(srchClip, s0=1, chroma=ChromaMotion), pel=meSubpel, sharp=1, rfilter=4, hpad=hpad, vpad=vpad, chroma=ChromaMotion)
     
@@ -2341,7 +2341,10 @@ def TemporalDegrain2(clip, degrainTR=2, degrainPlane=4, meAlg=5, meAlgPar=None, 
         s2 = limitSigma * 0.625
         s3 = limitSigma * 0.375
         s4 = limitSigma * 0.250
-        spat = core.fft3dfilter.FFT3DFilter(clip, planes=fPlane, sigma=limitSigma, sigma2=s2, sigma3=s3, sigma4=s4, bt=3, bw=limitBlksz, bh=limitBlksz, ncpu=fftThreads)
+        if hasattr(core, 'neo_fft3d'):
+          spat = core.neo_fft3d.FFT3D(clip, planes=fPlane, sigma=limitSigma, sigma2=s2, sigma3=s3, sigma4=s4, bt=3, bw=limitBlksz, bh=limitBlksz, ncpu=fftThreads)
+        else:
+          spat = core.fft3dfilter.FFT3DFilter(clip, planes=fPlane, sigma=limitSigma, sigma2=s2, sigma3=s3, sigma4=s4, bt=3, bw=limitBlksz, bh=limitBlksz, ncpu=fftThreads)
         spatD  = core.std.MakeDiff(clip, spat)
   
     # First MV-denoising stage. Usually here's some temporal-medianfiltering going on.
@@ -2413,7 +2416,10 @@ def TemporalDegrain2(clip, degrainTR=2, degrainPlane=4, meAlg=5, meAlgPar=None, 
     elif postFFT == 4:
         dnWindow = haf.KNLMeansCL(noiseWindow, d=postTR, a=2, h=postSigma/2, device_id=knlDevId) if ChromaNoise else noiseWindow.knlm.KNLMeansCL(dnWindow, d=postTR, a=2, h=postSigma/2, device_id=knlDevId)
     elif postFFT > 0:
-        dnWindow = core.fft3dfilter.FFT3DFilter(noiseWindow, sigma=postSigma*i, planes=fPlane, bt=postTD, ncpu=fftThreads)
+        if hasattr(core, 'neo_fft3d'):
+          dnWindow = core.neo_fft3d.FFT3D(noiseWindow, sigma=postSigma*i, planes=fPlane, bt=postTD, ncpu=fftThreads)
+        else:
+          dnWindow = core.ff3dfilter.FFT3DFilter(noiseWindow, sigma=postSigma*i, planes=fPlane, bt=postTD, ncpu=fftThreads)
     else:
         dnWindow = noiseWindow
     
@@ -3789,9 +3795,9 @@ def Tweak(clip, hue=None, sat=None, bright=None, cont=None, coring=True):
     return clip
 
 # Modified from mvmulti: https://github.com/IFeelBloated/vapoursynth-mvtools-sf/blob/r9/src/mvmulti.py
-def Analyze(super, blksize=None, blksizev=None, levels=None, search=None, searchparam=None, pelsearch=None, lambda_=None, chroma=None, tr=None, truemotion=None, lsad=None, plevel=None, _global=None, pnew=None, pzero=None, pglobal=None, overlap=None, overlapv=None, divide=None, badsad=None, badrange=None, meander=None, trymany=None, fields=None, TFF=None, search_coarse=None, dct=None, d=False):
+def Analyze(super, blksize=None, blksizev=None, levels=None, search=None, searchparam=None, pelsearch=None, lambda_=None, chroma=None, tr=None, truemotion=None, lsad=None, plevel=None, global_=None, pnew=None, pzero=None, pglobal=None, overlap=None, overlapv=None, divide=None, badsad=None, badrange=None, meander=None, trymany=None, fields=None, TFF=None, search_coarse=None, dct=None, d=False):
     def getvecs(isb, delta):
-        return core.mvsf.Analyze(super, isb=isb, blksize=blksize, blksizev=blksizev, levels=levels, search=search, searchparam=searchparam, pelsearch=pelsearch, lambda_=lambda_, chroma=chroma, delta=delta, truemotion=truemotion, lsad=lsad, plevel=plevel, _global=_global, pnew=pnew, pzero=pzero, pglobal=pglobal, overlap=overlap, overlapv=overlapv, divide=divide, badsad=badsad, badrange=badrange, meander=meander, trymany=trymany, fields=fields, tff=TFF, search_coarse=search_coarse, dct=dct)
+        return core.mvsf.Analyze(super, isb=isb, blksize=blksize, blksizev=blksizev, levels=levels, search=search, searchparam=searchparam, pelsearch=pelsearch, lambda_=lambda_, chroma=chroma, delta=delta, truemotion=truemotion, lsad=lsad, plevel=plevel, global_=global_, pnew=pnew, pzero=pzero, pglobal=pglobal, overlap=overlap, overlapv=overlapv, divide=divide, badsad=badsad, badrange=badrange, meander=meander, trymany=trymany, fields=fields, tff=TFF, search_coarse=search_coarse, dct=dct)
 
     bv = [getvecs(True,  i) for i in range(tr, 0, -1)] if not d else [getvecs(True,  i*2) for i in range(tr, 0, -1)]
     fv = [getvecs(False, i) for i in range(1, tr + 1)] if not d else [getvecs(False, i*2) for i in range(1, tr + 1)]
