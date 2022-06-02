@@ -1,9 +1,9 @@
 import vapoursynth as vs
 
-def Analyze(super, blksize=8, blksizev=None, levels=0, search=4, searchparam=2, pelsearch=0, _lambda=None, chroma=True, tr=3, truemotion=True, lsad=None, plevel=None, _global=None, pnew=None, pzero=None, pglobal=0, overlap=0, overlapv=None, divide=0, badsad=10000.0, badrange=24, meander=True, trymany=False, fields=False, tff=None, search_coarse=3, dct=0):
+def Analyze(super, blksize=8, blksizev=None, levels=0, search=4, searchparam=2, pelsearch=0, lambda_=None, chroma=True, tr=3, truemotion=True, lsad=None, plevel=None, global_=None, pnew=None, pzero=None, pglobal=0, overlap=0, overlapv=None, divide=0, badsad=10000.0, badrange=24, meander=True, trymany=False, fields=False, tff=None, search_coarse=3, dct=0):
     core         = vs.core
     def getvecs(isb, delta):
-        vectors  = core.mvsf.Analyze(super, isb=isb, blksize=blksize, blksizev=blksizev, levels=levels, search=search, searchparam=searchparam, pelsearch=pelsearch, _lambda=_lambda, chroma=chroma, delta=delta, truemotion=truemotion, lsad=lsad, plevel=plevel, _global=_global, pnew=pnew, pzero=pzero, pglobal=pglobal, overlap=overlap, overlapv=overlapv, divide=divide, badsad=badsad, badrange=badrange, meander=meander, trymany=trymany, fields=fields, tff=tff, search_coarse=search_coarse, dct=dct)
+        vectors  = core.mvsf.Analyze(super, isb=isb, blksize=blksize, blksizev=blksizev, levels=levels, search=search, searchparam=searchparam, pelsearch=pelsearch, lambda_=lambda_, chroma=chroma, delta=delta, truemotion=truemotion, lsad=lsad, plevel=plevel, global_=global_, pnew=pnew, pzero=pzero, pglobal=pglobal, overlap=overlap, overlapv=overlapv, divide=divide, badsad=badsad, badrange=badrange, meander=meander, trymany=trymany, fields=fields, tff=tff, search_coarse=search_coarse, dct=dct)
         return vectors
     bv           = [getvecs(True, i) for i in range(tr, 0, -1)]
     fv           = [getvecs(False, i) for i in range(1, tr+1)]
@@ -11,11 +11,11 @@ def Analyze(super, blksize=8, blksizev=None, levels=0, search=4, searchparam=2, 
     vmulti       = core.std.Interleave(vmulti)
     return vmulti
 
-def Recalculate(super, vectors, thsad=200.0, smooth=1, blksize=8, blksizev=None, search=4, searchparam=2, _lambda=None, chroma=True, truemotion=True, pnew=None, overlap=0, overlapv=None, divide=0, meander=True, fields=False, tff=None, dct=0, tr=3):
+def Recalculate(super, vectors, thsad=200.0, smooth=1, blksize=8, blksizev=None, search=4, searchparam=2, lambda_=None, chroma=True, truemotion=True, pnew=None, overlap=0, overlapv=None, divide=0, meander=True, fields=False, tff=None, dct=0, tr=3):
     core         = vs.core
     def refine(delta):
         analyzed = core.std.SelectEvery(vectors, 2*tr, delta)
-        refined  = core.mvsf.Recalculate(super, analyzed, thsad=thsad, smooth=smooth, blksize=blksize, blksizev=blksizev, search=search, searchparam=searchparam, _lambda=_lambda, chroma=chroma, truemotion=truemotion, pnew=pnew, overlap=overlap, overlapv=overlapv, divide=divide, meander=meander, fields=fields, tff=tff, dct=dct)
+        refined  = core.mvsf.Recalculate(super, analyzed, thsad=thsad, smooth=smooth, blksize=blksize, blksizev=blksizev, search=search, searchparam=searchparam, lambda_=lambda_, chroma=chroma, truemotion=truemotion, pnew=pnew, overlap=overlap, overlapv=overlapv, divide=divide, meander=meander, fields=fields, tff=tff, dct=dct)
         return refined
     vmulti       = [refine(i) for i in range(0, 2*tr)]
     vmulti       = core.std.Interleave(vmulti)
