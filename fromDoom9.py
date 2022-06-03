@@ -7,6 +7,7 @@ import vapoursynth as vs
 # MVTools2
 #
 # author: VS_Fan, see: https://forum.doom9.org/showthread.php?p=1769570#post1769570
+##
 def StabilizeIT(clip: vs.VideoNode, div: float=2.0, initZoom: float=1.0, zoomMax: float=1.0, rotMax: float=10.0, pixelAspect: float=1.0, thSCD1: int=800, thSCD2: int=150, stabMethod: int=1, cutOff: float=0.33, anaError: float=30.0, rgMode: int=4):
   pf = core.rgvs.RemoveGrain(clip=clip, mode=rgMode)
   pf = core.resize.Bilinear(clip=pf, width=int(pf.width/div), height=int(pf.height/div))
@@ -18,7 +19,21 @@ def StabilizeIT(clip: vs.VideoNode, div: float=2.0, initZoom: float=1.0, zoomMax
   clip = core.mv.DepanStabilise(clip=clip, data=globalmotion, cutoff=cutOff, initzoom=initZoom, zoommax=zoomMax, rotmax=rotMax, pixaspect=pixelAspect, method=stabMethod)
   return clip
   
+##
+# supports: GrayS, RGBS and YUV4xxPS
+# requires libmvtools_sf_em64t (https://github.com/IFeelBloated/vapoursynth-mvtools-sf)
+# mvmulti.py (https://github.com/Selur/VapoursynthScriptsInHybrid/blob/master/mvmulti.py)
+# author: takla, Avisynth see: https://forum.doom9.org/showthread.php?t=183192
+##
+def EZdenoise(clip: vs.VideoNode, thSAD: int=150, thSADC: int=-1, tr: int=3, blksize: int=8, overlap: int=4, pel: int=1, chroma: bool=False, falloff: float=0.9):
+  import mvmulti
   
+  if thSADC == -1:
+    thSADC = thSAD
+  Super = core.mvsf.Super(clip=clip, pel=pel, chroma=chroma)
+  Multi_Vector = mvmulti.Analyze(super=Super, tr=tr, blksize=blksize, overlap=overlap, chroma=chroma)
+
+  return mvmulti.DegrainN(clip=clip, super=Super, mvmulti=Multi_Vector, tr=tr, thsad=thSAD, thscd1=thSADC, thscd2=int(thSADC*falloff))
   
 def ChubbyRain(clip, th = 10, radius = 3 , show= False, interlaced = False, tff = True):
   if interlaced is True:
