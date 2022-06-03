@@ -47,6 +47,7 @@ def EZdenoise(clip: vs.VideoNode, thSAD: int=150, thSADC: int=-1, tr: int=3, blk
 #  Cnr2: https://github.com/dubhater/vapoursynth-cnr2
 #  MSmooth: https://github.com/dubhater/vapoursynth-msmoosh
 #  TemporalSoften2: https://github.com/dubhater/vapoursynth-temporalsoften2
+#  SceneChange: https://forum.doom9.org/showthread.php?t=166769
 
 # USAGE:
 # Small_Deflicker(clip, width_clip=width(clip)/4, height_clip=height(clip)/4, preset=2, cnr=False, rep=Dalse) (default values)
@@ -61,7 +62,7 @@ def EZdenoise(clip: vs.VideoNode, thSAD: int=150, thSADC: int=-1, tr: int=3, blk
 # By default it is disabled (only for presets 2 and 3)
 # - Repair is an option for certain sources or anime/cartoon content, where ghosting may be evident
 # By default it is disabled (maybe for preset = 1 it is not necessary to activate it)
-def Small_Deflicker(clip: vs.VideoNode, width: int=0, height: int=0, preset: int=2, cnr: bool=True,rep: bool=True):
+def Small_Deflicker(clip: vs.VideoNode, width: int=0, height: int=0, preset: int=2, cnr: bool=False,rep: bool=True):
   clip = core.scd.Detect(clip)
   if width == 0:
     width = toMod(clip.width/4,16)
