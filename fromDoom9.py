@@ -34,39 +34,101 @@ def EZdenoise(clip: vs.VideoNode, thSAD: int=150, thSADC: int=-1, tr: int=3, blk
   Multi_Vector = mvmulti.Analyze(super=Super, tr=tr, blksize=blksize, overlap=overlap, chroma=chroma)
 
   return mvmulti.DegrainN(clip=clip, super=Super, mvmulti=Multi_Vector, tr=tr, thsad=thSAD, thscd1=thSADC, thscd2=int(thSADC*falloff))
+
+
+# Vapoursynth port by Selur from https://forum.doom9.org/showthread.php?p=1812060#post1812060
+#
+# Small Deflicker 2.4
+# Based in idea by Didée, kurish (http://forum.doom9.org/showthread.php?p=1601335#post1601335)
+# Adapted by GMJCZP
+# Requirements:
+#  Masktools: https://github.com/dubhater/vapoursynth-mvtools
+#  RemoveGrain: https://github.com/vapoursynth/vs-removegrain
+#  Cnr2: https://github.com/dubhater/vapoursynth-cnr2
+#  MSmooth: https://github.com/dubhater/vapoursynth-msmoosh
+#  TemporalSoften2: https://github.com/dubhater/vapoursynth-temporalsoften2
+
+# USAGE:
+# Small_Deflicker(clip, width_clip=width(clip)/4, height_clip=height(clip)/4, preset=2, cnr=False, rep=Dalse) (default values)
+
+# PRESETS:
+# preset = 1 Soft deflickering (GMJCZP values)
+# preset = 2 Medium deflickering (kurish values, preset by default)
+# preset = 3 Hard deflickering (Didée values)
+
+# REPAIR MODE:
+# - Chroma noise reduction it is an experimental attempt to mitigate the side effects of the script
+# By default it is disabled (only for presets 2 and 3)
+# - Repair is an option for certain sources or anime/cartoon content, where ghosting may be evident
+# By default it is disabled (maybe for preset = 1 it is not necessary to activate it)
+def Small_Deflicker(clip: vs.VideoNode, width: int=0, height: int=0, preset: int=2, cnr: bool=True,rep: bool=True):
+  clip = core.scd.Detect(clip)
+  if width == 0:
+    width = toMod(clip.width/4,16)
+  if height == 0:
+    height = toMod(clip.height/4,16)
+
+  if width%16 != 0:
+    raise vs.Error('width: need to be mod 16')
+  if height%16 != 0:
+    raise vs.Error('height: need to be mod 16')
+  if (preset < 0) or (preset > 3):
+    raise vs.Error('preset not valid (1, 2 or 3)')
+
+  small = core.resize.Bicubic(clip, width,height) # can be altered, but ~25% of original resolution seems reasonable
   
-def ChubbyRain(clip, th = 10, radius = 3 , show= False, interlaced = False, tff = True):
-  if interlaced is True:
-    res = core.std.SeparateFields(clip=clip, tff=tff)
-  else:
-    res = clip
+  if preset == 1:
+    smallModified = deflickerPreset1(small)
+  elif preset == 2:
+    smallModified = deflickerPreset2(small, cnr)
+  else :
+    smallModified = deflickerPreset3(small, cnr)
+   
+  clip2 = core.std.MakeDiff(small,smallModified,planes=[0, 1, 2])
+  clip2 = core.resize.Bicubic(clip2, clip.width,clip.height)
+  clip2 = core.std.MakeDiff(clip, clip2, planes=[0, 1, 2])
+  if rep:
+    return core.rgvs.Repair(clip2, clip, mode=[10, 10, 10])
+  return clip2
 
-  # remove rainbow
-  y, u, v = core.std.SplitPlanes(res)
-  uc = core.std.Convolution(u, [1,-2,1], mode = "v")
-  vc = core.std.Convolution(v, [1,-2,1], mode = "v")
-  ucc = core.std.Convolution(u, [1,2,1], planes=0, mode = "v")
-  vcc = core.std.Convolution(v, [1,2,1], planes=0, mode = "v")
-  cc = core.std.ShufflePlanes([y,ucc,vcc], planes=[0, 0, 0], colorfamily=vs.YUV)
-  cc = core.focus2.TemporalSoften2(cc, radius=radius,luma_threshold=0,chroma_threshold=255,scenechange=2,mode=2)
+# Helper
+def toMod(value: int, factor: int=16):
+  adjust = value - (value % factor)
+  return adjust
 
-  # create mask
-  rainbow = core.std.Expr([uc,vc],"x y + " + str(th) + " > 256 0 ?")
-  rainbow = core.resize.Point(rainbow, res.width, res.height)
-  #rainbow = core.std.Maximum(rainbow, planes=[0], threshold=3)
-  #rainbow = core.std.Maximum(rainbow, planes=[1], threshold=128)
-  #rainbow = core.std.Maximum(rainbow, planes=[2], threshold=128)
-  rainbow = core.std.Maximum(rainbow)
+# Deflicker Presets
+def deflickerPreset1(sm: vs.VideoNode):
+  smm = core.focus2.TemporalSoften2(clip=sm,radius=1,luma_threshold=6,chroma_threshold=9,scenechange=10,mode=2)
+  smm = core.msmoosh.MSmooth(clip=smm,threshold=0.8,strength=25.0,planes=[1,2])
+  smm = core.std.Merge(smm, sm, 0.25)
+  smm = core.std.Merge(smm, sm, 0.25)
+  
+  smm = core.focus2.TemporalSoften2(clip=sm,radius=2,luma_threshold=3,chroma_threshold=5,scenechange=6,mode=2)
+  smm = core.msmoosh.MSmooth(clip=smm,threshold=2.0,strength=1.0,planes=[1,2])
+  return smm
 
-  resfinal = core.std.MaskedMerge(res, cc, rainbow)
-  	
-  if show is True:
-    output = rainbow
-  else:
-    if interlaced is True:
-      output = core.std.DoubleWeave(resfinal,tff=tff)
-      output = core.std.SelectEvery(output, 2, 0)
-    else:
-      output = resfinal
+def deflickerPreset2(sm: vs.VideoNode, chroma: bool):
+  smm = core.focus2.TemporalSoften2(clip=sm,radius=1,luma_threshold=12,chroma_threshold=255,scenechange=24,mode=2)
+  smm = core.msmoosh.MSmooth(clip=smm,threshold=0.8,strength=25.0,planes=[1,2])
+  smm = core.std.Merge(smm, sm, 0.25)
+  smm = core.std.Merge(smm, sm, 0.25)
+  
+  smm = core.focus2.TemporalSoften2(clip=sm,radius=2,luma_threshold=7,chroma_threshold=255,scenechange=20,mode=2)
+  smm = core.msmoosh.MSmooth(clip=smm,threshold=2.0,strength=1.0,planes=[1,2])
 
-  return output
+  if chroma:
+    return core.cnr2.Cnr2(smm, mode="ooo", ln=5, un=40, vn=40, scdthr=2.0)
+  return smm
+
+def deflickerPreset3(sm: vs.VideoNode, chroma: bool):
+  smm = core.focus2.TemporalSoften2(clip=sm,radius=1,luma_threshold=32,chroma_threshold=255,scenechange=24,mode=2)
+  smm = core.msmoosh.MSmooth(clip=smm,threshold=0.8,strength=25.0,planes=[1,2])
+  smm = core.std.Merge(smm, sm, 0.25)
+  smm = core.std.Merge(smm, sm, 0.25)
+  
+  smm = core.focus2.TemporalSoften2(clip=sm,radius=2,luma_threshold=12,chroma_threshold=255,scenechange=20,mode=2)
+  smm = core.msmoosh.MSmooth(clip=smm,threshold=2.0,strength=1.0,planes=[1,2])
+
+  if chroma:
+    return core.cnr2.Cnr2(smm, mode="ooo", ln=10, lm=255, un=35, vn=35, scdthr=2.0)
+  return smm
