@@ -2419,7 +2419,7 @@ def TemporalDegrain2(clip, degrainTR=2, degrainPlane=4, meAlg=5, meAlgPar=None, 
         if hasattr(core, 'neo_fft3d'):
           dnWindow = core.neo_fft3d.FFT3D(noiseWindow, sigma=postSigma*i, planes=fPlane, bt=postTD, ncpu=fftThreads)
         else:
-          dnWindow = core.ff3dfilter.FFT3DFilter(noiseWindow, sigma=postSigma*i, planes=fPlane, bt=postTD, ncpu=fftThreads)
+          dnWindow = core.fft3dfilter.FFT3DFilter(noiseWindow, sigma=postSigma*i, planes=fPlane, bt=postTD, ncpu=fftThreads)
     else:
         dnWindow = noiseWindow
     
