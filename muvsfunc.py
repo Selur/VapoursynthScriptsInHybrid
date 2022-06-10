@@ -60,6 +60,7 @@ Functions:
     VFRSplice
     MSR
     getnative
+    downsample
 '''
 
 import functools
@@ -67,16 +68,19 @@ import itertools
 import math
 import operator
 from collections import abc
+import os
 import numbers
 import typing
 from typing import Any, Callable, Dict, Iterable, List, Optional
-from typing import Sequence, Tuple, TypeVar, Union
+from typing import Sequence, Tuple, TypedDict, TypeVar, Union
 
 import vapoursynth as vs
 from vapoursynth import core
 import havsfunc as haf
 import mvsfunc as mvf
 
+
+_is_api4: bool = hasattr(vs, "__api_version__") and vs.__api_version__.api_major == 4
 
 _has_lexpr: bool = (
     hasattr(core, "akarin") and
@@ -634,14 +638,14 @@ def GradFun3(src: vs.VideoNode, thr: float = 0.35, radius: Optional[int] = None,
 
     if mask > 0:
         dmask = mvf.GetPlane(src_8, 0)
-        dmask = _Build_gf3_range_mask(dmask)
+        dmask = _Build_gf3_range_mask(dmask, mask)
         dmask = core.std.Expr([dmask], [mexpr])
         dmask = core.rgvs.RemoveGrain(dmask, [22])
         if mask > 1:
             dmask = core.std.Convolution(dmask, matrix=[1, 2, 1, 2, 4, 2, 1, 2, 1])
             if mask > 2:
                 dmask = core.std.Convolution(dmask, matrix=[1]*9)
-        dmask = core.fmtc.bitdepth(dmask, bits=16, fulls=True, fulld=True)
+        dmask = core.resize.Point(dmask, format=vs.GRAY16)
         res_16 = core.std.MaskedMerge(flt, src_16, dmask, planes=planes, first_plane=True)
     else:
         res_16 = flt
@@ -1419,7 +1423,10 @@ def TemporalSoften(input: vs.VideoNode, radius: int = 4, scenechange: int = 15) 
         else:
             raise AttributeError('module \"havsfunc\" has no attribute \"SCDetect\"!')
 
-    return core.misc.AverageFrames(input, [1] * (2 * radius + 1), scenechange=scenechange)
+    if _is_api4:
+        return core.std.AverageFrames(input, [1] * (2 * radius + 1), scenechange=scenechange)
+    else:
+        return core.misc.AverageFrames(input, [1] * (2 * radius + 1), scenechange=scenechange)
 
 
 def FixTelecinedFades(input: vs.VideoNode, mode: Union[int, Sequence[int]] = 0,
@@ -1744,8 +1751,6 @@ def firniture(clip: vs.VideoNode, width: int, height: int, kernel: str = 'binomi
     if not isinstance(clip, vs.VideoNode):
         raise TypeError(funcName + ': \"clip\" must be a clip!')
 
-    import nnedi3_resample as nnrs
-
     impulseCoefficents = dict(
         binomial5=[8, 0, -589, 0, 11203, 0, -93355, 0, 606836, 1048576, 606836, 0, -93355, 0, 11203, 0, -589, 0, 8],
         binomial7=[146, 0, -20294, 0, 744006, 0, -11528384, 0, 94148472, 0, -487836876, 0, 2551884458, 4294967296, 2551884458,
@@ -1765,6 +1770,7 @@ def firniture(clip: vs.VideoNode, width: int, height: int, kernel: str = 'binomi
         clip = mvf.Depth(clip, 16)
 
     if gamma:
+        import nnedi3_resample as nnrs
         clip = nnrs.GammaToLinear(clip, fulls=fulls, fulld=fulld, curve=curve, sigmoid=sigmoid, planes=[0])
 
     clip = core.fmtc.resample(clip, width, height, kernel='impulse', impulse=impulseCoefficents[kernel], kovrspl=2,
@@ -3718,6 +3724,8 @@ def SSIM_downsample(clip: vs.VideoNode, w: int, h: int, smooth: Union[float, VSF
             This helps reducing the dark halo artefacts around sharp edges caused by resizing in linear luminance.
 
         resample_args: (dict) Additional arguments passed to vszimg/fmtconv in the form of keyword arguments.
+            Refer to the documentation of downsample() as an example.
+
             Default is {}.
 
     Ref:
@@ -3729,8 +3737,6 @@ def SSIM_downsample(clip: vs.VideoNode, w: int, h: int, smooth: Union[float, VSF
 
     if not isinstance(clip, vs.VideoNode):
         raise TypeError(funcName + ': \"clip\" must be a clip!')
-
-    import nnedi3_resample as nnrs
 
     if depth_args is None:
         depth_args = {}
@@ -3748,6 +3754,7 @@ def SSIM_downsample(clip: vs.VideoNode, w: int, h: int, smooth: Union[float, VSF
         kernel = 'Bicubic'
 
     if gamma:
+        import nnedi3_resample as nnrs
         clip = nnrs.GammaToLinear(mvf.Depth(clip, 16), fulls=fulls, fulld=fulld, curve=curve, sigmoid=sigmoid, planes=[0])
 
     clip = mvf.Depth(clip, depth=32, sample=vs.FLOAT, **depth_args)
@@ -3776,9 +3783,11 @@ def SSIM_downsample(clip: vs.VideoNode, w: int, h: int, smooth: Union[float, VSF
     return d
 
 
-def LocalStatisticsMatching(src: vs.VideoNode, ref: vs.VideoNode, radius: Union[int, VSFuncType] = 1,
-                            return_all: bool = False, **depth_args: Any
-                            ) -> Union[vs.VideoNode, Tuple[vs.VideoNode, vs.VideoNode, vs.VideoNode, vs.VideoNode, vs.VideoNode]]:
+def LocalStatisticsMatching(
+    src: vs.VideoNode, ref: vs.VideoNode, radius: Union[int, VSFuncType] = 1,
+    return_all: bool = False, epsilon: float = 1e-4, **depth_args: Any
+) -> Union[vs.VideoNode, Tuple[vs.VideoNode, vs.VideoNode, vs.VideoNode, vs.VideoNode, vs.VideoNode]]:
+
     """Local statistics matcher
 
     Match the local statistics (mean, variance) of "src" with "ref".
@@ -3797,6 +3806,8 @@ def LocalStatisticsMatching(src: vs.VideoNode, ref: vs.VideoNode, radius: Union[
         depth_args: (dict) Additional arguments passed to mvf.Depth().
             Default is {}.
 
+        epsilon: (float) Small positive number to avoid dividing by 0.
+            Default is 1e-4.
     """
 
     funcName = 'LocalStatisticsMatching'
@@ -3808,7 +3819,6 @@ def LocalStatisticsMatching(src: vs.VideoNode, ref: vs.VideoNode, radius: Union[
 
     bits = src.format.bits_per_sample
     sampleType = src.format.sample_type
-    epsilon = 1e-7 # small positive number to avoid dividing by 0
 
     src, src_mean, src_var = LocalStatistics(src, radius=radius, **depth_args)
     _, ref_mean, ref_var = LocalStatistics(ref, radius=radius, **depth_args)
@@ -5168,7 +5178,11 @@ def avg_decimate(clip: vs.VideoNode, clip2: Optional[vs.VideoNode] = None, weigh
 
     def avg_func(n: int, f: vs.VideoFrame, clip: vs.VideoNode) -> vs.VideoNode:
         if f.props["VDecimateDrop"] == 1:
-            return core.misc.AverageFrames(clip, weights=[0, 1-weight, weight]) # forward averaging
+            # forward averaging
+            if _is_api4:
+                return core.std.AverageFrames(clip, weights=[0, 1-weight, weight])
+            else:
+                return core.misc.AverageFrames(clip, weights=[0, 1-weight, weight])
         else:
             return clip
 
@@ -5396,7 +5410,7 @@ def Cdeblend(input: vs.VideoNode, omode: int = 0, bthresh: float = 0.1, mthresh:
     # process
     blendclip = input if dclip is None else dclip
     blendclip = mvf.GetPlane(blendclip, 0)
-    blendclip = core.tmedian.TemporalMedian(blendclip, radius=1) # type: ignore
+    blendclip = core.median.TemporalMedian(blendclip, radius=1) # type: ignore
     blendclip = core.resize.Bilinear(blendclip, int(blendclip.width * 0.125 / xr) * 8, int(blendclip.height * 0.125 / yr) * 8)
 
     diff = core.std.MakeDiff(blendclip, blendclip[1:])
@@ -5511,8 +5525,8 @@ def S_BoxFilter(clip: vs.VideoNode, radius: int = 1, planes: PlanesType = None) 
     return res
 
 
-def VFRSplice(clips: Sequence[vs.VideoNode], tcfile: Optional[str] = None, v2: bool = True,
-              precision: int = 6) -> vs.VideoNode:
+def VFRSplice(clips: Sequence[vs.VideoNode], tcfile: Optional[Union[str, os.PathLike]] = None,
+              v2: bool = True, precision: int = 6) -> vs.VideoNode:
     """fractions-based VFRSplice()
 
     This function is modified from mvsfunc.VFRSplice().
@@ -5525,7 +5539,7 @@ def VFRSplice(clips: Sequence[vs.VideoNode], tcfile: Optional[str] = None, v2: b
         clips: List of clips to be spliced.
             Each clip should be CRF(constant frame rate).
 
-        tcfile: (str) Timecode file output.
+        tcfile: (str or os.PathLike) Timecode file output. Supports recursive directory creation.
             Default: None.
 
         v2: (bool) Timecode format.
@@ -5644,6 +5658,10 @@ def VFRSplice(clips: Sequence[vs.VideoNode], tcfile: Optional[str] = None, v2: b
                 (tc2strln(tc, precision) for tc in tc_gen)
             )
 
+        dirname = os.path.dirname(tcfile)
+        if not os.path.exists(dirname):
+            os.makedirs(dirname)
+
         with open(tcfile, 'w') as ofile:
             ofile.writelines(olines)
 
@@ -5693,7 +5711,8 @@ def MSR(clip: vs.VideoNode, *passes: numbers.Real, radius: int = 1, planes: Plan
         planes = [planes]
 
     in_format = clip.format
-    out_format = core.register_format(
+    query_video_format = core.query_video_format if _is_api4 else core.register_format
+    out_format = query_video_format(
         color_family=in_format.color_family,
         sample_type=vs.FLOAT,
         bits_per_sample=32,
@@ -5728,146 +5747,376 @@ def MSR(clip: vs.VideoNode, *passes: numbers.Real, radius: int = 1, planes: Plan
     return core.std.Expr(flts, [(expr if i in planes else '') for i in range(clip.format.num_planes)], format=out_format) # type: ignore
 
 
-def getnative(clip: vs.VideoNode, dh_sequence: Sequence[int] = tuple(range(500, 1001)),
-    kernel: str = "bicubic", b: Optional[numbers.Real] = None, c: numbers.Real = 0.5, # type: ignore
-    crop_size: int = 5, save_filename: Optional[str] = None,
-    rt_eval: bool = True) -> vs.VideoNode:
+def arange(start, stop, step=1):
+    current = start
+    while current < stop:
+        yield current
+        current += step
+
+
+class rescale:
+    """Auxilary class to do descale and rescale with fractional source height.
+
+    You can easily do descale and upscale with muf.rescale.Rescaler objects:
+
+        rescaler = muf.rescale.Bilinear()  # get a muf.rescale.Rescaler object
+        descaled_clip = rescaler.descale(clip, 1280, 720)
+        rescaled_clip = rescaler.upscale(descaled_clip, 1920, 1080)
+
+    You can also do descale with fractional source height:
+
+        rescaler = muf.rescale.Bilinear()  # get a muf.rescale.Rescaler object
+        descaled_clip = rescaler.descale(clip, 1270.6, 714.7, base_height=720)
+        rescaled_clip = rescaler.upscale(descaled_clip, 1920, 1080)  # rescaler will handle scale args to correctly rescale the clip
+
+    You can directly generate a rescaled clip:
+
+        rescaler = muf.rescale.Bilinear()  # get a muf.rescale.Rescaler object
+        # we assume that descaled clip has the SAME aspect ratio as source clip, so you don't need to pass src_width to rescale()
+        rescaled_clip = rescaler.rescale(clip, src_height=714.7, base_height=720)
+
+    Also, you can rescale the clip with other scalers you want such as nnedi3_resample:
+
+        from nnedi3_resample import nnedi3_resample
+        rescaler = muf.rescale.Bilinear()  # get a muf.rescale.Rescaler object
+        rescaled_clip = rescaler.rescale(clip, 714.7, 720, upscaler=nnedi3_resample)
+
+    And you can directly call the Rescaler to ignore the base_height argument:
+
+        from nnedi3_resample import nnedi3_resample
+        rescaler = muf.rescale.Bilinear()  # get a muf.rescale.Rescaler object
+        rescaled_clip = rescaler(clip, 714.7, upscaler=nnedi3_resample)
+
+    """
+
+    def _get_descale_args(W: int, H: int, width: Union[float, int], height: Union[float, int], base_height: int = None):
+        if base_height is None:
+            width, height = round(width), round(height)
+            src_width, src_height = width, height
+            width, height = width, height
+            src_left, src_top = 0, 0
+        else:
+            base_width = round(W / H * base_height) if base_height % 2 == 1 else round(W / H * base_height / 2) * 2
+            src_width = width
+            src_height = height
+            width = base_width - 2 * int((base_width - width) / 2)
+            height = base_height - 2 * int((base_height - height) / 2)
+            src_top = (height - src_height) / 2
+            src_left = (width - src_width) / 2
+
+        return {
+            "width": width,
+            "height": height,
+            "src_left": src_left,
+            "src_top": src_top,
+            "src_width": src_width,
+            "src_height": src_height,
+        }
+
+    def Upscale(clip: vs.VideoNode, width: int, height: int, kernel: str = "bicubic", taps: int = 3, b: float = 0.0, c: float = 0.5,
+        src_left: float = None, src_top: float = None, src_width: float = None, src_height: float = None) -> vs.VideoNode:
+        upscaler = getattr(core.resize, kernel.capitalize())
+        if kernel.lower() == "bicubic":
+            upscaler = functools.partial(upscaler, filter_param_a=b, filter_param_b=c)
+        elif kernel.lower() == "lanczos":
+            upscaler = functools.partial(upscaler, filter_param_a=taps)
+
+        return upscaler(clip, width, height, src_left=src_left, src_top=src_top, src_width=src_width, src_height=src_height)
+
+    class Rescaler:
+        def __init__(self, kernel: str = "bicubic", taps: int = 3, b: float = 0.0, c: float = 0.5, upscaler: Callable = None):
+            kernel = kernel.lower()
+            self.kernel = kernel
+            self.taps, self.b, self.c = taps, b, c
+            self.upscaler = upscaler
+            bc_name = f"_{float(b):.3}_{float(c):.3}" if kernel == "bicubic" else ""
+            taps_name = f"{taps}" if kernel == "lanczos" else ""
+            self.name = f"{kernel}{bc_name}{taps_name}"
+            self.descale_args = {}
+
+        def __call__(self, clip: vs.VideoNode, src_height: Union[int, float], upscaler: Optional[Callable] = None) -> Any:
+            base_height = clip.height if isinstance(src_height, float) else None
+            return self.rescale(clip, src_height, base_height, upscaler)
+
+        def rescale(self, clip: vs.VideoNode, src_height: Union[int, float], base_height: Optional[int] = None, upscaler: Optional[Callable] = None) -> vs.VideoNode:
+            W, H = clip.width, clip.height
+            src_width = W / H * src_height
+            descaled = self.descale(clip, src_width, src_height, base_height)
+            rescaled = self.upscale(descaled, W, H, upscaler)
+            return rescaled
+
+        def descale(self, clip: vs.VideoNode, width: Union[int, float], height: Union[int, float], base_height: int = None):
+            W, H = clip.width, clip.height
+            self.descale_args = rescale._get_descale_args(W, H, width, height, base_height)
+            kwargs = self.descale_args.copy()
+            return core.descale.Descale(clip, kernel=self.kernel, taps=self.taps, b=self.b, c=self.c, **kwargs)
+
+        def upscale(self, clip: vs.VideoNode, width: int, height: int, upscaler: Optional[Callable] = None) -> vs.VideoNode:
+            from inspect import signature
+            kwargs = self.descale_args.copy()
+            kwargs.pop("width")
+            kwargs.pop("height")
+            if upscaler is None:
+                return rescale.Upscale(clip, width, height, kernel=self.kernel, taps=self.taps, b=self.b, c=self.c, **kwargs)
+            else:
+                param_dict = signature(upscaler).parameters
+                if all(key in param_dict for key in ("src_left", "src_top", "src_width", "src_height")):
+                    pass
+                elif all(key in param_dict for key in ("sx", "sy", "sw", "sh")):
+                    kwargs["sx"] = kwargs.pop("src_left")
+                    kwargs["sy"] = kwargs.pop("src_top")
+                    kwargs["sw"] = kwargs.pop("src_width")
+                    kwargs["sh"] = kwargs.pop("src_height")
+                else:
+                    raise TypeError("Your upscaler must have resize-like (src_left, src_width) or fmtc-like (sx, sw) argument names")
+                return upscaler(clip, width, height, **kwargs)
+
+    def Bilinear():
+        return rescale.Rescaler(kernel="bilinear")
+
+    def Bicubic(b: float = 0.0, c: float = 0.5):
+        return rescale.Rescaler(kernel="bicubic", b=b, c=c)
+
+    def Lanczos(taps: int = 3):
+        return rescale.Rescaler(kernel="lanczos", taps=taps)
+
+    def Spline16():
+        return rescale.Rescaler(kernel="spline16")
+
+    def Spline36():
+        return rescale.Rescaler(kernel="spline36")
+
+    def Spline64():
+        return rescale.Rescaler(kernel="spline64")
+
+
+def getnative(clip: vs.VideoNode, rescalers: Union[rescale.Rescaler, List[rescale.Rescaler]] = [rescale.Bicubic(0, 0.5)],
+    src_heights: Union[int, float, Sequence[int], Sequence[float]] = tuple(range(500, 1001)), base_height: int = None,
+    crop_size: int = 5, rt_eval: bool = True, dark: bool = True) -> vs.VideoNode:
     """Find the native resolution(s) of upscaled material (mostly anime)
 
-    Modifyed from getnative 1.3.0 (https://github.com/Infiziert90/getnative/tree/ea08405f34a23dc681ff38a45e840ca21379a14d) and
-    descale_verify (https://github.com/himesaka-noa/descale-verifier/blob/master/descale_verify.py).
+    Modifyed from:
+        [getnative 1.3.0](https://github.com/Infiziert90/getnative/tree/ea08405f34a23dc681ff38a45e840ca21379a14d)
+        [descale_verify](https://github.com/himesaka-noa/descale-verifier/blob/master/descale_verify.py)
+        [getfnative](https://github.com/YomikoR/GetFnative/blob/main/getfnative.py)
+
+    The function has 3 modes: verify, multi heights and multi kernels.
+    They can be enabled by passing multi-frame clip, multi rescalers and multi src_heights to the function.
+    For more details see Examples section below.
 
     The result is generated after all frames have been evaluated, which can be done through vspipe or "benchmark" of vsedit.
 
     Args:
-        clip: Input clip, vs.GRAYS, single frame.
+        clip: Input clip, vs.GRAYS.
 
-        dh_sequence: (int []) List of heights to be evaluated.
+        rescalers: (rescale.Rescaler []) Sequence of resizers to be evaluated. Should be wrapped as muf.rescale.Rescaler
+            Default is [muf.rescaler.Bicubic(0, 0.5)].
+                Functions in muf.rescale such as muf.rescale.Bicubic() might help you to get a Rescaler.
+
+        src_heights: (int|float []) Sequence of heights to be evaluated.
             Default is [500 ... 1000].
+                muf.arange(start[, stop, step]) might help you to construct such a sequence.
 
-        kernel: (str, any of ["bicubic", "bilinear", "lanczos", "spline36", "spline64"]) Resize kernel to be used.
-            Default is "bicubic".
-
-        b, c: (int or float) Parameters of parametric kernel.
-            Default is (0, 0.5) for "bicubic", 3 for "lanczos".
+        base_height: (int) The real integer height before cropping. If not None, fractional resolution will be evaluated.
+            Default is None.
 
         crop_size: (int) Range of pixels around the border to be excluded in calculation.
             Default is 5.
 
-        save_filename: (str) Filename of saved image.
-            Default is "{kernel}_{b}_{c}_%H-%M-%S.png".
-
-        aot_eval: (bool) Wheter to build the processing graph in runtime to reduce overhead.
+        rt_eval: (bool) Whether to build the processing graph in runtime to reduce overhead.
             Default is True.
 
-    Example:
-        # It is trivial to generate multiple results:
-        result1 = muf.getnative(clip, kernel="bicubic")
-        result2 = muf.getnative(clip, kernel="lanczos")
-        result3 = muf.getnative(clip, kernel="spline36")
-        last = core.std.Splice([result1, result2, result3])
-        last.set_output()
+        dark: (bool) Whether to use dark background in output png file.
+            Default is True
 
-        # https://github.com/LittlePox/getnative/tree/f2fef4a5ebbed3cf88e972c14693b75102a0ee29
-        scalers = [
-            ["Bilinear"], ["Bicubic", 1/3, 1/3], ["Bicubic", 0, 0.5], ["Bicubic", 0.5, 0.5],
-            ["Lanczos", 2], ["Lanczos", 3], ["Lanczos", 4],
-            ["Spline16"], ["Spline36"]
-        ]
+    Examples:
+        Assume that src is a one-plane GRAYS clip. You might get such a clip by
 
-        last = core.std.Splice([muf.getnative(clip, tuple(range(480, 960+1, 12)), *args) for args in scalers])
-        last.set_output()
+            src = src.std.ShufflePlanes(0, vs.GRAY).resize.Point(format=vs.GRAYS)
+
+        Compare between different integer source heights:
+
+            clip = src[1000]  # to get a single frame clip
+
+            # evaluate 500, 501, 502, ..., 999, 1000 as source heights with bicubic(b=1/3, c=1/3) as kernel.
+            res = muf.getnative(clip, rescalers=muf.rescale.Bicubic(1/3, 1/3), src_heights=muf.arange(500, 1001, 1))
+            res.set_output()
+
+        Compare between different fractional source heights:
+
+            clip = src[1000]  # to get a single frame clip
+
+            # evaluate 800.0, 800.1, 800.2, ..., 899.8, 899.9 as source heights with bicubic(b=1/3, c=1/3) as kernel
+            # base_height here must be a interger larger than any of src_heights
+            res = muf.getnative(clip, rescalers=muf.rescale.Bicubic(), src_heights=muf.arange(800, 900, 0.1), base_height=900)
+            res.set_output()
+
+        Compare between different descale kernels:
+
+            clip = src[1000]  # to get a single frame clip
+
+            # construct a list of Rescaler
+            # https://github.com/LittlePox/getnative/tree/f2fef4a5ebbed3cf88e972c14693b75102a0ee29
+            from muf import rescale
+            rescalers = [
+                rescale.Bilinear(), rescale.Bicubic(1/3, 1/3), rescale.Bicubic(0, 0.5), rescale.Bicubic(0.5, 0.5),
+                rescale.Lanczos(2), rescale.Lanczos(3), rescale.Lanczos(4),
+                rescale.Spline16(), rescale.Spline36()
+            ]
+
+            # evaluate 714.7 as source height with bilinear, bicubic(b=1/3, c=1/3), ..., spline36 as kernels
+            res = muf.getnative(clip, rescalers=rescalers, src_heights=714.7, base_height=720)
+            res.set_output()
+
+        Verify if a source height and a kernel can descale the whole clip well:
+
+            clip = src  # clip is a multi frame clip
+
+            # evaluate 714.7 as source height with bicubic(b=1/3, c=1/3) as kernel for every frame in clip
+            res = muf.getnative(clip, rescalers=muf.rescale.Bicubic(1/3, 1/3), src_heights=714.7, base_height=720)
+            res.set_output()
 
 
     Requirments:
         descale, matplotlib
     """
 
+    import logging
+    logging.getLogger('matplotlib').setLevel(logging.WARNING)
     import matplotlib
     matplotlib.use('Agg')
     import matplotlib.pyplot as plt
+    from enum import Enum
+
+    class Mode(Enum):
+        MULTI_FRAME = 1
+        MULTI_HEIGHT = 2
+        MULTI_KERNEL = 3
 
     # check
-    assert isinstance(clip, vs.VideoNode) and clip.format.id == vs.GRAYS and clip.num_frames == 1
+    assert isinstance(clip, vs.VideoNode) and clip.format.id == vs.GRAYS
+    assert isinstance(base_height, int) or base_height is None
 
-    kernel = kernel.lower()
-    if b is None:
-        if kernel == "bicubic":
-            b = 0 # type: ignore
-        elif kernel == "lanczos":
-            b = 3 # type: ignore
+    if not isinstance(rescalers, list):
+        rescalers = [rescalers]
+    for rescaler in rescalers:
+        assert isinstance(rescaler, rescale.Rescaler)
 
-    if save_filename is None:
-        from datetime import datetime
+    if isinstance(src_heights, int) or isinstance(src_heights, float):
+        src_heights = (src_heights,)
+    if not isinstance(src_heights, tuple):
+        src_heights = tuple(src_heights)
+    if base_height is not None:
+        assert base_height > max(src_heights)
 
-        if kernel == "bicubic":
-            b, c = float(b), float(c) # type: ignore
-            save_filename = f"{kernel}_{b:.3}_{c:.3}_{datetime.now().strftime('%H-%M-%S')}.png"
-        elif kernel == "lanczos":
-            b = int(b) # type: ignore
-            save_filename = f"{kernel}_{b}taps_{datetime.now().strftime('%H-%M-%S')}.png"
-        else:
-            save_filename = f"{kernel}_{datetime.now().strftime('%H-%M-%S')}.png"
+    if clip.num_frames > 1:
+        mode = Mode.MULTI_FRAME
+        assert len(src_heights) == 1 and len(rescalers) == 1, "1 src_height and 1 rescaler should be passed for verify mode."
+    elif len(src_heights) > 1:
+        mode = Mode.MULTI_HEIGHT
+        assert clip.num_frames == 1 and len(rescalers) == 1, "1-frame clip and 1 rescaler should be passed for multi heights mode."
+    elif len(rescalers) > 1:
+        mode = Mode.MULTI_KERNEL
+        assert clip.num_frames == 1 and len(src_heights) == 1, "1-frame clip and 1 src_height shoule be passed for multi kernels mode."
 
-    # internal functions
-    def rescale(clip: vs.VideoNode, dh: int, kernel: str, b: int, c: int) -> vs.VideoNode:
-        w, h = clip.width, clip.height
-        dw = round(w / h * dh)
-
-        if kernel == 'bicubic':
-            descaled = core.descale.Debicubic(clip, dw, dh, b=b, c=c)
-            rescaled = core.resize.Bicubic(descaled, w, h, filter_param_a=b, filter_param_b=c)
-        elif kernel == 'bilinear':
-            descaled = core.descale.Debilinear(clip, dw, dh)
-            rescaled = core.resize.Bilinear(descaled, w, h)
-        elif kernel == 'lanczos':
-            descaled = core.descale.Delanczos(clip, dw, dh, taps=int(b))
-            rescaled = core.resize.Lanczos(descaled, w, h, filter_param_a=int(b))
-        elif kernel == 'spline16':
-            descaled = core.descale.Despline16(clip, dw, dh)
-            rescaled = core.resize.Spline16(descaled, w, h)
-        elif kernel == 'spline36':
-            descaled = core.descale.Despline36(clip, dw, dh)
-            rescaled = core.resize.Spline36(descaled, w, h)
-        else:
-            raise NotImplementedError(f"Kernel {kernel} is not implemented.")
-
-        return rescaled
-
-    def output_statistics(clip: vs.VideoNode, save_filename: str, dh_sequence: Sequence[int]) -> vs.VideoNode:
+    def output_statistics(clip: vs.VideoNode, rescalers: List[rescale.Rescaler], src_heights: Sequence[int], mode: Mode, dark: bool) -> vs.VideoNode:
         data = [0] * clip.num_frames
-        remaining_frames = clip.num_frames # mutable
+        remaining_frames = [1] * clip.num_frames # mutable
 
         def func_core(n: int, f: vs.VideoFrame, clip: vs.VideoNode) -> vs.VideoNode:
             # add eps to avoid getting 0 diff, which later messes up the graph.
             data[n] = f.props.PlaneStatsAverage + 1e-9 # type: ignore
 
             nonlocal remaining_frames
-            remaining_frames -= 1
+            remaining_frames[n] = 0
 
-            if remaining_frames == 0:
-                create_plot(data, save_filename, dh_sequence)
+            if sum(remaining_frames) == 0:
+                create_plot(data, rescalers, src_heights, mode, dark)
 
             return clip
 
         return core.std.FrameEval(clip, functools.partial(func_core, clip=clip), clip)
 
-    def create_plot(data: Sequence[float], save_filename: str, dh_sequence: Sequence[int]) -> None:
-        plt.style.use("dark_background")
+    def create_plot(data: Sequence[float], rescalers: List[rescale.Rescaler], src_heights: Sequence[float], mode: Mode, dark: bool) -> None:
+        def get_heights_ticks(data: Sequence[float], src_heights: Sequence[float]) -> Sequence[float]:
+            interval = round((max(src_heights) - min(src_heights)) * 0.05)
+            log10_data = [math.log10(v) for v in data]
+            d2_log10_data = []
+            valley_heights = []
+            for i in range(1, len(data) - 1):
+                if log10_data[i - 1] > log10_data[i] and log10_data[i + 1] > log10_data[i]:
+                    d2_log10_data.append(log10_data[i - 1] + log10_data[i + 1] - 2 * log10_data[i])
+                    valley_heights.append(src_heights[i])
+            candidate_heights = [valley_heights[i] for _, i in sorted(zip(d2_log10_data, range(len(valley_heights))), reverse=True)]
+            candidate_heights.append(src_heights[0])
+            candidate_heights.append(src_heights[-1])
+            ticks = []
+            for height in candidate_heights:
+                for tick in ticks:
+                    if abs(height - tick) < interval:
+                        break
+                else:
+                    ticks.append(height)
+            return ticks
+
+        if dark:
+            plt.style.use("dark_background")
+            fmt = ".w-"
+        else:
+            fmt = ".-"
         fig, ax = plt.subplots(figsize=(12, 8))
-        ax.plot(dh_sequence, data, ".w-")
-        ticks = tuple(dh for dh in dh_sequence if dh % 24 == 0) if len(dh_sequence) > 25 else dh_sequence # display full x if no more than 25 tests
-        ax.set(xlabel="Height", xticks=ticks, ylabel="Relative error", title=save_filename, yscale="log")
+        if mode == Mode.MULTI_FRAME:
+            save_filename = get_save_filename(f"verify_{rescalers[0].name}_{src_heights[0]}")
+            ax.plot(range(len(data)), data, fmt)
+            ax.set(xlabel="Frame", ylabel="Relative error", title=save_filename, yscale="log")
+            with open(f"{save_filename}.txt", "w") as ftxt:
+                import pprint
+                pprint.pprint(list(enumerate(data)), stream=ftxt)
+        if mode == Mode.MULTI_HEIGHT:
+            save_filename = get_save_filename(f"height_{rescalers[0].name}")
+            ax.plot(src_heights, data, fmt)
+            ticks = get_heights_ticks(data, src_heights)
+            ax.set(xlabel="Height", xticks=ticks, ylabel="Relative error", title=save_filename, yscale="log")
+            with open(f"{save_filename}.txt", "w") as ftxt:
+                import pprint
+                pprint.pprint(list(zip(src_heights, data)), stream=ftxt)
+        elif mode == Mode.MULTI_KERNEL:
+            save_filename = get_save_filename(f"kernel_{src_heights[0]}")
+            ax.plot(range(len(data)), data, fmt)
+            ticks = list(range(len(data)))
+            ticklabels = [rescaler.name for rescaler in rescalers]
+            ax.set(xlabel="Kernel", xticks=ticks, xticklabels=ticklabels, ylabel="Relative error", title=save_filename, yscale="log")
+            with open(f"{save_filename}.txt", "w") as ftxt:
+                import pprint
+                pprint.pprint(list(zip(ticklabels, data)), stream=ftxt)
         fig.savefig(f"{save_filename}")
         plt.close()
 
+    def get_save_filename(name: str):
+        from datetime import datetime
+        return f"{name}_{datetime.now().strftime('%H-%M-%S')}.png"
+
     # process
-    if rt_eval:
-        clip = core.std.Loop(clip, len(dh_sequence))
-        rescaled = core.std.FrameEval(clip, lambda n, clip=clip: rescale(clip, dh_sequence[n], kernel, b, c)) # type: ignore
-    else:
-        rescaled = core.std.Splice([rescale(clip, dh, kernel, b, c) for dh in dh_sequence]) # type: ignore
-        clip = core.std.Loop(clip, len(dh_sequence))
+    if mode == Mode.MULTI_FRAME:
+        src_height = src_heights[0]
+        rescaler = rescalers[0]
+        rescaled = rescaler.rescale(clip, src_height, base_height)
+    elif mode == Mode.MULTI_HEIGHT:
+        rescaler = rescalers[0]
+        if rt_eval:
+            clip = core.std.Loop(clip, len(src_heights))
+            rescaled = core.std.FrameEval(clip, lambda n, clip=clip: rescaler.rescale(clip, src_heights[n], base_height))  # type: ignore
+        else:
+            rescaled = core.std.Splice([rescaler.rescale(clip, src_height, base_height) for src_height in src_heights])  # type: ignore
+            clip = core.std.Loop(clip, len(src_heights))
+    elif mode == Mode.MULTI_KERNEL:
+        src_height = src_heights[0]
+        if rt_eval:
+            clip = core.std.Loop(clip, len(rescalers))
+            rescaled = core.std.FrameEval(clip, lambda n, clip=clip: rescalers[n].rescale(clip, src_height, base_height))  # type: ignore
+        else:
+            rescaled = core.std.Splice([rescaler.rescale(clip, src_height, base_height) for rescaler in rescalers])  # type: ignore
+            clip = core.std.Loop(clip, len(rescalers))
 
     diff = core.std.Expr([clip, rescaled], ["x y - abs dup 0.015 > swap 0 ?"])
 
@@ -5876,5 +6125,400 @@ def getnative(clip: vs.VideoNode, dh_sequence: Sequence[int] = tuple(range(500, 
 
     stats = core.std.PlaneStats(diff)
 
-    return output_statistics(stats, save_filename, dh_sequence)
+    return output_statistics(stats, rescalers, src_heights, mode, dark)
 
+
+# port from fmtconv by Firesledge
+class ResampleKernel:
+    @staticmethod
+    def bilinear() -> Tuple[Callable[[float], float], int]:
+        def contributions(x: float) -> float:
+            return max(1 - abs(x), 0)
+
+        return contributions, 1
+
+    @staticmethod
+    def bicubic(b: float = 1/3, c: float = 1/3) -> Tuple[Callable[[float], float], int]:
+        p0 = (6 - 2 * b) / 6
+        p2 = (-18 + 12 * b + 6 * c) / 6
+        p3 = (12 - 9 * b - 6 * c) / 6
+        q0 = (8 * b + 24 * c) / 6
+        q1 = (-12 * b - 48 * c) / 6
+        q2 = (6 * b + 30 * c) / 6
+        q3 = (-b - 6 * c) / 6
+
+        def contributions(x: float) -> float:
+            x = abs(x)
+            if x <= 1:
+                return p0 + x * x * (p2 + x * p3)
+            elif x <= 2:
+                return q0 + x * (q1 + x * (q2 + x * q3))
+            else:
+                return 0.0
+
+        return contributions, 2
+
+    @staticmethod
+    def _sinc_function(x: float) -> float:
+        if x == 0:
+            return 1
+        else:
+            xp = x * math.pi
+            return math.sin(xp) / xp
+
+    @classmethod
+    def lanczos(cls, taps: int = 4) -> Tuple[Callable[[float], float], int]:
+        assert taps >= 1
+
+        def contributions(x: float) -> float:
+            if abs(x) <= taps:
+                return cls._sinc_function(x) * cls._sinc_function(x / taps)
+            else:
+                return 0.0
+
+        return contributions, taps
+
+    @staticmethod
+    def spline16() -> Tuple[Callable[[float], float], int]:
+        def contributions(x: float) -> float:
+            x = abs(x)
+
+            if x <= 1:
+                return ((x - 9/5) * x - 1/5) * x + 1
+            elif x <= 2:
+                x -= 1
+                return ((-1/3 * x + 4/5) * x - 7/15) * x
+            else:
+                return 0.0
+
+        return contributions, 2
+
+    @staticmethod
+    def spline36() -> Tuple[Callable[[float], float], int]:
+        def contributions(x: float) -> float:
+            x = abs(x)
+
+            if x <= 1:
+                return ((13/11 * x - 453/209) * x - 3/209) * x + 1
+            elif x <= 2:
+                x -= 1
+                return ((-6/11 * x + 270/209) * x - 156/209) * x
+            elif x <= 3:
+                x -= 2
+                return ((1/11 * x - 45/209) * x + 26/209) * x
+            else:
+                return 0.0
+
+        return contributions, 3
+
+    @staticmethod
+    def spline64() -> Tuple[Callable[[float], float], int]:
+        def contributions(x: float) -> float:
+            x = abs(x)
+
+            if x <= 1:
+                return ((49/41 * x - 6387/2911) * x - 3/2911) * x + 1
+            elif x <= 2:
+                x -= 1
+                return ((-24/41 * x + 4032/2911) * x - 2328/2911) * x
+            elif x <= 3:
+                x -= 2
+                return ((6/41 * x - 1008/2911) * x + 582/2911) * x
+            elif x <= 4:
+                x -= 3
+                return ((-1/41 * x + 168/2911) * x - 97/2911) * x
+            else:
+                return 0.0
+
+        return contributions, 4
+
+    @staticmethod
+    def gauss(p: float = 30.0, taps: int = 4) -> Tuple[Callable[[float], float], int]:
+        assert taps >= 1
+
+        p = max(1, min(p, 100)) / 10
+
+        def contributions(x: float) -> float:
+            if abs(x) <= taps:
+                return 2 ** (-p * x * x)
+            else:
+                return 0.0
+
+        return contributions, taps
+
+    @staticmethod
+    def spline(taps: int = 4) -> Tuple[Callable[[float], float], int]:
+        assert taps >= 1
+
+        y = [0.0] * (2 * taps + 1)
+        y[taps] = 1.0
+
+        f = [0.0] * (2 * taps)
+        if taps > 1:
+            f[taps - 2] = 6.0
+            f[taps] = 6.0
+        f[taps - 1] = -12.0
+
+        w = [4.0]
+        z = [f[0] / w[0]]
+        for j in range(1, 2 * taps):
+            w.append(4 - 1 / w[j - 1])
+            z.append((f[j] - z[j - 1]) / w[j])
+
+        x = [0.0] * (2 * taps + 1)
+        for j in range(2 * taps - 1, 0, -1):
+            x[j] = z[j - 1] - x[j + 1] / w[j - 1]
+
+        coef = [float(taps)]
+        for j in range(taps, 2 * taps):
+            p = 4 * (j - taps)
+            coef.extend([
+                (x[j+1] - x[j]) / 6,
+                x[j] / 2,
+                (y[j+1] - y[j]) - (x[j+1] + 2 * x[j]) / 6,
+                y[j]
+            ])
+
+        def contributions(x: float) -> float:
+            x = abs(x)
+            if (p := int(x)) < taps:
+                r = x - p
+                return functools.reduce(lambda x, y: x * r + y, coef[4*p+1:4*p+5])
+            else:
+                return 0.0
+
+        return contributions, taps
+
+    @classmethod
+    def sinc(cls, taps: int = 4) -> Tuple[Callable[[float], float], int]:
+        assert taps >= 1
+
+        def contributions(x: float) -> float:
+            if abs(x) <= taps:
+                return cls._sinc_function(x)
+            else:
+                return 0.0
+
+        return contributions, taps
+
+    @classmethod
+    def blackman(cls, taps: int = 3) -> Tuple[Callable[[float], float], int]:
+        assert taps >= 1
+
+        def compute_win_coef(x: float) -> float:
+            w_x = x * (math.pi / taps)
+            return 0.42 + 0.50 * math.cos(w_x) + 0.08 * math.cos(w_x * 2)
+
+        def contributions(x: float) -> float:
+            if abs(x) <= taps:
+                return cls._sinc_function(x) * compute_win_coef(x)
+            else:
+                return 0.0
+
+        return contributions, taps
+
+    @classmethod
+    def blackmanminlobe(cls, taps: int = 3) -> Tuple[Callable[[float], float], int]:
+        assert taps >= 1
+
+        def compute_win_coef(x: float) -> float:
+            w_x = x * (math.pi / taps)
+            return (
+                0.355768 + 0.487396 * math.cos(w_x) +
+                0.144232 * math.cos(w_x * 2) + 0.012604 * math.cos(w_x * 3))
+
+        def contributions(x: float) -> float:
+            if abs(x) <= taps:
+                return cls._sinc_function(x) * compute_win_coef(x)
+            else:
+                return 0.0
+
+        return contributions, taps
+
+
+def _downsample_helper(
+    kernel_func: Callable[[float], float],
+    support: int,
+    kernel_width: int,
+    kernel_scale: float,
+    down_scale: float,
+    shift: float
+) -> Tuple[List[float], float]:
+
+    shift_div, shift_rem = divmod(shift, 1)
+
+    def mod(x: float) -> float:
+        return (x + support) % (2 * support) - support
+
+    if down_scale % 2 == 0:
+        weights = [kernel_func(mod((i + 0.5 - shift_rem) * kernel_scale - support)) for i in range(kernel_width)]
+        impulse = list(itertools.accumulate(weights[1:-1], lambda s, x: 2 * x - s, initial=2*weights[0]))
+    else:
+        weights = [kernel_func(mod((i - shift_rem) * kernel_scale - support)) for i in range(1, kernel_width)]
+        impulse = weights
+
+    return impulse, shift_div
+
+
+class ResampleArgs(TypedDict):
+    sx: float
+    sy: float
+    kernel: str
+    impulseh: List[float]
+    impulsev: List[float]
+    kovrspl: int
+
+
+def get_downsample_args(
+    down_scale: int,
+    kernel: str = "bicubic",
+    taps: Optional[int] = None,
+    a1: Optional[float] = None,
+    a2: Optional[float] = None,
+    sx: float = 0.0,
+    sy: float = 0.0,
+    antialiasing: bool = True,
+    custom_kernel: Optional[Tuple[Callable[[float], float], int]] = None
+) -> ResampleArgs:
+    """ utility for downsample() """
+
+    kovrspl = down_scale
+
+    if taps is None:
+        taps = 4
+
+    if custom_kernel is not None:
+        kernel_func, support = custom_kernel
+    elif kernel == "bilinear":
+        kernel_func, support = ResampleKernel.bilinear()
+    elif kernel == "bicubic":
+        if a1 is None:
+            a1 = 1 / 3
+        if a2 is None:
+            a2 = 1 / 3
+        kernel_func, support = ResampleKernel.bicubic(b=a1, c=a2)
+    elif kernel == "lanczos":
+        kernel_func, support = ResampleKernel.lanczos(taps=taps)
+    elif kernel == "gauss":
+        if a1 is None:
+            a1 = 30.0
+        kernel_func, support = ResampleKernel.gauss(p=a1, taps=taps)
+    elif kernel == "spline16":
+        kernel_func, support = ResampleKernel.spline16()
+    elif kernel == "spline36":
+        kernel_func, support = ResampleKernel.spline36()
+    elif kernel == "spline64":
+        kernel_func, support = ResampleKernel.spline64()
+    elif kernel == "spline":
+        kernel_func, support = ResampleKernel.spline(taps=taps)
+    elif kernel == "sinc":
+        kernel_func, support = ResampleKernel.sinc(taps=taps)
+    elif kernel == "blackman":
+        kernel_func, support = ResampleKernel.blackman(taps=taps)
+    elif kernel == "blackmanminlobe":
+        kernel_func, support = ResampleKernel.blackmanminlobe(taps=taps)
+    else:
+        raise ValueError(f"Unknown kernel {kernel}")
+
+    if antialiasing:
+        kernel_width = down_scale * support * 2
+        kernel_scale = 1.0 / down_scale
+    else:
+        kernel_width = support * 2
+        kernel_scale = 1.0
+
+    impulseh, fmtc_sx = _downsample_helper(kernel_func, support, kernel_width, kernel_scale, down_scale, sx)
+    impulsev, fmtc_sy = _downsample_helper(kernel_func, support, kernel_width, kernel_scale, down_scale, sy)
+
+    return ResampleArgs(sx=fmtc_sx, sy=fmtc_sy, kernel="impulse", impulseh=impulseh, impulsev=impulsev, kovrspl=kovrspl)
+
+
+def downsample(
+    clip: vs.VideoNode,
+    down_scale: int,
+    kernel: str = "bicubic",
+    taps: Optional[int] = None,
+    a1: Optional[float] = None,
+    a2: Optional[float] = None,
+    sx: float = 0.0,
+    sy: float = 0.0,
+    antialiasing: bool = True,
+    custom_kernel: Optional[Tuple[Callable[[float], float], int]] = None,
+    **resample_kwargs
+) -> vs.VideoNode:
+
+    """ Integer-factor downsampling using fmtc.resample(kernel="impulse")
+
+    Args:
+        clip: Input clip.
+
+        down_scale: (int) Downsample factor.
+            Must be greater than 1 and be a common factor of clip's resolutions.
+
+        kernel: (str) Downsample kernel. Possible values:
+            bilinear, bicubic, lanczos, gauss, spline16, spline36, spline64,
+            spline, sinc, blackman, blackmanminlobe
+
+            Default is bicubic.
+
+        taps: (int) Number of sample points.
+            Default is 4.
+
+        a1, a2, sx, sy: (float) Please refer to documentation of fmtc.resample().
+            https://github.com/EleonoreMizo/fmtconv/blob/master/doc/fmtconv.html
+
+        antialiasing: (bool) Whether to perform antialiasing when downsampling.
+            fmtc.resample() implements "antialiasing=True".
+
+            Default is True.
+
+        custom_kernel: (kernel function, support) Override previous specification of downsample kernel.
+
+    Warning:
+        Subsampling is not handled.
+
+    Example:
+        # customizing SSIM_downsample()
+        down_scale = 2
+        assert gray.width % down_scale == 0 and gray.height % down_scale == 0
+
+        w = gray.width // down_scale
+        h = gray.height // down_scale
+        kwargs = muvsfunc.get_downsample_args(down_scale=down_scale, antialiasing=False)
+
+        res = muvsfunc.SSIM_downsample(gray, w, h, use_fmtc=True, **kwargs)
+    """
+
+    funcName = "downsample"
+
+    if not isinstance(clip, vs.VideoNode):
+        raise TypeError(f'{funcName}: "clip" must be a clip!')
+
+    if clip.format.subsampling_w > 0 or clip.format.subsampling_h > 0:
+        raise NotImplementedError(f'{funcName}: Subsampling is not handled!')
+
+    if not isinstance(down_scale, int):
+        raise TypeError(f'{funcName}: "down_scale" must be an int!')
+
+    if down_scale <= 1:
+        raise ValueError(f'{funcName}: "down_scale" must be greater than 1!')
+
+    if clip.width % down_scale != 0 or clip.height % down_scale != 0:
+        raise ValueError(f'{funcName}: "down_scale" is not a factor of video dimensions!')
+
+    w = clip.width // down_scale
+    h = clip.height // down_scale
+
+    kwargs = get_downsample_args(
+        down_scale=down_scale,
+        kernel=kernel,
+        taps=taps,
+        a1=a1,
+        a2=a2,
+        sx=sx,
+        sy=sy,
+        antialiasing=antialiasing,
+        custom_kernel=custom_kernel
+    )
+
+    return core.fmtc.resample(clip, w, h, **kwargs, **resample_kwargs)

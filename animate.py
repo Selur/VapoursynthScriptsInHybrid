@@ -120,25 +120,35 @@ class Arguments:
         return self.function(clip, **set_out)
 
 
-def distribute(n, clip, MAP, selection):
-    if selection is not None:
-        clip_master = clip
-        clip = clip.std.CropAbs( *selection )
+def distribute(n, clip, MAP, selection, **overlay_kwargs):
     iterator = iter(MAP)
+    change = False
     for (lower, upper) in iterator:
         funcs = next(iterator)
         if lower <= n <= upper:
-            clip = functools.reduce(lambda r, f: f(r, n, lower, upper), funcs, clip)   #chaines filters: clip=f2(f1(clip)) etc.
-    if selection is not None:
-        return havsfunc.Overlay(clip_master, clip, x=selection[2], y=selection[3])
+            if not change and selection is not None:
+                clip_master = clip
+                clip = clip.std.CropAbs( *selection )
+            #chaines functions, example, funcs=[f0, f1], then:   clip = f0(clip,n,lower,upper); #clip = f1(clip,n,lower,upper)
+            clip = functools.reduce(lambda r, f: f(r, n, lower, upper), funcs, clip)
+            change = True
+    if change and selection is not None:
+        return havsfunc.Overlay(clip_master, clip, x=selection[2], y=selection[3], **overlay_kwargs)
     else:
         return clip
 
 
-def run(clip, MAP, selection=None, placeholder=None):
+def run(clip,
+        MAP,
+        selection=None,
+        mask=None, opacity=1.0, mode='normal', planes=None, mask_first_plane=True, # havsfunc.Overlay kwargs
+        placeholder = None):
+    
     if placeholder is None:
         placeholder = clip
-    return core.std.FrameEval(placeholder, functools.partial(distribute, clip=clip, MAP=MAP, selection=selection))
+    return core.std.FrameEval(placeholder, functools.partial(distribute, clip=clip, MAP=MAP, selection=selection,
+                                                             mask=mask, opacity=opacity, mode=mode, planes=planes, mask_first_plane=mask_first_plane)
+                              )
 
 
 if __name__ == '__main__':
