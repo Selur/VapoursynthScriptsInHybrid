@@ -159,7 +159,7 @@ def SMDegrain(input, tr=2, thSAD=300, thSADC=None, RefineMotion=False, contrasha
                                         planes=planes)
         elif prefilter >= 4:
             if chroma:
-                pref = KNLMeansCL(inputP, d=1, a=1, h=7)
+                pref = havsfunc.KNLMeansCL(inputP, d=1, a=1, h=7)
             else:
                 pref = inputP.knlm.KNLMeansCL(d=1, a=1, h=7)
         else:
