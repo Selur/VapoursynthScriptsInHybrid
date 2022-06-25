@@ -1,6 +1,7 @@
 import vapoursynth as vs
 from vapoursynth import core
 from typing import List
+import masked
 
 def RainbowSmooth(clip, radius=3, lthresh=0, hthresh=220, mask="original"):
     core = vs.core
@@ -15,17 +16,11 @@ def RainbowSmooth(clip, radius=3, lthresh=0, hthresh=220, mask="original"):
         elif mask == "tcanny":
             mask = core.tcanny.TCanny(clip)
         elif mask == "fast_sobel":
-            import kagefunc as kage
-
-            mask = kage.fast_sobel(clip)
+            mask = masked.fast_sobel(clip)
         elif mask == "kirsch":
-            import kagefunc as kage
-
-            mask = kage.kirsch(clip)
+            mask = masked.kirsch(clip)
         elif mask == "retinex_edgemask":
-            import kagefunc as kage
-
-            mask = kage.retinex_edgemask(clip)
+            mask = masked.retinex_edgemask(clip)
 
     lderain = clip
 
