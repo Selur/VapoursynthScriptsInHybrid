@@ -2,6 +2,7 @@ import vapoursynth as vs
 from vapoursynth import core
 from typing import List
 import masked
+import mvsfunc as mvf
 
 def RainbowSmooth(clip, radius=3, lthresh=0, hthresh=220, mask="original"):
     core = vs.core
@@ -21,6 +22,7 @@ def RainbowSmooth(clip, radius=3, lthresh=0, hthresh=220, mask="original"):
             mask = masked.kirsch(clip)
         elif mask == "retinex_edgemask":
             mask = masked.retinex_edgemask(clip)
+            mask = mvf.Depth(mask, clip.format.bits_per_sample)
 
     lderain = clip
 
