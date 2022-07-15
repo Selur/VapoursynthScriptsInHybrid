@@ -1,4 +1,7 @@
 import vapoursynth as vs
+core = vs.core
+# collection of Mask filters.
+
 
 # Use retinex to greatly improve the accuracy of the edge detection in dark scenes.
 # draft=True is a lot faster, albeit less accurate
@@ -46,6 +49,29 @@ def bloated_edgemask(src: vs.VideoNode) -> vs.VideoNode:
                                        4, -6,  0, -6, 4,
                                        2, -3, -6, -3, 2,
                                        1,  2,  4,  2, 1], saturate=False)
-                                       
-                                       
-                                       
+                                           
+# from https://github.com/theChaosCoder/lostfunc/blob/master/lostfunc.py -> mfToon2/MfTurd
+def scale8(x, newmax):
+        return x * newmax // 0xFF
+
+def CartoonEdges(clip, low=0, high=255):
+    """Should behave like mt_edge(mode="cartoon")"""
+    valuerange = (1 << clip.format.bits_per_sample)
+    maxvalue = valuerange - 1
+    
+    low = scale8(low, maxvalue)
+    high = scale8(high, maxvalue)
+    edges = core.std.Convolution(clip, matrix=[0,-2,1,0,1,0,0,0,0], saturate=True)
+    return core.std.Expr(edges, ['x {high} >= {maxvalue} x {low} <= 0 x ? ?'
+                                 .format(low=low, high=high, maxvalue=maxvalue), ''])
+
+def RobertsEdges(clip, low=0, high=255):
+    """Should behave like mt_edge(mode="roberts")"""
+    valuerange = (1 << clip.format.bits_per_sample)
+    maxvalue = valuerange - 1
+    
+    low = scale8(low, maxvalue)
+    high = scale8(high, maxvalue)
+    edges = core.std.Convolution(clip, matrix=[0,0,0,0,2,-1,0,-1,0], divisor=2, saturate=False)
+    return core.std.Expr(edges, ['x {high} >= {maxvalue} x {low} <= 0 x ? ?'
+                                 .format(low=low, high=high, maxvalue=maxvalue), ''])
