@@ -49,7 +49,21 @@ def bloated_edgemask(src: vs.VideoNode) -> vs.VideoNode:
                                        4, -6,  0, -6, 4,
                                        2, -3, -6, -3, 2,
                                        1,  2,  4,  2, 1], saturate=False)
-                                           
+
+# https://github.com/DeadNews/dnfunc/blob/f5d22057e424fb3b8bd80d1aadd0c2ed2b7e71d5/dnfunc.py#L1212                                                                              
+def kirsch2(clip_y: vs.VideoNode) -> vs.VideoNode:
+    n = core.std.Convolution(clip_y, [5, 5, 5, -3, 0, -3, -3, -3, -3], divisor=3, saturate=False)
+    nw = core.std.Convolution(clip_y, [5, 5, -3, 5, 0, -3, -3, -3, -3], divisor=3, saturate=False)
+    w = core.std.Convolution(clip_y, [5, -3, -3, 5, 0, -3, 5, -3, -3], divisor=3, saturate=False)
+    sw = core.std.Convolution(clip_y, [-3, -3, -3, 5, 0, -3, 5, 5, -3], divisor=3, saturate=False)
+    s = core.std.Convolution(clip_y, [-3, -3, -3, -3, 0, -3, 5, 5, 5], divisor=3, saturate=False)
+    se = core.std.Convolution(clip_y, [-3, -3, -3, -3, 0, 5, -3, 5, 5], divisor=3, saturate=False)
+    e = core.std.Convolution(clip_y, [-3, -3, 5, -3, 0, 5, -3, -3, 5], divisor=3, saturate=False)
+    ne = core.std.Convolution(clip_y, [-3, 5, 5, -3, 0, 5, -3, -3, -3], divisor=3, saturate=False)
+    return core.std.Expr(
+        [n, nw, w, sw, s, se, e, ne],
+        ["x y max z max a max b max c max d max e max"],
+    )
 # from https://github.com/theChaosCoder/lostfunc/blob/master/lostfunc.py -> mfToon2/MfTurd
 def scale8(x, newmax):
         return x * newmax // 0xFF
