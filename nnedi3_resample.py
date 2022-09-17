@@ -4,7 +4,10 @@ import mvsfunc as mvf
 import math
 
 
-def nnedi3_resample(input, target_width=None, target_height=None, src_left=None, src_top=None, src_width=None, src_height=None, csp=None, mats=None, matd=None, cplaces=None, cplaced=None, fulls=None, fulld=None, curves=None, curved=None, sigmoid=None, scale_thr=None, nsize=None, nns=None, qual=None, etype=None, pscrn=None, opt=None, int16_prescreener=None, int16_predictor=None, exp=None, kernel=None, invks=False, taps=None, invkstaps=3, a1=None, a2=None, chromak_up=None, chromak_up_taps=None, chromak_up_a1=None, chromak_up_a2=None, chromak_down=None, chromak_down_invks=False, chromak_down_invkstaps=3, chromak_down_taps=None, chromak_down_a1=None, chromak_down_a2=None, mode='nnedi3', device=None):
+__version__ = '2'
+
+
+def nnedi3_resample(input, target_width=None, target_height=None, src_left=None, src_top=None, src_width=None, src_height=None, csp=None, mats=None, matd=None, cplaces=None, cplaced=None, fulls=None, fulld=None, curves=None, curved=None, sigmoid=None, scale_thr=None, nsize=None, nns=None, qual=None, etype=None, pscrn=None, opt=None, int16_prescreener=None, int16_predictor=None, exp=None, kernel=None, invks=False, taps=None, invkstaps=3, a1=None, a2=None, chromak_up=None, chromak_up_taps=None, chromak_up_a1=None, chromak_up_a2=None, chromak_down=None, chromak_down_invks=False, chromak_down_invkstaps=3, chromak_down_taps=None, chromak_down_a1=None, chromak_down_a2=None, mode=None, device=None):
     funcName = 'nnedi3_resample'
     
     # Get property about input clip
@@ -27,7 +30,7 @@ def nnedi3_resample(input, target_width=None, target_height=None, src_left=None,
     sPlaneNum = sFormat.num_planes
     
     # Get property about output clip
-    dFormat = sFormat if csp is None else core.get_format(csp)
+    dFormat = sFormat if csp is None else core.get_video_format(csp)
     
     dColorFamily = dFormat.color_family
     dIsGRAY = dColorFamily == vs.GRAY
@@ -432,13 +435,26 @@ def nnedi3_dh(input, field=1, nsize=None, nns=None, qual=None, etype=None, pscrn
     nnedi3_args1 = dict(nsize=nsize, nns=nns, qual=qual, etype=etype, pscrn=pscrn)
     nnedi3_args2 = dict(opt=opt, int16_prescreener=int16_prescreener, int16_predictor=int16_predictor, exp=exp)
 
-    if mode == 'nnedi3':
-        res = core.nnedi3.nnedi3(input, field=field, dh=True, **nnedi3_args1, **nnedi3_args2)
-    elif mode == 'znedi3':
+    # check nnedi3 plugin installation
+    has_znedi3 = hasattr(core, 'znedi3')
+    has_nnedi3 = hasattr(core, 'nnedi3')
+    has_nnedi3cl = hasattr(core, 'nnedi3cl')
+    if not (has_znedi3 or has_nnedi3 or has_nnedi3cl):
+        raise ValueError(f'nnedi3_dh: znedi3, nnedi3 or nnedi3cl installation not found.')
+
+    # select default plugin
+    if mode is None:
+        mode = 'znedi3' if has_znedi3 else 'nnedi3' if has_nnedi3 else 'nnedi3cl' if has_nnedi3cl else None
+
+    # nnedi3 interpolation to double height
+    if mode == 'znedi3':
         res = core.znedi3.nnedi3(input, field=field, dh=True, **nnedi3_args1, **nnedi3_args2)
+    elif mode == 'nnedi3':
+        res = core.nnedi3.nnedi3(input, field=field, dh=True, **nnedi3_args1, **nnedi3_args2)
     elif mode == 'nnedi3cl':
         res = core.nnedi3cl.NNEDI3CL(input, field=field, dh=True, **nnedi3_args1, device=device)
-    else: raise ValueError('nnedi3_dh: Unsupported mode, should be nnedi3 (default), znedi3 or nnedi3cl.')
+    else:
+        raise ValueError(f'nnedi3_dh: Unsupported mode={mode}, should be znedi3, nnedi3 or nnedi3cl.')
 
     return res
 
