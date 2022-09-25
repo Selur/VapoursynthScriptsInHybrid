@@ -2,7 +2,7 @@ import vapoursynth as vs
 core = vs.core
 #analyse_args= dict(blksize=bs, overlap=bs//2, search=5)
 #analyse_args= dict(blksize=bs//2, overlap=bs//4, search=5)
-def SpotLess(clip, chroma=True, rec=False, radT=1, ablksz=None, aoverlap=None, asearch=5, pel=None, rblksz=None, roverlap=None, rsearch=None ):
+def SpotLess(clip, chroma=True, rec=False, radT=1, ablksz=None, aoverlap=None, asearch=5, pel=None, rblksz=None, roverlap=None, rsearch=None, thsad=10000, thsad2=10000):
     """
     Args:
         chroma (bool) - Whether to process chroma.
@@ -21,6 +21,9 @@ def SpotLess(clip, chroma=True, rec=False, radT=1, ablksz=None, aoverlap=None, a
             search = 6 : pure Horizontal exhaustive search, searchparam is the radius (width is 2*radius+1).
             search = 7 : pure Vertical exhaustive search, searchparam is the radius (height is 2*radius+1).
         rblksz/roverlap/rsearch, same as axxx but for the recalculation
+        thsad -  mvtools ThSAD is SAD threshold for safe (dummy) compensation. (10000)
+            If block SAD is above the thSAD, the block is bad, and we use source block instead of the compensated block. Default is 10000 (practically disabled).
+        
     """
     # modified from lostfunc: https://github.com/theChaosCoder/lostfunc/blob/v1/lostfunc.py#L10
 
@@ -65,8 +68,8 @@ def SpotLess(clip, chroma=True, rec=False, radT=1, ablksz=None, aoverlap=None, a
         bv1 = R(sup, bv1, blksize=rblksz, overlap=roverlap, search=rsearch)
         fv1 = R(sup, fv1, blksize=rblksz, overlap=roverlap, search=rsearch)
 
-    bc1 = C(clip, sup, bv1)
-    fc1 = C(clip, sup, fv1)
+    bc1 = C(clip, sup, bv1, thsad=thsad)
+    fc1 = C(clip, sup, fv1, thsad=thsad)
     fcb = core.std.Interleave([fc1, clip, bc1])
 
     return fcb.tmedian.TemporalMedian(1, planes)[1::3]
