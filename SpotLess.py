@@ -1,7 +1,6 @@
 import vapoursynth as vs
 core = vs.core
-#analyse_args= dict(blksize=bs, overlap=bs//2, search=5)
-#analyse_args= dict(blksize=bs//2, overlap=bs//4, search=5)
+
 def SpotLess(clip: vs.VideoNode,
              radT: int = 1,
              thsad: int = 10000,
@@ -48,7 +47,7 @@ def SpotLess(clip: vs.VideoNode,
               search = 7 : pure Vertical exhaustive search, searchparam is the radius (height is 2*radius+1).
           pglobal: mkvootls apply relative penalty (scaled to 256) to SAD cost for global predictor vector.
           rec    (bool) - Recalculate the motion vectors to obtain more precision.
-          rblksz/roverlap/rsearch, same as axxx but for the recalculation (rec=True)
+          rblksize/roverlap/rsearch, same as axxx but for the recalculation (rec=True)
           ssharp (int - mvtools Super sharp parameter. Sub-pixel interpolation method for when pel == 2 || 4.
             0 : soft interpolation (bilinear).
             1 : bicubic interpolation (4 tap Catmull-Rom)
@@ -79,9 +78,9 @@ def SpotLess(clip: vs.VideoNode,
           
     if ablksize is None:
       ablksize = 32 if clip.width > 2400 else 16 if clip.width > 960 else 8
-    
     if aoverlap is None:
       aoverlap = ablksize//2
+    aoverlap = min(aoverlap, ablksize//2)
     if asearch is None:
       asearch = 5  
     if asearch < 0 or asearch > 7:
@@ -96,13 +95,16 @@ def SpotLess(clip: vs.VideoNode,
     if not ssharp in range(2):
       raise ValueError("Spotless: ssharp must be between 0 and 2 (inclusive)")
 
-    if rec: 
+    if rec:
+      if rblksize is None:
+        rblksize = ablksize
       if rsearch is None:
         rsearch = asearch
       if rsearch < 0 or rsearch > 7:
         raise ValueError("Spotless: rsearch must between 0 and 7 (inclusive)!")  
       if roverlap is None:
         roverlap = aoverlap
+      roverlap = min(roverlap, rblksize/2)
       
     # init functions
     isFLOAT = clip.format.sample_type == vs.FLOAT
