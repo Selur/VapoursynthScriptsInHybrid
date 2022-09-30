@@ -2,74 +2,156 @@ import vapoursynth as vs
 core = vs.core
 #analyse_args= dict(blksize=bs, overlap=bs//2, search=5)
 #analyse_args= dict(blksize=bs//2, overlap=bs//4, search=5)
-def SpotLess(clip, chroma=True, rec=False, radT=1, ablksz=None, aoverlap=None, asearch=5, pel=None, rblksz=None, roverlap=None, rsearch=None, thsad=10000, thsad2=10000):
+def SpotLess(clip: vs.VideoNode,
+             radT: int = 1,
+             thsad: int = 10000,
+             thsad2: int = None,
+             pel: int = None,
+             chroma: bool = True,
+             ablksize: int = None,
+             aoverlap: int = None,
+             asearch: int = None,
+             ssharp: int = None,
+             pglobal: bool = True,
+             rec: bool = False,
+             rblksize: int = None, 
+             roverlap: int = None,
+             rsearch: int = None,
+             truemotion: bool = True,
+             rfilter: int = None,
+             blur: bool = False,
+             
+             ref: vs.VideoNode = None
+            ) -> vs.VideoNode:
+            
     """
-    Args:
-        chroma (bool) - Whether to process chroma.
-        rec    (bool) - Recalculate the motion vectors to obtain more precision.
-        radT   (int)  - Temporal radius in frames
-        
-        ablksz   - mvtools Analyse blocksize, if not set ablksz = 32 if clip.width > 2400 else 16 if clip.width > 960 else 8, otherwise 4/8/16/32/64
-        aoverlap - mvtools Analyse overlap, if not set ablksz/2, otherwise 4/8/16/32/64
-        asearch  -  mvtools Analyse search, it not set 5, other wise 1-7        
-            search = 0 : 'OneTimeSearch'. searchparam is the step between each vectors tried ( if searchparam is superior to 1, step will be progressively refined ).
-            search = 1 : 'NStepSearch'. N is set by searchparam. It's the most well known of the MV search algorithm.
-            search = 2 : Logarithmic search, also named Diamond Search. searchparam is the initial step search, there again, it is refined progressively.
-            search = 3 : Exhaustive search, searchparam is the radius (square side is 2*radius+1). It is slow, but it gives the best results, SAD-wise.
-            search = 4 : Hexagon search, searchparam is the range. (similar to x264).
-            search = 5 : Uneven Multi Hexagon (UMH) search, searchparam is the range. (similar to x264).
-            search = 6 : pure Horizontal exhaustive search, searchparam is the radius (width is 2*radius+1).
-            search = 7 : pure Vertical exhaustive search, searchparam is the radius (height is 2*radius+1).
-        rblksz/roverlap/rsearch, same as axxx but for the recalculation
-        thsad -  mvtools ThSAD is SAD threshold for safe (dummy) compensation. (10000)
-            If block SAD is above the thSAD, the block is bad, and we use source block instead of the compensated block. Default is 10000 (practically disabled).
-        
-    """
-    # modified from lostfunc: https://github.com/theChaosCoder/lostfunc/blob/v1/lostfunc.py#L10
-
+      Args:
+          radT   (int)  - Temporal radius in frames
+          thsad -  mvtools ThSAD is SAD threshold for safe (dummy) compensation. (10000)
+              If block SAD is above the thSAD, the block is bad, and we use source block instead of the compensated block. Default is 10000 (practically disabled).
+          thsad2 - mvtools ThSAD that will be used for all calculations with radT > 1
+          pel = mvtools Motion estimation accuracy. Value can only be 1, 2 or 4.
+            1 : means precision to the pixel.
+            2 : means precision to half a pixel.
+            4 : means precision to quarter of a pixel, produced by spatial interpolation (more accurate but slower and not always better due to big level scale step). 
+          chroma (bool) - Whether to process chroma.
+          ablksize   - mvtools Analyse blocksize, if not set ablksz = 32 if clip.width > 2400 else 16 if clip.width > 960 else 8, otherwise 4/8/16/32/64
+          aoverlap - mvtools Analyse overlap, if not set ablksz/2, otherwise 4/8/16/32/64
+          asearch  -  mvtools Analyse search, it not set 5, other wise 1-7        
+              search = 0 : 'OneTimeSearch'. searchparam is the step between each vectors tried ( if searchparam is superior to 1, step will be progressively refined ).
+              search = 1 : 'NStepSearch'. N is set by searchparam. It's the most well known of the MV search algorithm.
+              search = 2 : Logarithmic search, also named Diamond Search. searchparam is the initial step search, there again, it is refined progressively.
+              search = 3 : Exhaustive search, searchparam is the radius (square side is 2*radius+1). It is slow, but it gives the best results, SAD-wise.
+              search = 4 : Hexagon search, searchparam is the range. (similar to x264).
+              search = 5 : Uneven Multi Hexagon (UMH) search, searchparam is the range. (similar to x264).
+              search = 6 : pure Horizontal exhaustive search, searchparam is the radius (width is 2*radius+1).
+              search = 7 : pure Vertical exhaustive search, searchparam is the radius (height is 2*radius+1).
+          pglobal: mkvootls apply relative penalty (scaled to 256) to SAD cost for global predictor vector.
+          rec    (bool) - Recalculate the motion vectors to obtain more precision.
+          rblksz/roverlap/rsearch, same as axxx but for the recalculation (rec=True)
+          ssharp (int - mvtools Super sharp parameter. Sub-pixel interpolation method for when pel == 2 || 4.
+            0 : soft interpolation (bilinear).
+            1 : bicubic interpolation (4 tap Catmull-Rom)
+            2 : sharper Wiener interpolation (6 tap, similar to Lanczos). 
+          rfilter (int) - mvtools Super rfilter. Hierarchical levels smoothing and reducing (halving) filter.
+            0 : simple 4 pixels averaging like unfiltered SimpleResize (old method)
+            1 : triangle (shifted) filter like ReduceBy2 for more smoothing (decreased aliasing)
+            2 : triangle filter like BilinearResize for even more smoothing
+            3 : quadratic filter for even more smoothing
+            4 : cubic filter like BicubicResize(b=1,c=0) for even more smoothing 
+          blur (bool): apply additional bluring during mvtools Super
+          truemotion: mvtools Analyse and Recalculate truemotion parameter.
+            
+    """     
+    # Init variables and check sanity
+    if radT < 1 or radT > 10:
+      raise ValueError("Spotless: radT must be between 1 and 10 (inclusive)")
+    if pel==None:
+      pel = 1 if clip.width > 960 else 2
+    if not pel in [1, 2, 4]:
+      raise ValueError("Spotless: pel must be 1, 2 or 4")
+    
+    thsad2 = thsad2 or thsad
+    thsad2 = (thsad + thsad2)/2 if radT>=3 else thsad2
+    
     if not isinstance(clip, vs.VideoNode) or clip.format.color_family not in [vs.GRAY, vs.YUV]:
-        raise TypeError("SpotLess: This is not a GRAY or YUV clip!")
+      raise ValueError("SpotLess: This is not a GRAY or YUV clip!")
+          
+    if ablksize is None:
+      ablksize = 32 if clip.width > 2400 else 16 if clip.width > 960 else 8
+    
+    if aoverlap is None:
+      aoverlap = ablksize//2
+    if asearch is None:
+      asearch = 5  
+    if asearch < 0 or asearch > 7:
+      raise ValueError("Spotless: search must be between 0 and 7 (inclusive)!")      
+    if rfilter is None:
+      rfilter = 2
+    if rfilter < 0 or rfilter > 4:
+      raise ValueError("Spotless: rfilter must be between 0 and 4 (inclusive)")
+        
+    if ssharp is None:
+      ssharp = 1
+    if not ssharp in range(2):
+      raise ValueError("Spotless: ssharp must be between 0 and 2 (inclusive)")
 
+    if rec: 
+      if rsearch is None:
+        rsearch = asearch
+      if rsearch < 0 or rsearch > 7:
+        raise ValueError("Spotless: rsearch must between 0 and 7 (inclusive)!")  
+      if roverlap is None:
+        roverlap = aoverlap
+      
+    # init functions
     isFLOAT = clip.format.sample_type == vs.FLOAT
     isGRAY = clip.format.color_family == vs.GRAY
     chroma = False if isGRAY else chroma
     planes = [0, 1, 2] if chroma else [0]
+    
     A = core.mvsf.Analyse if isFLOAT else core.mv.Analyse
     C = core.mvsf.Compensate if isFLOAT else core.mv.Compensate
     S = core.mvsf.Super if isFLOAT else core.mv.Super
     R = core.mvsf.Recalculate if isFLOAT else core.mv.Recalculate
-    if ablksz == None:
-      ablksz = 32 if clip.width > 2400 else 16 if clip.width > 960 else 8
-      
-    if aoverlap is None:
-      aoverlap = ablksz//2
-      
-    if asearch is None:
-      asearch = 5    
+    
+    # Super
+    pad = max(ablksize, 8)
+    sup = ref or (c.std.Convolution(matrix=[1, 2, 1, 2, 4, 2, 1, 2, 1]) if blur else clip)
+    sup = S(sup, hpad=pad, vpad=pad, pel=pel, sharp=ssharp, rfilter=rfilter)
+    sup_rend = S(clip, pel=pel, sharp=ssharp, rfilter=rfilter, levels=1) if ref or blur else sup
 
-    if pel is None:
-      pel = 1 if clip.width > 960 else 2
-      
-    if rsearch is None:
-      rsearch = asearch
-      
-    if roverlap is None:
-      roverlap = aoverlap
-      
-    if rsearch is None:
-      rsearch = asearch
-      
-    sup = S(clip, pel=pel, sharp=1, rfilter=4)
+    bv=[]
+    fv=[]
+    def doAnalysis(bv, fv, delta, search, blksize, overlap, chroma, truemotion, pglobal):
+       bv.append(A(sup, isb=True, delta=delta, search=asearch, blksize=ablksize, overlap=aoverlap, chroma=chroma, truemotion=truemotion, pglobal=pglobal))
+       fv.append(A(sup, isb=False, delta=delta, search=asearch, blksize=ablksize, overlap=aoverlap, chroma=chroma, truemotion=truemotion, pglobal=pglobal))
 
-    bv1 = A(sup, isb=True,  delta=radT, blksize=ablksz, overlap=aoverlap, search=asearch)
-    fv1 = A(sup, isb=False, delta=radT, blksize=ablksz, overlap=aoverlap, search=asearch)
-
+    # Analyse
+    for delta in range(1, radT+1):
+      doAnalysis(bv, fv, delta=delta, search=asearch, blksize=ablksize, overlap=aoverlap, chroma=chroma, truemotion=truemotion, pglobal=pglobal)
+    
+    def doRecalculate(bv, fv, delta, blksize, overlap, search, truemotion):
+       bv[delta-1] = R(sup, bv[delta-1], blksize=blksize, overlap=overlap, search=search, truemotion=truemotion)
+       fv[delta-1] = R(sup, fv[delta-1], blksize=blksize, overlap=overlap, search=search, truemotion=truemotion)
+    
     if rec:
-        bv1 = R(sup, bv1, blksize=rblksz, overlap=roverlap, search=rsearch)
-        fv1 = R(sup, fv1, blksize=rblksz, overlap=roverlap, search=rsearch)
+      for delta in range(1, radT+1):
+        doRecalculate(bv, fv, delta, rblksize, roverlap, rsearch, truemotion=truemotion)
 
-    bc1 = C(clip, sup, bv1, thsad=thsad, thsad2=thsad2)
-    fc1 = C(clip, sup, fv1, thsad=thsad, thsad2=thsad2)
-    fcb = core.std.Interleave([fc1, clip, bc1])
+    bc=[]
+    fc=[]
+    def doCompensate(bc, fc, bv, fv, delta, thsad, thsad2):
+      if delta != 1:
+        thsad = thsad2
 
-    return fcb.tmedian.TemporalMedian(1, planes)[1::3]
+      bc.append(C(clip, sup_rend, bv[delta-1], thsad=thsad))
+      fc.append(C(clip, sup_rend, fv[delta-1], thsad=thsad))
+      
+    # Compensate
+    for delta in range(1, radT+1):
+      doCompensate(bc, fc, bv, fv, delta, thsad, thsad2)
+    
+    ic =  core.std.Interleave(bc + [clip] + fc)
+    output = core.tmedian.TemporalMedian(ic, radius=radT)
+    return output.std.SelectEvery(radT*2+1, radT)  # Return middle frame
