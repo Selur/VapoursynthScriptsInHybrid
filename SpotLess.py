@@ -68,8 +68,8 @@ def SpotLess(clip, chroma=True, rec=False, radT=1, ablksz=None, aoverlap=None, a
         bv1 = R(sup, bv1, blksize=rblksz, overlap=roverlap, search=rsearch)
         fv1 = R(sup, fv1, blksize=rblksz, overlap=roverlap, search=rsearch)
 
-    bc1 = C(clip, sup, bv1, thsad=thsad)
-    fc1 = C(clip, sup, fv1, thsad=thsad)
+    bc1 = C(clip, sup, bv1, thsad=thsad, thsad2=thsad2)
+    fc1 = C(clip, sup, fv1, thsad=thsad, thsad2=thsad2)
     fcb = core.std.Interleave([fc1, clip, bc1])
 
     return fcb.tmedian.TemporalMedian(1, planes)[1::3]
