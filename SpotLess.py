@@ -62,6 +62,8 @@ def SpotLess(clip: vs.VideoNode,
           truemotion: mvtools Analyse and Recalculate truemotion parameter.
             
     """     
+    fpsnum = clip.fps_num;
+    fpsden = clip.fps_den;
     # Init variables and check sanity
     if radT < 1 or radT > 10:
       raise ValueError("Spotless: radT must be between 1 and 10 (inclusive)")
@@ -156,4 +158,6 @@ def SpotLess(clip: vs.VideoNode,
     
     ic =  core.std.Interleave(bc + [clip] + fc)
     output = core.tmedian.TemporalMedian(ic, radius=radT)
-    return output.std.SelectEvery(radT*2+1, radT)  # Return middle frame
+    output = output.std.SelectEvery(radT*2+1, radT)  # Return middle frame
+    return core.std.AssumeFPS(clip=output, fpsnum=fpsnum, fpsden=fpsden)
+    
