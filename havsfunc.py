@@ -60,6 +60,7 @@ Utility functions:
 """
 
 from __future__ import annotations
+import importlib
 
 import math
 from functools import partial
@@ -907,6 +908,7 @@ def HQDeringmod(
     darkthr: Optional[float] = None,
     planes: Union[int, Sequence[int]] = 0,
     show: bool = False,
+    cuda: bool = False,                   
 ) -> vs.VideoNode:
     '''
     HQDering mod v1.8
@@ -954,6 +956,7 @@ def HQDeringmod(
         planes: Specifies which planes will be processed. Any unprocessed planes will be simply copied.
 
         show: Whether to output mask clip instead of filtered clip.
+        cuda: Whether to enable CUDA functionality (for dfttest2).                                                          
     '''
     from mvsfunc import LimitFilter
 
@@ -996,6 +999,22 @@ def HQDeringmod(
     # Kernel: Smoothing
     if smoothed is None:
         if nrmode <= 0:
+          try:
+                dfttest2 = importlib.import_module('dfttest2')
+          except ModuleNotFoundError:
+                dfttest2 = None
+          # Currently the CPU backend only supports `sbsize == 16`
+          use_dfttest2 = dfttest2 and (cuda or sbsize == 16)
+          if use_dfttest2:
+              if sbsize == 16:
+                  # NVRTC is faster than cuFFT but only supports `sbsize == 16`
+                  backend = dfttest2.Backend.NVRTC if cuda else dfttest2.Backend.CPU
+              else:
+                  backend = dfttest2.Backend.cuFFT
+              smoothed = dfttest2.DFTTest(
+                  input, sbsize=sbsize, sosize=sosize, tbsize=1, slocation=[0.0, sigma2, 0.05, sigma, 0.5, sigma, 0.75, sigma2, 1.0, 0.0], planes=planes, backend=backend
+              )
+          else:                      
             smoothed = input.dfttest.DFTTest(
                 sbsize=sbsize, sosize=sosize, tbsize=1, slocation=[0.0, sigma2, 0.05, sigma, 0.5, sigma, 0.75, sigma2, 1.0, 0.0], planes=planes
             )
@@ -3370,7 +3389,7 @@ def LUTDeCrawl(input, ythresh=10, cthresh=10, maxdiff=50, scnchg=25, usemaxdiff=
 #####################################################
 #                                                   #
 # LUTDeRainbow, a derainbowing script by Scintilla  #
-# Last updated 10/3/08                              #
+# Last updated 2022-10-08                           #
 #                                                   #
 #####################################################
 #
@@ -3409,8 +3428,12 @@ def LUTDeCrawl(input, ythresh=10, cthresh=10, maxdiff=50, scnchg=25, usemaxdiff=
 #
 ###################
 def LUTDeRainbow(input, cthresh=10, ythresh=10, y=True, linkUV=True, mask=False):
-    if not isinstance(input, vs.VideoNode) or input.format.color_family != vs.YUV or input.format.bits_per_sample > 10:
-        raise vs.Error('LUTDeRainbow: This is not an 8-10 bit YUV clip')
+    if not isinstance(input, vs.VideoNode) or input.format.color_family != vs.YUV or input.format.bits_per_sample > 16:
+        raise vs.Error('LUTDeRainbow: This is not an 8-16 bit YUV clip')
+
+    # Since LUT2 can't handle clips with more than 10 bits, we default to using
+    # Expr and MaskedMerge to handle the same logic for higher bit depths.
+    useExpr = input.format.bits_per_sample > 10                                    
 
     shift = input.format.bits_per_sample - 8
     peak = (1 << input.format.bits_per_sample) - 1
@@ -3436,11 +3459,18 @@ def LUTDeRainbow(input, cthresh=10, ythresh=10, y=True, linkUV=True, mask=False)
 
     umask = average_u.std.Binarize(threshold=21 << shift)
     vmask = average_v.std.Binarize(threshold=21 << shift)
-    themask = core.std.Lut2(umask, vmask, function=lambda x, y: x & y)
-    if y:
-        umask = core.std.Lut2(umask, average_y, function=lambda x, y: x & y)
-        vmask = core.std.Lut2(vmask, average_y, function=lambda x, y: x & y)
-        themask = core.std.Lut2(themask, average_y, function=lambda x, y: x & y)
+    if useExpr:
+        themask = core.std.Expr([umask, vmask], expr=[f'x y +'])
+        if y:
+            umask = core.std.MaskedMerge(core.std.BlankClip(average_y), average_y, umask)
+            vmask = core.std.MaskedMerge(core.std.BlankClip(average_y), average_y, vmask)
+            themask = core.std.MaskedMerge(core.std.BlankClip(average_y), average_y, themask)
+    else:                    
+      themask = core.std.Lut2(umask, vmask, function=lambda x, y: x & y)
+      if y:
+          umask = core.std.Lut2(umask, average_y, function=lambda x, y: x & y)
+          vmask = core.std.Lut2(vmask, average_y, function=lambda x, y: x & y)
+          themask = core.std.Lut2(themask, average_y, function=lambda x, y: x & y)
 
     fixed_u = core.std.Merge(average_u, input_u)
     fixed_v = core.std.Merge(average_v, input_v)
