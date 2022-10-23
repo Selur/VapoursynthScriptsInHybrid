@@ -3460,7 +3460,7 @@ def LUTDeRainbow(input, cthresh=10, ythresh=10, y=True, linkUV=True, mask=False)
     umask = average_u.std.Binarize(threshold=21 << shift)
     vmask = average_v.std.Binarize(threshold=21 << shift)
     if useExpr:
-        themask = core.std.Expr([umask, vmask], expr=[f'x y +'])
+        themask = core.std.Expr([umask, vmask], expr=[f'x y + {peak + 1} < 0 {peak} ?'])
         if y:
             umask = core.std.MaskedMerge(core.std.BlankClip(average_y), average_y, umask)
             vmask = core.std.MaskedMerge(core.std.BlankClip(average_y), average_y, vmask)
