@@ -2140,9 +2140,9 @@ def SMDegrain(clip, tr=2, thSAD=314, thSADC=None, RefineMotion=False, contrashar
         return output
 
 
-def TemporalDegrain2(clip, degrainTR=2, degrainPlane=4, meAlg=5, meAlgPar=None, meSubpel=None, meBlksz=None, meTM=False,
-    limitSigma=None, limitBlksz=None, fftThreads=None, postFFT=0, postTR=1, postSigma=1, knlDevId=0, ppSAD1=10, ppSAD2=5, 
-    ppSCD1=4, thSCD2=100, DCT=0, SubPelInterp=2, SrchClipPP=3, GlobalMotion=True, ChromaMotion=True, rec=False, extraSharp=False):
+def TemporalDegrain2(clip, degrainTR=1, degrainPlane=4, grainLevel=2, grainLevelSetup=False, meAlg=4, meAlgPar=None, meSubpel=None, meBlksz=None, meTM=False,
+    limitSigma=None, limitBlksz=None, fftThreads=None, postFFT=0, postTR=1, postSigma=1, postMix=0, postBlkSize=None, knlDevId=0, ppSAD1=None, ppSAD2=None, 
+    ppSCD1=None, thSCD2=128, DCT=0, SubPelInterp=2, SrchClipPP=None, GlobalMotion=True, ChromaMotion=True, rec=False, extraSharp=False, outputStage=2):
     """
     Temporal Degrain Updated by ErazorTT                               
                                                                           
@@ -2159,19 +2159,76 @@ def TemporalDegrain2(clip, degrainTR=2, degrainPlane=4, meAlg=5, meAlgPar=None, 
     Optional plugins:                                                         
     dfttest: https://github.com/HomeOfVapourSynthEvolution/VapourSynth-DFTTest            
     KNLMeansCL: https://github.com/Khanattila/KNLMeansCL
-    
-    recommendation: 
-    1. start with default settings
-    2a.if there is too much denoising for your taste use degrainTR=1
-    2b.if more denoising is needed try postFFT=1 with postSigma=1, then tune postSigma (obvious blocking and banding of the sky are indications of a value which is at least a factor 2 too high)
-    3. do not increase degrainTR above 1/8 of the fps (at 24fps up to 3)
-    4. if there are any issues with banding switch to postFFT=3
 
-    use only the following knobs (all other settings should already be were they need to be):
-    - degrainTR, temporal radius of degrain, usefull range: min=1, default=2, max=fps/8. Higher values do clean the video more, but also increase probability of wrongly identified motion meAlg which leads to washed out regions
-    - postFFT, if you want to remove absolutely all remaining noise suggestion is to use 3 (dfttest) for its quality, 1/2 (ff3dfilter) is much faster but can introduce banding, 4 is KNLMeansCL.
-    - postSigma, increase it to remove all the remaining noise you want removed, but do not increase too much since unnecessary high values have severe negative impact on either banding and/or sharpness
-    - degrainPlane, if you just want to denoise the chroma use 3 (helps with compressability with the clip being almost identical to the original)
+    recommendations to be followed for each new movie:
+      1. start with default settings
+      2. if less denoising is needed set grainLevel to 0, if you need more degraining start over reading at next paragraph
+      3. if you need even less denoising:
+         - EITHER: set outputStage to 1 or even 0 (faster)
+         - OR: use the postMix setting and increase the value from 0 to as much as 100 (slower)
+
+    recommendations for strong degraining: 
+      1. start with default settings
+      2. search the noisiest* patch of the entire movie, enable grainLevelSetup (=true), zoom in as much as you can and prepare yourself for pixel peeping. (*it really MUST be the noisiest region where you want this filter to be effective)
+      3. compare the output on this noisy* patch of your movie with different settings of grainLevel (0 to 3) and use the setting where the noise level is lowest (irrespectable of whether you find this to be too much filtering).
+         If multiple grainLevel settings yield comparable results while grainLevelSetup=true and observing at maximal zoom be sure to use the lowest setting! If you're unsure leave it at the default (2), your result might no be optimal, but it will still be great.
+      4. disable grainLevelSetup (=false), or just remove this argument from the function call. Now revert the zoom and look from a normal distance at different scenes of the movie and decide if you like what you see.
+      5. if more denoising is needed try postFFT=1 with postSigma=1, then tune postSigma (obvious blocking and banding of regions in the sky are indications of a value which is at least a factor 2 too high)
+      6. if you would need a postSigma of more than 2, try first to increase degrainTR to 2. The goal is to balance the numerical values of postSigma and degrainTR, some prefer more simga and others more TR, it's up to you. However, do not increase degrainTR above 1/8th of the fps (at 24fps up to 3).
+      7. if you cranked up postSigma higher than 3 then try postFFT=3 instead. Also if there are any issues with banding then try postFFT=3.
+      8. if the luma is clean but you still have visible chroma noise then you can adjust postSigmaC which will separately clean the chroma planes (at a considerable amount of processing speed).
+
+    use only the following knobs (all other settings should already be where they need to be):
+      - degrainTR (1), temporal radius of degrain, usefull range: min=default=1, max=fps/8. Higher values do clean the video more, but also increase probability of wrongly identified motion vectors which leads to washed out regions
+      - grainLevel (2), if input noise level is relatively low set this to 0, if its unusually high you might need to increase it to 3. The right setting must be found using grainLevelSetup=true while all other settings are at default. Set this setting such that the noise level is lowest.
+      - grainLevelSetup (false), only to be used while finding the right setting for grainLevel. This will skip all your other settings!
+      - postFFT (0), if you want to remove absolutely all remaining noise suggestion is to use 1 or 2 (ff3dfilter) or for slightly higher quality at the expense of potentially worse speed 3 (dfttest). 4 is KNLMeansCL. 0 is simply RemoveGrain(1)
+      - postSigma (1), increase it to remove all the remaining noise you want removed, but do not increase too much since unnecessary high values have severe negative impact on either banding and/or sharpness
+      - degrainPlane (4), if you just want to denoise only the chroma use 3 (this helps with compressability while the clip is almost identical to the original)
+      - outputStage (2), if the degraining is too strong, you can output earlier stages
+      - postMix (0), if the degraining is too strong, increase the value going from 0 to 100
+      - fftThreads (1), usefull if you have processor cores to spare, increasing to 2 will probably help a little with speed.
+      - rec (false), enables use of Recalculate for refining motion analysis. Enable for higher quality motion estimation but lower performance.
+    
+    Changelog
+    December 21, 2022 - based on v2.6.3 of Avisynth version (Adub/adworacz):
+        Feature:
+        - Add support for grainLevel and grainLevelSetup, with associated
+          autotunning, in alignment with AVS version.
+        - Add postMix support, for mixing in grain again, in alignment with AVS
+          version.
+        - Add outputStage support, which enables outputting a clip at different
+          stages of the denoising process, in alignment with AVS version.
+        - Update documentation based on AVS version.
+        - Add support for postBlkSize, in alignment with AVS version.
+        - all ppSAD* and ppSCD* variables are autotuned based on grain level.
+
+        Changes:
+        - Set meAlg default to 4 to match the AVS version, should be a nice
+          speed improvement for a small drop in quality.
+        - Set degrainTR default to 1 to match the AVS version. Better aligns
+          with use of new grainLevel arg as well.
+        - Tune meAlgPar to match Dogway's latest AVS SMDegrain settings.
+        - Adjust MSuper settings to better align with AVS version. More work required.
+        - Minor code cleanup.
+        - Renamed internal 'i' variable to `bitDepthMultiplier`
+
+        Bug Fixes:
+        - Fix hpad/vpad bug, which wasn't taking blocksize into effect before.
+        - Fix bug with postFFT 4, KNLMeansCL args.
+        - Removed weird bitdepth scaling of sigma values using internal `i`
+          variable, which caused crazy sigma values to be used. Sigma is
+          bitdepth indepenent, so don't know why it was ever used.
+
+
+    TODO:
+        - Add support for BM3D (CPU/CUDA), dfttest2 (CPU/CUDA)
+        - Remove all params based on meTM (truemotion) that simply replicate the MVtools defaults.
+        - Tune DitherLumaRebuild params (like `c`) to match SMDegrain.
+        - Investigate why usage of rfilter=4. AVS version doesn't have it.
+        - Re-evaluate all MVTools params, in particular those associated with
+          level, rfilter, search, and rec/RefineMotion. Those currently used
+          differ significantly from AVS version, SMDegrain, and MCTemporalDenoise
     """
 
     if not isinstance(clip, vs.VideoNode) or clip.format.color_family not in [vs.GRAY, vs.YUV]:
@@ -2179,20 +2236,20 @@ def TemporalDegrain2(clip, degrainTR=2, degrainPlane=4, meAlg=5, meAlgPar=None, 
     
     w = clip.width
     h = clip.height
-    WH = max(w, h)
     bd = clip.format.bits_per_sample
     isFLOAT = clip.format.sample_type == vs.FLOAT
     isGRAY = clip.format.color_family == vs.GRAY
-    i = 0.00392 if isFLOAT else 1 << (bd - 8)
+    # Seems to be used for some kind of bit depth scaling...
+    bitDepthMultiplier = 0.00392 if isFLOAT else 1 << (bd - 8)
     mid = 0.5 if isFLOAT else 1 << (bd - 1)
-    if hasattr(core, 'mvsf'):  
-      S = core.mvsf.Super if isFLOAT else core.mv.Super
-      A = core.mvsf.Analyse if isFLOAT else core.mv.Analyse
-      C = core.mvsf.Compensate if isFLOAT else core.mv.Compensate
-      R = core.mvsf.Recalculate if isFLOAT else core.mv.Recalculate
-      D1 = core.mvsf.Degrain1 if isFLOAT else core.mv.Degrain1
-      D2 = core.mvsf.Degrain2 if isFLOAT else core.mv.Degrain2
-      D3 = core.mvsf.Degrain3 if isFLOAT else core.mv.Degrain3
+    if hasattr(core, 'mvsf') and isFLOAT:  
+      S = core.mvsf.Super
+      A = core.mvsf.Analyse
+      C = core.mvsf.Compensate
+      R = core.mvsf.Recalculate
+      D1 = core.mvsf.Degrain1
+      D2 = core.mvsf.Degrain2
+      D3 = core.mvsf.Degrain3
     else:
       S = core.mv.Super
       A = core.mv.Analyse
@@ -2202,55 +2259,53 @@ def TemporalDegrain2(clip, degrainTR=2, degrainPlane=4, meAlg=5, meAlgPar=None, 
       D2 = core.mv.Degrain2
       D3 = core.mv.Degrain3
     
-    if hasattr(core, 'rgsf'):  
-      RG = core.rgsf.RemoveGrain if isFLOAT else core.rgvs.RemoveGrain
+    if hasattr(core, 'rgsf') and isFLOAT:  
+      RG = core.rgsf.RemoveGrain
     else:
       RG = core.rgvs.RemoveGrain
-    rad = 3 if extraSharp else None
-    mat = [1, 2, 1, 2, 4, 2, 1, 2, 1]
+
+    if meAlgPar is None:
+        # radius/range parameter for the motion estimation algorithms
+        # AVS version uses the following, but values seemed to be based on an
+        # incorrect understanding of the MVTools motion seach algorithm, mistaking 
+        # it for the exact x264 behavior.
+        # meAlgPar = [2,2,2,2,16,24,2,2][meAlg] 
+        # Using Dogway's SMDegrain options here instead of the TemporalDegrain2 AVSI versions, which seem wrong.
+        meAlgPar = 5 if rec and meTM else 2
+
+    longlat = max(w, h)
+    shortlat = min(w, h)
+    # Scale grainLevel from -2-3 -> 0-5
+    grainLevel = grainLevel + 2
+
+    if (longlat<=1050 and shortlat<=576):
+        autoTune = 0
+    elif (longlat<=1280 and shortlat<=720):
+        autoTune = 1
+    elif (longlat<=2048 and shortlat<=1152):
+        autoTune = 2
+    else:
+        autoTune = 3
+
     ChromaNoise = (degrainPlane > 0)
-    hpad = meBlksz
-    vpad = meBlksz
     
     if meSubpel is None:
-        if WH < 960:
-            meSubpel = 4
-        elif WH < 2080:
-            meSubpel = 2
-        else:
-            meSubpel = 1
+        meSubpel = [4, 2, 2, 1][autoTune]
     
     if meBlksz is None:
-        if WH < 1280:
-            meBlksz = 8
-        elif WH < 2080:
-            meBlksz = 16
-        else:
-            meBlksz = 32
-    
+        meBlksz = [8, 8, 16, 32][autoTune]
+
+    limitAT = [-1, -1, 0, 0, 0, 1][grainLevel] + autoTune + 1
+
     if limitSigma is None:
-        if WH < 960:
-            limitSigma = 8
-        elif WH < 1280:
-            limitSigma = 12
-        elif WH < 2080:
-            limitSigma = 16
-        else:
-            limitSigma = 32
+        limitSigma = [6,8,12,16,32,48][limitAT]
     
     if limitBlksz is None:
-        if WH < 960:
-            limitBlksz = 16
-        elif WH < 1280:
-            limitBlksz = 24
-        elif WH < 2080:
-            limitBlksz = 32
-        else:
-            limitBlksz = 64
-    
-    if postFFT <= 0:
-        postTR = 0
-    
+        limitBlksz = [12,16,24,32,64,96][limitAT]
+
+    if SrchClipPP is None:
+        SrchClipPP = [0,0,0,3,3,3][grainLevel]
+
     if isGRAY:
         ChromaMotion = False
         ChromaNoise = False
@@ -2267,12 +2322,26 @@ def TemporalDegrain2(clip, degrainTR=2, degrainPlane=4, meAlg=5, meAlgPar=None, 
     else:
         fPlane = [0, 1, 2]
 
+    if postFFT <= 0:
+        postTR = 0
+
     if postFFT == 3:
         postTR = min(postTR, 7)
 
     if postFFT in [1, 2]:
         postTR = min(postTR, 2)
 
+    if postBlkSize is None:
+        postBlkSize = [0,48,32,12,0,0][postFFT]
+
+    if grainLevelSetup:
+        outputStage = 0
+        degrainTR = 3
+
+    rad = 3 if extraSharp else None
+    mat = [1, 2, 1, 2, 4, 2, 1, 2, 1]
+    hpad = meBlksz
+    vpad = meBlksz
     postTD  = postTR * 2 + 1
     maxTR = max(degrainTR, postTR)
     Overlap = meBlksz / 2
@@ -2280,6 +2349,18 @@ def TemporalDegrain2(clip, degrainTR=2, degrainPlane=4, meAlg=5, meAlgPar=None, 
     LSAD = 1200 if meTM else 400
     PNew = 50 if meTM else 25
     PLevel = 1 if meTM else 0
+
+    ppSAD1 = ppSAD1 if ppSAD1 is not None else [3,5,7,9,11,13][grainLevel]
+    ppSAD2 = ppSAD2 if ppSAD2 is not None else [2,4,5,6,7,8][grainLevel]
+    ppSCD1 = ppSCD1 if ppSCD1 is not None else [3,3,3,4,5,6][grainLevel]
+
+    if DCT == 5:
+        #rescale threshold to match the SAD values when using SATD
+        ppSAD1 *= 1.7
+        ppSAD2 *= 1.7
+        # ppSCD1 - this must not be scaled since scd is always based on SAD independently of the actual dct setting
+
+    #here the per-pixel measure is converted to the per-8x8-Block (8*8 = 64) measure MVTools is using
     thSAD1 = int(ppSAD1 * 64)
     thSAD2 = int(ppSAD2 * 64)
     thSCD1 = int(ppSCD1 * 64)
@@ -2298,12 +2379,13 @@ def TemporalDegrain2(clip, degrainTR=2, degrainPlane=4, meAlg=5, meAlgPar=None, 
     if SrchClipPP < 3:
         srchClip = spatialBlur
     else:
-        expr = 'x {a} + y < x {b} + x {a} - y > x {b} - x y + 2 / ? ?'.format(a=7*i, b=2*i)
+        expr = 'x {a} + y < x {b} + x {a} - y > x {b} - x y + 2 / ? ?'.format(a=7*bitDepthMultiplier, b=2*bitDepthMultiplier)
         srchClip = core.std.Expr([spatialBlur, clip], [expr] if ChromaMotion or isGRAY else [expr, ''])
 
     analyse_args = dict(blksize=meBlksz, overlap=Overlap, search=meAlg, searchparam=meAlgPar, pelsearch=meSubpel, truemotion=meTM, lambda_=Lambda, lsad=LSAD, pnew=PNew, plevel=PLevel, global_=GlobalMotion, dct=DCT, chroma=ChromaMotion)
     recalculate_args = dict(blksize=Overlap, overlap=Overlap/2, search=meAlg, searchparam=meAlgPar, truemotion=meTM, lambda_=Lambda/4, pnew=PNew, dct=DCT, chroma=ChromaMotion)
-    srchSuper = S(DitherLumaRebuild(srchClip, s0=1, chroma=ChromaMotion), pel=meSubpel, sharp=1, rfilter=4, hpad=hpad, vpad=vpad, chroma=ChromaMotion)
+    super_args = dict(pel=meSubpel, hpad=hpad, vpad=vpad, chroma=ChromaMotion)
+    srchSuper = S(DitherLumaRebuild(srchClip, s0=1, chroma=ChromaMotion), sharp=1, rfilter=4, **super_args)
     
     if (maxTR > 0) and (degrainTR < 4 or postTR < 4):
         bVec1 = A(srchSuper, isb=True,  delta=1, **analyse_args)
@@ -2337,20 +2419,25 @@ def TemporalDegrain2(clip, degrainTR=2, degrainPlane=4, meAlg=5, meAlgPar=None, 
     # Degrain
     # "spat" is a prefiltered clip which is used to limit the effect of the 1st MV-denoise stage.
     if degrainTR > 0:
-        limitSigma *= i
         s2 = limitSigma * 0.625
         s3 = limitSigma * 0.375
         s4 = limitSigma * 0.250
+        ovNum = [4, 4, 4, 3, 2, 2][grainLevel]
+        ov = 2 * round(limitBlksz / ovNum * 0.5)
+
         if hasattr(core, 'neo_fft3d'):
-          spat = core.neo_fft3d.FFT3D(clip, planes=fPlane, sigma=limitSigma, sigma2=s2, sigma3=s3, sigma4=s4, bt=3, bw=limitBlksz, bh=limitBlksz, ncpu=fftThreads)
+          spat = core.neo_fft3d.FFT3D(clip, planes=fPlane, sigma=limitSigma, sigma2=s2, sigma3=s3, sigma4=s4, bt=3, bw=limitBlksz, bh=limitBlksz, ow=ov, oh=ov, ncpu=fftThreads)
         else:
-          spat = core.fft3dfilter.FFT3DFilter(clip, planes=fPlane, sigma=limitSigma, sigma2=s2, sigma3=s3, sigma4=s4, bt=3, bw=limitBlksz, bh=limitBlksz, ncpu=fftThreads)
+          spat = core.fft3dfilter.FFT3DFilter(clip, planes=fPlane, sigma=limitSigma, sigma2=s2, sigma3=s3, sigma4=s4, bt=3, bw=limitBlksz, bh=limitBlksz, ow=ov, oh=ov, ncpu=fftThreads)
         spatD  = core.std.MakeDiff(clip, spat)
   
+    # Update super args for all other motion analysis
+    super_args |= dict(chroma=ChromaNoise, sharp=SubPelInterp, levels=1)
+
     # First MV-denoising stage. Usually here's some temporal-medianfiltering going on.
     # For simplicity, we just use MDegrain.
     if degrainTR > 0:
-        supero = S(clip, pel=meSubpel, sharp=SubPelInterp, levels=1, rfilter=1, hpad=hpad, vpad=vpad, chroma=ChromaNoise)
+        supero = S(clip, **super_args)
 
         if degrainTR < 2:
             NR1 = D1(clip, supero, bVec1, fVec1, plane=degrainPlane, thsad=thSAD1, thscd1=thSCD1, thscd2=thSCD2)
@@ -2364,13 +2451,13 @@ def TemporalDegrain2(clip, degrainTR=2, degrainPlane=4, meAlg=5, meAlgPar=None, 
     # Limit NR1 to not do more than what "spat" would do.
     if degrainTR > 0:
         NR1D = core.std.MakeDiff(clip, NR1)
-        expr = 'x abs y abs < x y ?' if isFLOAT else 'x {} - abs y {} - abs < x y ?'.format(mid, mid)
+        expr = 'x abs y abs < x y ?' if isFLOAT else f'x {mid} - abs y {mid} - abs < x y ?'
         DD   = core.std.Expr([spatD, NR1D], [expr])
         NR1x = core.std.MakeDiff(clip, DD, [0])
   
     # Second MV-denoising stage. We use MDegrain.
     if degrainTR > 0:
-        NR1x_super = S(NR1x, pel=meSubpel, sharp=SubPelInterp, levels=1, rfilter=1, hpad=hpad, vpad=vpad, chroma=ChromaNoise)
+        NR1x_super = S(NR1x, **super_args)
 
         if degrainTR < 2:
             NR2 = D1(NR1x, NR1x_super, bVec1, fVec1, plane=degrainPlane, thsad=thSAD2, thscd1=thSCD1, thscd2=thSCD2)
@@ -2383,50 +2470,53 @@ def TemporalDegrain2(clip, degrainTR=2, degrainPlane=4, meAlg=5, meAlgPar=None, 
     else:
         NR2 = clip
     
-    NR2 = RG(NR2, mode=1) # Filter to remove last bits of dancing pixels, YMMV.
-
     #---------------------------------------
     # post FFT
     if postTR > 0:
-        fullSuper = S(NR2, pel=meSubpel, sharp=SubPelInterp, levels=1, rfilter=1, hpad=hpad, vpad=vpad, chroma=ChromaNoise)
+        fullSuper = S(NR2, **super_args)
 
     if postTR > 0:
         if postTR == 1:
-            noiseWindow = core.std.Interleave([C(NR2, fullSuper, fVec1, thscd1=thSCD1, thscd2=thSCD2), NR2,
-                                               C(NR2, fullSuper, bVec1, thscd1=thSCD1, thscd2=thSCD2)])
+            noiseWindow = core.std.Interleave([C(NR2, fullSuper, fVec1, thsad=thSAD2, thscd1=thSCD1, thscd2=thSCD2), NR2,
+                                               C(NR2, fullSuper, bVec1, thsad=thSAD2, thscd1=thSCD1, thscd2=thSCD2)])
         elif postTR == 2:
-            noiseWindow = core.std.Interleave([C(NR2, fullSuper, fVec2, thscd1=thSCD1, thscd2=thSCD2),
-                                               C(NR2, fullSuper, fVec1, thscd1=thSCD1, thscd2=thSCD2), NR2,
-                                               C(NR2, fullSuper, bVec1, thscd1=thSCD1, thscd2=thSCD2),
-                                               C(NR2, fullSuper, bVec2, thscd1=thSCD1, thscd2=thSCD2)])
+            noiseWindow = core.std.Interleave([C(NR2, fullSuper, fVec2, thsad=thSAD2, thscd1=thSCD1, thscd2=thSCD2),
+                                               C(NR2, fullSuper, fVec1, thsad=thSAD2, thscd1=thSCD1, thscd2=thSCD2), NR2,
+                                               C(NR2, fullSuper, bVec1, thsad=thSAD2, thscd1=thSCD1, thscd2=thSCD2),
+                                               C(NR2, fullSuper, bVec2, thsad=thSAD2, thscd1=thSCD1, thscd2=thSCD2)])
         elif postTR == 3:
-            noiseWindow = core.std.Interleave([C(NR2, fullSuper, fVec3, thscd1=thSCD1, thscd2=thSCD2),
-                                               C(NR2, fullSuper, fVec2, thscd1=thSCD1, thscd2=thSCD2),
-                                               C(NR2, fullSuper, fVec1, thscd1=thSCD1, thscd2=thSCD2), NR2,
-                                               C(NR2, fullSuper, bVec1, thscd1=thSCD1, thscd2=thSCD2),
-                                               C(NR2, fullSuper, bVec2, thscd1=thSCD1, thscd2=thSCD2),
-                                               C(NR2, fullSuper, bVec3, thscd1=thSCD1, thscd2=thSCD2)])
+            noiseWindow = core.std.Interleave([C(NR2, fullSuper, fVec3, thsad=thSAD2, thscd1=thSCD1, thscd2=thSCD2),
+                                               C(NR2, fullSuper, fVec2, thsad=thSAD2, thscd1=thSCD1, thscd2=thSCD2),
+                                               C(NR2, fullSuper, fVec1, thsad=thSAD2, thscd1=thSCD1, thscd2=thSCD2), NR2,
+                                               C(NR2, fullSuper, bVec1, thsad=thSAD2, thscd1=thSCD1, thscd2=thSCD2),
+                                               C(NR2, fullSuper, bVec2, thsad=thSAD2, thscd1=thSCD1, thscd2=thSCD2),
+                                               C(NR2, fullSuper, bVec3, thsad=thSAD2, thscd1=thSCD1, thscd2=thSCD2)])
         else:
-            noiseWindow = mvmulti.Compensate(NR2, fullSuper, vmulti2, thscd1=thSCD1, thscd2=thSCD2, tr=postTR)
+            noiseWindow = mvmulti.Compensate(NR2, fullSuper, vmulti2, thsad=thSAD2, thscd1=thSCD1, thscd2=thSCD2, tr=postTR)
     else:
         noiseWindow = NR2
     
     if postFFT == 3:
-        dnWindow = core.dfttest.DFTTest(noiseWindow, sigma=postSigma*4, tbsize=postTD, planes=fPlane)
+        dnWindow = core.dfttest.DFTTest(noiseWindow, sigma=postSigma*4, tbsize=postTD, planes=fPlane, sbsize=postBlkSize, sosize=postBlkSize*9/12)
     elif postFFT == 4:
-        dnWindow = haf.KNLMeansCL(noiseWindow, d=postTR, a=2, h=postSigma/2, device_id=knlDevId) if ChromaNoise else noiseWindow.knlm.KNLMeansCL(dnWindow, d=postTR, a=2, h=postSigma/2, device_id=knlDevId)
+        dnWindow = haf.KNLMeansCL(noiseWindow, d=postTR, a=2, h=postSigma/2, device_id=knlDevId) if ChromaNoise else noiseWindow.knlm.KNLMeansCL(d=postTR, a=2, h=postSigma/2, device_id=knlDevId)
     elif postFFT > 0:
         if hasattr(core, 'neo_fft3d'):
-          dnWindow = core.neo_fft3d.FFT3D(noiseWindow, sigma=postSigma*i, planes=fPlane, bt=postTD, ncpu=fftThreads)
+          dnWindow = core.neo_fft3d.FFT3D(noiseWindow, sigma=postSigma, planes=fPlane, bt=postTD, ncpu=fftThreads, bw=postBlkSize, bh=postBlkSize)
         else:
-          dnWindow = core.fft3dfilter.FFT3DFilter(noiseWindow, sigma=postSigma*i, planes=fPlane, bt=postTD, ncpu=fftThreads)
+          dnWindow = core.fft3dfilter.FFT3DFilter(noiseWindow, sigma=postSigma, planes=fPlane, bt=postTD, ncpu=fftThreads, bw=postBlkSize, bh=postBlkSize)
     else:
-        dnWindow = noiseWindow
+        dnWindow = RG(noiseWindow, mode=1)
     
     if postTR > 0:
         dnWindow = dnWindow[postTR::postTD]
-    
-    return ContraSharpening(dnWindow, clip, rad)
+
+    sharpened = ContraSharpening(dnWindow, clip, rad)
+
+    if postMix > 0:
+        sharpened = core.std.Expr([clip,sharpened],f"x {postMix} * y {100-postMix} * + 100 /")
+
+    return [NR1x, NR2, sharpened][outputStage]
 
 
 def mClean(clip, thSAD=400, chroma=True, sharp=10, rn=14, deband=0, depth=0, strength=20, outbits=None, icalc=True, rgmode=18):
