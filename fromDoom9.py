@@ -1,6 +1,104 @@
 from vapoursynth import core
 import vapoursynth as vs
 
+# DeStripe works on YUVXXXPY
+# requires https://github.com/AkarinVS/vapoursynth-plugin/releases
+#
+# int rad: search radius (default: 1, range: 1-5)
+# int thr: blur threshold, wil be scaled by bit depth (default: 256, range: 1-256)
+# boolean vertical: transposes the source for the filtering, to handle vertical lines instead of horizontal ones. (default: False)
+def DeStripe(clip: vs.VideoNode, rad: int=2, offset: int=0, thr: int=256, vertical=False) -> vs.VideoNode:
+ 
+  if (rad < 1) or (rad > 5):
+    raise vs.Error('rad not valid (range: 1-5)')
+  if (offset < 0) or (offset > (rad-1)):
+    raise vs.Error('rad not valid (range: 0-(rad-1)')
+  
+  thr = 256 << (clip.format.bits_per_sample - 8) # scale thr by bit depth
+  if vertical: 
+    clip = core.std.Transpose(clip)
+  
+  if (rad == 1):
+    blurred = clip.std.Convolution(matrix=[ 1, 1, 1 ], mode='v', planes=[0])
+  elif rad == 2:
+    if offset == 0:
+      blurred =  clip.std.Convolution(matrix=[ 1, 1, 1, 1, 1 ], mode='v', planes=[0])
+    else:
+      blurred = clip.std.Convolution(matrix=[ 1, 0, 1, 0, 1 ], mode='v', planes=[0])
+  elif rad == 3:
+    if offset == 0:
+      blurred = clip.std.Convolution(matrix=[ 1, 1, 1, 1, 1, 1, 1 ], mode='v', planes=[0])   
+    elif offset == 1:
+      blurred = clip.std.Convolution(matrix=[ 1, 1, 0, 1, 0, 1, 1 ], mode='v', planes=[0])
+    else:
+      blurred = clip.std.Convolution(matrix=[ 1, 0, 0, 1, 0, 0, 1 ], mode='v', planes=[0])
+  elif rad == 4:
+    if offset == 0:
+      blurred = clip.std.Convolution(matrix=[ 1, 1, 1, 1, 1, 1, 1, 1, 1 ], mode='v', planes=[0])
+    elif offset == 1:
+      blurred = clip.std.Convolution(matrix=[ 1, 1, 1, 0, 1, 0, 1, 1, 1 ], mode='v', planes=[0])
+    elif offset == 2:
+      blurred = clip.std.Convolution(matrix=[ 1, 1, 0, 0, 1, 0, 0, 1, 1 ], mode='v', planes=[0])
+    else:
+      blurred = clip.std.Convolution(matrix=[ 1, 0, 0, 0, 1, 0, 0, 0, 1 ], mode='v', planes=[0])
+  elif rad == 5:
+    if offset == 0:
+      blurred = clip.std.Convolution(matrix=[ 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1 ], mode='v', planes=[0])
+    elif offset == 1:
+      blurred = clip.std.Convolution(matrix=[ 1, 1, 1, 1, 0, 1, 0, 1, 1, 1, 1 ], mode='v', planes=[0])
+    elif offset == 2:
+      blurred = clip.std.Convolution(matrix=[ 1, 1, 1, 0, 0, 1, 0, 0, 1, 1, 1 ], mode='v', planes=[0])
+    elif offset == 3:
+      blurred = clip.std.Convolution(matrix=[ 1, 1, 0, 0, 0, 1, 0, 0, 0, 1, 1 ], mode='v', planes=[0])
+    else:
+      blurred = clip.std.Convolution(matrix=[ 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1 ], mode='v', planes=[0]) 
+  diff = core.std.MakeDiff(clip, blurred)
+
+  thr_s=str(thr)
+  partial_expr = lambda M, N: f" x x[{M},{N}] - x x[{M},{N}] - x x[{M},{N}] - abs 1 + * x x[{M},{N}] - abs 1 + {thr_s} 1 >= {thr_s} 0.5 pow {thr_s} ? + / - 128 + "
+  if rad == 1:    
+    medianDiff = core.akarin.Expr(diff, [partial_expr(0,0) + partial_expr(1,0) + partial_expr(-1,0) + "sort3 drop swap drop", ""])
+  elif rad == 2:
+    if offset == 0:
+      medianDiff = core.akarin.Expr(diff, [partial_expr(0,0) + partial_expr(1,0) + partial_expr(-1,0) + partial_expr(0,2) + partial_expr(-2,0) + "sort5  drop drop swap drop drop", ""])  
+    else: 
+      medianDiff = core.akarin.Expr(diff, [partial_expr(0,0) + partial_expr(2,0) + partial_expr(-2,0) + "sort3 drop swap drop", ""])  
+  elif rad == 3:
+    if offset == 0:  
+      medianDiff = core.akarin.Expr(diff, [partial_expr(0,0) + partial_expr(1,0) + partial_expr(-1,0) + partial_expr(2,0) + partial_expr(-2,0) + partial_expr(3,0)  + partial_expr(-3,0) + "sort7 drop drop drop swap drop drop drop", ""])  
+    elif offset == 1:
+      medianDiff = core.akarin.Expr(diff, [partial_expr(0,0) + partial_expr(2,0) + partial_expr(-2,0) + partial_expr(3,0) + partial_expr(-3,0) + "sort5  drop drop swap drop drop", ""])  
+    else:  
+      medianDiff = core.akarin.Expr(diff, [partial_expr(0,0) + partial_expr(3,0) + partial_expr(-3,0) + "sort3 drop swap drop", ""])
+  elif rad == 4:
+    if offset == 0:
+      medianDiff = core.akarin.Expr(diff, [partial_expr(0,0) + partial_expr(1,0) + partial_expr(-1,0) + partial_expr(2,0) + partial_expr(-2,0) + partial_expr(3,0) + partial_expr(-3,0) + partial_expr(4,0) + partial_expr(-4,0) + "sort9 drop drop drop drop swap drop drop drop drop", ""])
+    elif offset == 1:
+      medianDiff = core.akarin.Expr(diff, [partial_expr(0,0) + partial_expr(2,0) + partial_expr(-2,0) + partial_expr(3,0) + partial_expr(-3,0) + partial_expr(4,0) + partial_expr(-4,0) + "sort7 drop swap drop swap drop drop drop", ""])
+    elif  offset == 2:
+      medianDiff = core.akarin.Expr(diff, [partial_expr(0,0) + partial_expr(3,0) + partial_expr(-3,0) + partial_expr(4,0) + partial_expr(-4,0) + "sort5  drop drop swap drop drop", ""])
+    else:
+      medianDiff = core.akarin.Expr(diff, [partial_expr(0,0) + partial_expr(4,0) + partial_expr(-4,0) + "sort3 drop swap drop", ""])
+  elif rad == 5:
+    if offset == 0:
+      medianDiff = core.akarin.Expr(diff, [partial_expr(0,0) + partial_expr(1,0) + partial_expr(-1,0) + partial_expr(2,0) + partial_expr(-2,0) + partial_expr(3,0) + partial_expr(-3,0) + partial_expr(4,0) + partial_expr(-4,0) + partial_expr(5,0) + partial_expr(-5,0) + "sort11 drop drop drop drop drop swap drop drop drop drop drop", ""])
+    elif offset == 1:
+      medianDiff = core.akarin.Expr(diff, [partial_expr(0,0) + partial_expr(2,0) + partial_expr(-2,0) + partial_expr(3,0) + partial_expr(-3,0) + partial_expr(4,0) + partial_expr(-4,0) + partial_expr(5,0) + partial_expr(-5,0) + "sort9 drop drop drop drop swap drop drop drop drop", ""])
+    elif offset == 2:
+      medianDiff = core.akarin.Expr(diff, [partial_expr(0,0) + partial_expr(3,0) + partial_expr(-3,0) + partial_expr(4,0) + partial_expr(-4,0) + partial_expr(5,0) + partial_expr(-5,0) + "sort7 drop swap drop swap drop drop dro", ""])
+    elif offset == 3:
+      medianDiff = core.akarin.Expr(diff, [partial_expr(0,0) + partial_expr(4,0) + partial_expr(-4,0) + partial_expr(5,0) + partial_expr(-5,0) + "sort5  drop drop swap drop drop", ""])
+    else:
+      medianDiff = core.akarin.Expr(diff, [partial_expr(0,0) + partial_expr(5,0) + partial_expr(-5,0) + "sort3 drop swap drop", ""])
+  reconstructedMedian = core.std.MakeDiff(diff, medianDiff)
+   
+  blurred = core.std.MergeDiff(blurred, reconstructedMedian)
+  
+  if vertical: 
+    blurred = core.std.Transpose(clip)
+  
+  return blurred
+
 ###
 # requirements:
 # RemoveGrain 
@@ -20,7 +118,7 @@ def StabilizeIT(clip: vs.VideoNode, div: float=2.0, initZoom: float=1.0, zoomMax
   return clip
   
 ##
-# supports: GrayS, RGBS and YUV4xxPS
+# supports: GrayS, RGBS and YUV444PS
 # requires libmvtools_sf_em64t (https://github.com/IFeelBloated/vapoursynth-mvtools-sf)
 # mvmulti.py (https://github.com/Selur/VapoursynthScriptsInHybrid/blob/master/mvmulti.py)
 # author: takla, Avisynth see: https://forum.doom9.org/showthread.php?t=183192
@@ -34,7 +132,6 @@ def EZdenoise(clip: vs.VideoNode, thSAD: int=150, thSADC: int=-1, tr: int=3, blk
   Multi_Vector = mvmulti.Analyze(super=Super, tr=tr, blksize=blksize, overlap=overlap, chroma=chroma)
 
   return mvmulti.DegrainN(clip=clip, super=Super, mvmulti=Multi_Vector, tr=tr, thsad=thSAD, thscd1=thSADC, thscd2=int(thSADC*falloff))
-
 
 # Vapoursynth port by Selur from https://forum.doom9.org/showthread.php?p=1812060#post1812060
 #
