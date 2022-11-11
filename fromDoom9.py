@@ -14,7 +14,7 @@ def DeStripe(clip: vs.VideoNode, rad: int=2, offset: int=0, thr: int=256, vertic
   if (offset < 0) or (offset > (rad-1)):
     raise vs.Error('rad not valid (range: 0-(rad-1)')
   
-  thr = 256 << (clip.format.bits_per_sample - 8) # scale thr by bit depth
+  thr = thr << (clip.format.bits_per_sample - 8) # scale thr by bit depth
   if vertical: 
     clip = core.std.Transpose(clip)
   
