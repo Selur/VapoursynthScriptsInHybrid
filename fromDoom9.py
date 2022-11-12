@@ -15,7 +15,7 @@ def DeStripe(clip: vs.VideoNode, rad: int=2, offset: int=0, thr: int=256, vertic
     raise vs.Error('rad not valid (range: 1-5)')
   if (offset < 0) or (offset > (rad-1)):
     raise vs.Error('rad not valid (range: 0-(rad-1)')
-  if (hvmode != 'v' and mode != 'h'):
+  if (hvmode != 'v' and hvmode != 'h'):
     raise vs.Error("mode kein either be 'h' or 'v'")
     
   thr = thr << (clip.format.bits_per_sample - 8) # scale thr by bit depth
