@@ -22,129 +22,37 @@ def DeStripe(clip: vs.VideoNode, rad: int=2, offset: int=0, thr: int=256, vertic
   if vertical: 
     clip = core.std.Transpose(clip)
   
-  if (rad == 1):
-    blurred = clip.std.Convolution(matrix=[ 1, 1, 1 ], mode=hvmode, planes=[0])
-  elif rad == 2:
-    if offset == 0:
-      blurred =  clip.std.Convolution(matrix=[ 1, 1, 1, 1, 1 ], mode=hvmode, planes=[0])
-    else:
-      blurred = clip.std.Convolution(matrix=[ 1, 0, 1, 0, 1 ], mode=hvmode, planes=[0])
-  elif rad == 3:
-    if offset == 0:
-      blurred = clip.std.Convolution(matrix=[ 1, 1, 1, 1, 1, 1, 1 ], mode=hvmode, planes=[0])   
-    elif offset == 1:
-      blurred = clip.std.Convolution(matrix=[ 1, 1, 0, 1, 0, 1, 1 ], mode=hvmode, planes=[0])
-    else:
-      blurred = clip.std.Convolution(matrix=[ 1, 0, 0, 1, 0, 0, 1 ], mode=hvmode, planes=[0])
-  elif rad == 4:
-    if offset == 0:
-      blurred = clip.std.Convolution(matrix=[ 1, 1, 1, 1, 1, 1, 1, 1, 1 ], mode=hvmode, planes=[0])
-    elif offset == 1:
-      blurred = clip.std.Convolution(matrix=[ 1, 1, 1, 0, 1, 0, 1, 1, 1 ], mode=hvmode, planes=[0])
-    elif offset == 2:
-      blurred = clip.std.Convolution(matrix=[ 1, 1, 0, 0, 1, 0, 0, 1, 1 ], mode=hvmode, planes=[0])
-    else:
-      blurred = clip.std.Convolution(matrix=[ 1, 0, 0, 0, 1, 0, 0, 0, 1 ], mode=hvmode, planes=[0])
-  elif rad == 5:
-    if offset == 0:
-      blurred = clip.std.Convolution(matrix=[ 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1 ], mode=hvmode, planes=[0])
-    elif offset == 1:
-      blurred = clip.std.Convolution(matrix=[ 1, 1, 1, 1, 0, 1, 0, 1, 1, 1, 1 ], mode=hvmode, planes=[0])
-    elif offset == 2:
-      blurred = clip.std.Convolution(matrix=[ 1, 1, 1, 0, 0, 1, 0, 0, 1, 1, 1 ], mode=hvmode, planes=[0])
-    elif offset == 3:
-      blurred = clip.std.Convolution(matrix=[ 1, 1, 0, 0, 0, 1, 0, 0, 0, 1, 1 ], mode=hvmode, planes=[0])
-    else:
-      blurred = clip.std.Convolution(matrix=[ 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1 ], mode=hvmode, planes=[0]) 
+  MAP = {
+      1: ([1,1,1],),
+      2: ([1,1,1,1,1], [1,0,1,0,1]),
+      3: ([1,1,1,1,1,1,1], [1,1,0,1,0,1,1], [1,0,0,1,0,0,1]),
+      4: ([1,1,1,1,1,1,1,1,1 ], [1,1,1,0,1,0,1,1,1], [1,1,0,0,1,0,0,1,1], [1,0,0,0,1,0,0,0,1]),
+      5: ([1,1,1,1,1,1,1,1,1,1,1], [1,1,1,1,0,1,0,1,1,1,1], [1,1,1,0,0,1,0,0,1,1,1], [1,1,0,0,0,1,0,0,0,1,1], [1,0,0,0,0,1,0,0,0,0,1])
+      }    
+  blurred = clip.std.Convolution(matrix=MAP[rad][offset], mode=hvmode, planes=[0]) 
   diff = core.std.MakeDiff(clip, blurred)
 
   thr_s=str(thr)
   partial_expr = lambda M, N: f" x x[{M},{N}] - x x[{M},{N}] - x x[{M},{N}] - abs 1 + * x x[{M},{N}] - abs 1 + {thr_s} 1 >= {thr_s} 0.5 pow {thr_s} ? + / - 128 + "
-  if rad == 1:  
-    if hvmode == 'v':
-        medianDiff = core.akarin.Expr(diff, [partial_expr(0,0) + partial_expr(1,0) + partial_expr(-1,0) + "sort3 drop swap drop", ""])
-    else:
-        medianDiff = core.akarin.Expr(diff, [partial_expr(0,0) + partial_expr(0,1) + partial_expr(0,-1) + "sort3 drop swap drop", ""])
-  elif rad == 2:
-    if offset == 0:
+
+  matrix_length = len(MAP[rad][offset])
+  start = offset*2 + 1
+  pattern = [(0,0), (0,1), (0,-1), (0,2), (0,-2), (0,3), (0,-3), (0,4), (0,-4), (0,5), (0,-5)]
+  pattern = pattern[0:matrix_length]
+  pattern = [(0,0)] + pattern[start:]
+  expr = ''
+  for pair in pattern:
       if hvmode == 'v':
-        medianDiff = core.akarin.Expr(diff, [partial_expr(0,0) + partial_expr(1,0) + partial_expr(-1,0) + partial_expr(0,2) + partial_expr(-2,0) + "sort5  drop drop swap drop drop", ""])  
-      else:
-        medianDiff = core.akarin.Expr(diff, [partial_expr(0,0) + partial_expr(0,1) + partial_expr(0,-1) + partial_expr(0,2) + partial_expr(0,-1) + "sort5  drop drop swap drop drop", ""])  
-    else: 
-      if hvmode == 'v':
-        medianDiff = core.akarin.Expr(diff, [partial_expr(0,0) + partial_expr(2,0) + partial_expr(-2,0) + "sort3 drop swap drop", ""])  
-      else:
-        medianDiff = core.akarin.Expr(diff, [partial_expr(0,0) + partial_expr(0,2) + partial_expr(0,-2) + "sort3 drop swap drop", ""])  
-  elif rad == 3:
-    if offset == 0:  
-      if hvmode == 'v':
-        medianDiff = core.akarin.Expr(diff, [partial_expr(0,0) + partial_expr(1,0) + partial_expr(-1,0) + partial_expr(2,0) + partial_expr(-2,0) + partial_expr(3,0)  + partial_expr(-3,0) + "sort7 drop drop drop swap drop drop drop", ""])  
-      else:
-        medianDiff = core.akarin.Expr(diff, [partial_expr(0,0) + partial_expr(0,1) + partial_expr(0,1) + partial_expr(0,2) + partial_expr(0,.1) + partial_expr(0,3)  + partial_expr(0,-3) + "sort7 drop drop drop swap drop drop drop", ""])  
-    elif offset == 1:
-      if hvmode == 'v':
-        medianDiff = core.akarin.Expr(diff, [partial_expr(0,0) + partial_expr(2,0) + partial_expr(-2,0) + partial_expr(3,0) + partial_expr(-3,0) + "sort5  drop drop swap drop drop", ""])  
-      else:
-        medianDiff = core.akarin.Expr(diff, [partial_expr(0,0) + partial_expr(0,2) + partial_expr(0,-2) + partial_expr(0,3) + partial_expr(0,-3) + "sort5  drop drop swap drop drop", ""])  
-    else:  
-      if hvmode == 'v':
-        medianDiff = core.akarin.Expr(diff, [partial_expr(0,0) + partial_expr(3,0) + partial_expr(-3,0) + "sort3 drop swap drop", ""])
-      else:
-        medianDiff = core.akarin.Expr(diff, [partial_expr(0,0) + partial_expr(0,3) + partial_expr(0,-3) + "sort3 drop swap drop", ""])
-  elif rad == 4:
-    if offset == 0:
-      if hvmode == 'v':
-        medianDiff = core.akarin.Expr(diff, [partial_expr(0,0) + partial_expr(1,0) + partial_expr(-1,0) + partial_expr(2,0) + partial_expr(-2,0) + partial_expr(3,0) + partial_expr(-3,0) + partial_expr(4,0) + partial_expr(-4,0) + "sort9 drop drop drop drop swap drop drop drop drop", ""])
-      else:
-        medianDiff = core.akarin.Expr(diff, [partial_expr(0,0) + partial_expr(0,1) + partial_expr(0,-1) + partial_expr(0,2) + partial_expr(0,-2) + partial_expr(0,3) + partial_expr(0,-3) + partial_expr(0,4) + partial_expr(0,-4) + "sort9 drop drop drop drop swap drop drop drop drop", ""])
-    elif offset == 1:
-      if hvmode == 'v':
-        medianDiff = core.akarin.Expr(diff, [partial_expr(0,0) + partial_expr(2,0) + partial_expr(-2,0) + partial_expr(3,0) + partial_expr(-3,0) + partial_expr(4,0) + partial_expr(-4,0) + "sort7 drop swap drop swap drop drop drop", ""])
-      else:
-        medianDiff = core.akarin.Expr(diff, [partial_expr(0,0) + partial_expr(2,0) + partial_expr(0,-2) + partial_expr(0,3) + partial_expr(0,-3) + partial_expr(0,4) + partial_expr(0,-4) + "sort7 drop swap drop swap drop drop drop", ""])
-    elif  offset == 2:
-      if hvmode == 'v':
-        medianDiff = core.akarin.Expr(diff, [partial_expr(0,0) + partial_expr(3,0) + partial_expr(-3,0) + partial_expr(4,0) + partial_expr(-4,0) + "sort5  drop drop swap drop drop", ""])
-      else:
-        medianDiff = core.akarin.Expr(diff, [partial_expr(0,0) + partial_expr(0,3) + partial_expr(0,-3) + partial_expr(0,4) + partial_expr(0,-4) + "sort5  drop drop swap drop drop", ""])
-    else:
-      if hvmode == 'v':
-        medianDiff = core.akarin.Expr(diff, [partial_expr(0,0) + partial_expr(4,0) + partial_expr(-4,0) + "sort3 drop swap drop", ""])
-      else:
-        medianDiff = core.akarin.Expr(diff, [partial_expr(0,0) + partial_expr(0,4) + partial_expr(0,4) + "sort3 drop swap drop", ""])
-  elif rad == 5:
-    if offset == 0:
-      if hvmode == 'v':
-        medianDiff = core.akarin.Expr(diff, [partial_expr(0,0) + partial_expr(1,0) + partial_expr(-1,0) + partial_expr(2,0) + partial_expr(-2,0) + partial_expr(3,0) + partial_expr(-3,0) + partial_expr(4,0) + partial_expr(-4,0) + partial_expr(5,0) + partial_expr(-5,0) + "sort11 drop drop drop drop drop swap drop drop drop drop drop", ""])
-      else:
-        medianDiff = core.akarin.Expr(diff, [partial_expr(0,0) + partial_expr(0,1) + partial_expr(0,-1) + partial_expr(0,2) + partial_expr(0,-2) + partial_expr(0,3) + partial_expr(0,-3) + partial_expr(0,4) + partial_expr(0,-4) + partial_expr(0,5) + partial_expr(0,-5) + "sort11 drop drop drop drop drop swap drop drop drop drop drop", ""])
-    elif offset == 1:
-      if hvmode == 'v':
-        medianDiff = core.akarin.Expr(diff, [partial_expr(0,0) + partial_expr(2,0) + partial_expr(-2,0) + partial_expr(3,0) + partial_expr(-3,0) + partial_expr(4,0) + partial_expr(-4,0) + partial_expr(5,0) + partial_expr(-5,0) + "sort9 drop drop drop drop swap drop drop drop drop", ""])
-      else:
-        medianDiff = core.akarin.Expr(diff, [partial_expr(0,0) + partial_expr(0,2) + partial_expr(0,-2) + partial_expr(0,3) + partial_expr(0,-3) + partial_expr(0.4) + partial_expr(0,-4) + partial_expr(0,5) + partial_expr(0,-5) + "sort9 drop drop drop drop swap drop drop drop drop", ""])
-    elif offset == 2:
-      if hvmode == 'v':
-        medianDiff = core.akarin.Expr(diff, [partial_expr(0,0) + partial_expr(3,0) + partial_expr(-3,0) + partial_expr(4,0) + partial_expr(-4,0) + partial_expr(5,0) + partial_expr(-5,0) + "sort7 drop swap drop swap drop drop dro", ""])
-      else:
-        medianDiff = core.akarin.Expr(diff, [partial_expr(0,0) + partial_expr(0,3) + partial_expr(0,-3) + partial_expr(0,4) + partial_expr(0,-4) + partial_expr(0,5) + partial_expr(0,-5) + "sort7 drop swap drop swap drop drop dro", ""])
-    elif offset == 3:
-      if hvmode == 'v':
-        medianDiff = core.akarin.Expr(diff, [partial_expr(0,0) + partial_expr(4,0) + partial_expr(-4,0) + partial_expr(5,0) + partial_expr(-5,0) + "sort5  drop drop swap drop drop", ""])
-      else:
-        medianDiff = core.akarin.Expr(diff, [partial_expr(0,0) + partial_expr(0,4) + partial_expr(0,-4) + partial_expr(0,5) + partial_expr(0,-5) + "sort5  drop drop swap drop drop", ""])
-    else:
-      if hvmode == 'v':
-        medianDiff = core.akarin.Expr(diff, [partial_expr(0,0) + partial_expr(5,0) + partial_expr(-5,0) + "sort3 drop swap drop", ""])
-      else:
-        medianDiff = core.akarin.Expr(diff, [partial_expr(0,0) + partial_expr(0,5) + partial_expr(0,-5) + "sort3 drop swap drop", ""])
-  reconstructedMedian = core.std.MakeDiff(diff, medianDiff)
-   
+          pair = tuple(reversed(pair))
+      expr += partial_expr(*pair)
+  expr = expr + f'sort{matrix_length} ' + 'drop '*int(matrix_length/2) + 'swap ' + 'drop '*int(matrix_length/2)
+  
+  medianDiff = core.akarin.Expr(diff, [expr, ''])
+  reconstructedMedian = core.std.MakeDiff(diff, medianDiff)   
   blurred = core.std.MergeDiff(blurred, reconstructedMedian)
   
   if vertical: 
-    blurred = core.std.Transpose(clip)
+    blurred = core.std.Transpose(blurred)
   
   return blurred
 
