@@ -45,7 +45,7 @@ def DeStripe(clip: vs.VideoNode, rad: int=2, offset: int=0, thr: int=256, vertic
       if hvmode == 'v':
           pair = tuple(reversed(pair))
       expr += partial_expr(*pair)
-  expr = expr + f'sort{matrix_length} ' + 'drop '*int(matrix_length/2) + 'swap ' + 'drop '*int(matrix_length/2)
+  expr = expr + f'sort{len(pattern)} ' + 'drop '*int(len(pattern)/2) + 'swap ' + 'drop '*int(len(pattern)/2)
   
   medianDiff = core.akarin.Expr(diff, [expr, ''])
   reconstructedMedian = core.std.MakeDiff(diff, medianDiff)   
