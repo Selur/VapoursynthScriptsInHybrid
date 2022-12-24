@@ -2220,15 +2220,13 @@ def TemporalDegrain2(clip, degrainTR=1, degrainPlane=4, grainLevel=2, grainLevel
           variable, which caused crazy sigma values to be used. Sigma is
           bitdepth indepenent, so don't know why it was ever used.
 
+    December 22, 2022 (Adub/adworacz): 
+        - Removed internal LSAD and PLevel params, as they simply restated the existing MVtools defaults.
+        - Fixed `rec` behavior with properly tuned recalculate args and a dedicated super clip with levels=1.
 
     TODO:
         - Add support for BM3D (CPU/CUDA), dfttest2 (CPU/CUDA)
-        - Remove all params based on meTM (truemotion) that simply replicate the MVtools defaults.
-        - Tune DitherLumaRebuild params (like `c`) to match SMDegrain.
-        - Investigate why usage of rfilter=4. AVS version doesn't have it.
-        - Re-evaluate all MVTools params, in particular those associated with
-          level, rfilter, search, and rec/RefineMotion. Those currently used
-          differ significantly from AVS version, SMDegrain, and MCTemporalDenoise
+        - Investigate usage of rfilter=4. AVS version doesn't have it. MCTemporalDenoise uses 4 if refine else 2, SMDegrain uses 3 or default (2).
     """
 
     if not isinstance(clip, vs.VideoNode) or clip.format.color_family not in [vs.GRAY, vs.YUV]:
@@ -2346,9 +2344,7 @@ def TemporalDegrain2(clip, degrainTR=1, degrainPlane=4, grainLevel=2, grainLevel
     maxTR = max(degrainTR, postTR)
     Overlap = meBlksz / 2
     Lambda = (1000 if meTM else 100) * (meBlksz ** 2) // 64
-    LSAD = 1200 if meTM else 400
     PNew = 50 if meTM else 25
-    PLevel = 1 if meTM else 0
 
     ppSAD1 = ppSAD1 if ppSAD1 is not None else [3,5,7,9,11,13][grainLevel]
     ppSAD2 = ppSAD2 if ppSAD2 is not None else [2,4,5,6,7,8][grainLevel]
@@ -2382,29 +2378,33 @@ def TemporalDegrain2(clip, degrainTR=1, degrainPlane=4, grainLevel=2, grainLevel
         expr = 'x {a} + y < x {b} + x {a} - y > x {b} - x y + 2 / ? ?'.format(a=7*bitDepthMultiplier, b=2*bitDepthMultiplier)
         srchClip = core.std.Expr([spatialBlur, clip], [expr] if ChromaMotion or isGRAY else [expr, ''])
 
-    analyse_args = dict(blksize=meBlksz, overlap=Overlap, search=meAlg, searchparam=meAlgPar, pelsearch=meSubpel, truemotion=meTM, lambda_=Lambda, lsad=LSAD, pnew=PNew, plevel=PLevel, global_=GlobalMotion, dct=DCT, chroma=ChromaMotion)
-    recalculate_args = dict(blksize=Overlap, overlap=Overlap/2, search=meAlg, searchparam=meAlgPar, truemotion=meTM, lambda_=Lambda/4, pnew=PNew, dct=DCT, chroma=ChromaMotion)
-    super_args = dict(pel=meSubpel, hpad=hpad, vpad=vpad, chroma=ChromaMotion)
-    srchSuper = S(DitherLumaRebuild(srchClip, s0=1, chroma=ChromaMotion), sharp=1, rfilter=4, **super_args)
+    super_args = dict(pel=meSubpel, hpad=hpad, vpad=vpad, sharp=SubPelInterp, chroma=ChromaMotion)
+    analyse_args = dict(blksize=meBlksz, overlap=Overlap, search=meAlg, searchparam=meAlgPar, pelsearch=meSubpel, truemotion=meTM, lambda_=Lambda, pnew=PNew, global_=GlobalMotion, dct=DCT, chroma=ChromaMotion)
+    recalculate_args = dict(thsad=thSAD1 // 2, blksize=max(meBlksz // 2, 4), overlap=max(Overlap // 2, 2), search=meAlg, searchparam=meAlgPar, truemotion=meTM, lambda_=Lambda/4, pnew=PNew, dct=DCT, chroma=ChromaMotion)
+
+    lumaRebuild = haf.DitherLumaRebuild(srchClip, s0=1, chroma=ChromaMotion)
+
+    srchSuper = S(lumaRebuild, rfilter=4, **super_args)
+    recSuper = S(lumaRebuild, levels=1, **super_args)
     
     if (maxTR > 0) and (degrainTR < 4 or postTR < 4):
         bVec1 = A(srchSuper, isb=True,  delta=1, **analyse_args)
         fVec1 = A(srchSuper, isb=False, delta=1, **analyse_args)
         if rec:
-            bVec1 = R(srchSuper, bVec1, **recalculate_args)
-            fVec1 = R(srchSuper, fVec1, **recalculate_args)
+            bVec1 = R(recSuper, bVec1, **recalculate_args)
+            fVec1 = R(recSuper, fVec1, **recalculate_args)
         if maxTR > 1:
             bVec2 = A(srchSuper, isb=True,  delta=2, **analyse_args)
             fVec2 = A(srchSuper, isb=False, delta=2, **analyse_args)
             if rec:
-                bVec2 = R(srchSuper, bVec2, **recalculate_args)
-                fVec2 = R(srchSuper, fVec2, **recalculate_args)
+                bVec2 = R(recSuper, bVec2, **recalculate_args)
+                fVec2 = R(recSuper, fVec2, **recalculate_args)
         if maxTR > 2:
             bVec3 = A(srchSuper, isb=True,  delta=3, **analyse_args)
             fVec3 = A(srchSuper, isb=False, delta=3, **analyse_args)
             if rec:
-                bVec3 = R(srchSuper, bVec3, **recalculate_args)
-                fVec3 = R(srchSuper, fVec3, **recalculate_args)
+                bVec3 = R(recSuper, bVec3, **recalculate_args)
+                fVec3 = R(recSuper, fVec3, **recalculate_args)
 
     if degrainTR > 3:
         vmulti1 = mvmulti.Analyze(srchSuper, tr=degrainTR, **analyse_args)
@@ -2432,7 +2432,7 @@ def TemporalDegrain2(clip, degrainTR=1, degrainPlane=4, grainLevel=2, grainLevel
         spatD  = core.std.MakeDiff(clip, spat)
   
     # Update super args for all other motion analysis
-    super_args |= dict(chroma=ChromaNoise, sharp=SubPelInterp, levels=1)
+    super_args |= dict(levels=1)
 
     # First MV-denoising stage. Usually here's some temporal-medianfiltering going on.
     # For simplicity, we just use MDegrain.
