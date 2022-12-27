@@ -13,7 +13,7 @@ import vapoursynth as vs
 # Adapted by GMJCZP
 # Requirements: MVTools, RGTools, RemoveDirt
 
-def KillerSpots(clip: vs.VideoNode, limit: int =10, advanced: bool =True):
+def KillerSpots(clip: vs.VideoNode, limit: int =10, advanced: bool =False):
   core = vs.core  
   # advanced: Use 'False' for best speed and original KillerSpots. Use 'True' to specify a 'limit'. Default True;
   # limit: default 10, spot removal limit (for advanced=true only)
