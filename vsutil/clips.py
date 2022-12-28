@@ -77,7 +77,7 @@ def frame2clip(frame: vs.VideoFrame, /, *, enforce_cache=_unused) -> vs.VideoNod
     """Converts a VapourSynth frame to a clip.
 
     :param frame:          The frame to convert.
-    :param enforce_cache:  Forcibly add a cache, even if the ``vapoursynth`` module has this feature disabled.
+    :param enforce_cache:  Unused, deprecated parameter. Kept for compatibility.
 
     :return: A one-frame clip that yields the `frame` passed to the function.
     """

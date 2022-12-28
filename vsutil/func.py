@@ -7,6 +7,8 @@ __all__ = [
     'disallow_variable_format', 'disallow_variable_resolution',
     # misc non-vapoursynth related
     'fallback', 'iterate',
+    # misc vapoursynth related
+    'function'
 ]
 
 import inspect
@@ -58,6 +60,7 @@ def disallow_variable_format(function: F | None = None, /) -> F:
 
 def disallow_variable_format(function: F | None = None, /, *, only_first: bool = False) -> Callable[[F], F] | F:
     """Function decorator that raises an exception if input clips have variable format.
+
         :param function:    Function to wrap.
         :param only_first:  Whether to check only the first argument or not.
 
@@ -86,6 +89,7 @@ def disallow_variable_resolution(function: F | None = None, /) -> F:
 
 def disallow_variable_resolution(function: F | None = None, /, *, only_first: bool = False) -> Callable[[F], F] | F:
     """Function decorator that raises an exception if input clips have variable resolution.
+
         :param function:    Function to wrap.
         :param only_first:  Whether to check only the first argument or not.
 
@@ -140,3 +144,61 @@ def iterate(base: T, function: Callable[[Union[T, R]], R], count: int) -> Union[
     for _ in range(count):
         v = function(v)
     return v
+
+
+# This function is actually implemented as a class.
+# This makes sure that,
+# when it is used as the value of a class-variable,
+# python does not prefix calls to this function with ``self``.
+# It also allows to forward calls to 
+# - `plugin`,
+# - `signature`,
+# - and `return_signature`
+# to the current `vapoursynth.Function`-instance.
+class function:
+    """This function aliases arbitrary vapoursynth plugin functions so that you can alias them on module-level.
+
+    >>> import vapoursynth as vs
+    >>> Point = vs.core.resize.Point         # This is illegal as might crash vsscript-based previewers.
+    >>> Point = function("resize", "Point")  # Equivalent, but always uses the correct core.
+
+    The result of function is safe to use within a class-definition.
+    It behaves like a static-method in this case.
+
+    :param plugin:  The name of the plugin that provides the function.
+    :param name:    The name of the function to alias.
+
+    :return: A wrapper function around the given plugin function.
+    """
+
+    def __init__(self, plugin: str, name: str):
+        self.plugin_name = plugin
+        self.name = name
+
+    @property
+    def plugin(self) -> vs.Plugin:
+        """The `Plugin` object the function belongs to.
+        """
+        return getattr(vs.core, self.plugin_name)
+
+    @property
+    def resolved(self) -> vs.Function:
+        """Returns the instance of function 
+        """
+        return getattr(self.plugin, self.name)
+
+    @property
+    def signature(self) -> str:
+        """Raw function signature string. Identical to the string used to register the function.
+        """
+        return self.resolved.signature
+
+    @property
+    def return_signature(self) -> str:
+        """Raw function signature string. Identical to the return type string used to register the function.
+        """
+        return self.resolved.return_signature
+
+    def __call__(self, *args: Any, **kwargs: Any) -> Any:
+        return self.resolved(*args, **kwargs)
+

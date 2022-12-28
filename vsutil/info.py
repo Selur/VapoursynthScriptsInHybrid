@@ -94,7 +94,7 @@ def get_subsampling(clip: vs.VideoNode, /) -> Union[None, str]:
         raise ValueError('Unknown subsampling.')
 
 
-def get_w(height: int, aspect_ratio: float = 16 / 9, *, only_even: bool = True) -> int:
+def get_w(height: int, aspect_ratio: float = 16 / 9, *, only_even: Optional[bool] = None, mod: Optional[int] = None) -> int:
     """Calculates the width for a clip with the given height and aspect ratio.
 
     >>> get_w(720)
@@ -107,13 +107,22 @@ def get_w(height: int, aspect_ratio: float = 16 / 9, *, only_even: bool = True) 
     :param only_even:     Will return the nearest even integer.
                           ``True`` by default because it imitates the math behind most standard resolutions
                           (e.g. 854x480).
+                          This parameter has been deprecated in favor of the ``mod`` param. For old behavior
+                          use ``mod=2`` for ``True`` and ``mod=1`` for ``False``
+    :param mod:           Ensure output is divisible by this number, for when subsampling or filter
+                          restrictions set specific requirements (e.g. 4 for interlaced content).
+                          Defaults to 2 to mimic the math behind most standard resolutions.
+                          Any values passed to this argument will override ``only_even`` behavior!
 
     :return:              Calculated width based on input `height`.
     """
     width = height * aspect_ratio
-    if only_even:
-        return round(width / 2) * 2
-    return round(width)
+    if only_even is not None:
+        import warnings
+        warnings.warn("only_even is deprecated.", DeprecationWarning)
+
+    mod = func.fallback(mod, 2 if only_even in [None, True] else 1)
+    return round(width / mod) * mod
 
 
 def is_image(filename: str, /) -> bool:
