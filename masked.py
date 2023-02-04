@@ -1,12 +1,10 @@
 import vapoursynth as vs
-core = vs.core
 # collection of Mask filters.
-
 
 # Use retinex to greatly improve the accuracy of the edge detection in dark scenes.
 # draft=True is a lot faster, albeit less accurate
 # from https://blog.kageru.moe/legacy/edgemasks.html
-def retinex_edgemask(src: vs.VideoNode, sigma=1, draft=False) -> vs.VideoNode:
+def retinex_edgemask(src: vs.VideoNode, sigma: int=1, draft: bool=False) -> vs.VideoNode:
     core = vs.core
     import mvsfunc as mvf
     src = mvf.Depth(src, 16)
@@ -52,6 +50,7 @@ def bloated_edgemask(src: vs.VideoNode) -> vs.VideoNode:
 
 # https://github.com/DeadNews/dnfunc/blob/f5d22057e424fb3b8bd80d1aadd0c2ed2b7e71d5/dnfunc.py#L1212                                                                              
 def kirsch2(clip_y: vs.VideoNode) -> vs.VideoNode:
+    core = vs.core
     n = core.std.Convolution(clip_y, [5, 5, 5, -3, 0, -3, -3, -3, -3], divisor=3, saturate=False)
     nw = core.std.Convolution(clip_y, [5, 5, -3, 5, 0, -3, -3, -3, -3], divisor=3, saturate=False)
     w = core.std.Convolution(clip_y, [5, -3, -3, 5, 0, -3, 5, -3, -3], divisor=3, saturate=False)
@@ -69,6 +68,7 @@ def scale8(x, newmax):
         return x * newmax // 0xFF
 
 def CartoonEdges(clip, low=0, high=255):
+    core = vs.core
     """Should behave like mt_edge(mode="cartoon")"""
     valuerange = (1 << clip.format.bits_per_sample)
     maxvalue = valuerange - 1
@@ -80,6 +80,7 @@ def CartoonEdges(clip, low=0, high=255):
                                  .format(low=low, high=high, maxvalue=maxvalue), ''])
 
 def RobertsEdges(clip, low=0, high=255):
+    core = vs.core
     """Should behave like mt_edge(mode="roberts")"""
     valuerange = (1 << clip.format.bits_per_sample)
     maxvalue = valuerange - 1
