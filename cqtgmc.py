@@ -16,18 +16,24 @@ core = vs.core
 # NNEDI3CL when openCL=True https://github.com/HomeOfVapourSynthEvolution/VapourSynth-NNEDI3CL
 # NNEDI3 when openCL=False  https://github.com/sekrit-twc/znedi3
 
-
 def CQTGMC(clip: vs.VideoNode, Sharpness: float=0.25, thSAD1: int=192, thSAD2: int=320, thSAD3: int=128, thSAD4: int=320, tff: bool=True, openCL: bool=False, boxed: bool=False) -> vs.VideoNode:
   
-  # pad to mod64
-  padded = core.std.AddBorders(clip, left=0, top=clip.height%64, right=clip.width%64, bottom=0) 
+  # pad to mod64    
+  padded = core.std.AddBorders(clip, left=0, top=clip.height%64, right=clip.width%64, bottom=0)
   
-  # deinterlace
-  X = 2 if tff else 1
+  # spatial deinterlace
+  # field: 2: Double rate, start with bottom field, 3: Double rate, start with top field.
+  X = 3 if tff else 2
   if openCL:
-    bobbed = core.znedi3.nnedi3(clip=padded, field=X)
+    spatial = core.nnedi3cl.NNEDI3CL(clip=padded, field=X, qual=2)
   else:
-    bobbed = core.nnedi3cl.NNEDI3CL(clip=padded, field=X)
+    spatial = core.znedi3.nnedi3(clip=padded, field=X, qual=2)
+
+  
+  # temporal deint
+  # order: 0 = bottom field first (bff), 1 = top field first (tff)
+  X = 1 if tff else 0
+  bobbed = core.tdm.TDeintMod(clip=padded, order=X, mode=1, edeint=spatial)
   
   # denoise
   denoised = core.rgvs.RemoveGrain(clip=bobbed,mode=12)
@@ -76,10 +82,10 @@ def CQTGMC(clip: vs.VideoNode, Sharpness: float=0.25, thSAD1: int=192, thSAD2: i
   
   
   Inter = core.std.Interleave([
-     bobbed.std.SeparateFields(tff=X).std.SelectEvery(4,0),
-     fComp1.std.SeparateFields(tff=X).std.SelectEvery(4,1),
-     bComp1.std.SeparateFields(tff=X).std.SelectEvery(4,2),
-     bobbed.std.SeparateFields(tff=X).std.SelectEvery(4,3)
+     bobbed.std.SeparateFields(tff=tff).std.SelectEvery(4,0),
+     fComp1.std.SeparateFields(tff=tff).std.SelectEvery(4,1),
+     bComp1.std.SeparateFields(tff=tff).std.SelectEvery(4,2),
+     bobbed.std.SeparateFields(tff=tff).std.SelectEvery(4,3)
   ]) 
   
   
@@ -102,6 +108,7 @@ def CQTGMC(clip: vs.VideoNode, Sharpness: float=0.25, thSAD1: int=192, thSAD2: i
   degrained = core.mv.Degrain1(clip=degrained, super=csuper, mvbw=bVec1,mvfw=fVec1,thsad=thSAD1)
   degrained = core.std.Crop(degrained, left=0, top=clip.height%64, right=clip.width%64, bottom=0)
   return degrained
+
 
 # from havsfunc 
 # https://github.com/HomeOfVapourSynthEvolution/havsfunc/blob/7f0a9a7a37b60a05b9f408024d203e511e544a61/havsfunc.py#L5911
