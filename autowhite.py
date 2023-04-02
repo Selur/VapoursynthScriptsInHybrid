@@ -19,10 +19,15 @@ def AutoWhiteAdjust(n, f, clip, core):
    b_gain = blue_corr/norm
    return core.std.Expr(clip, expr=['x ' + repr(r_gain) + ' *', 'x ' + repr(g_gain) + ' *', 'x ' + repr(b_gain) + ' *'])
 
+###
+# AutoWhite is a function that takes a video clip as an input and calculates the average color values for each of the three color planes (red, green, blue).
+# The AutoWhiteAdjust function is then used to adjust the white balance of the input clip based on the color balance of the individual frames.
+# This function calculates the correction gain for each color plane (red, green, blue) based on the average color values of each plane, and applies the correction gain to each pixel in the input clip.
+# The output is a video clip with corrected white balance.
+###
 def AutoWhite(clip):
    rgb_clip = clip
    r_avg = core.std.PlaneStats(rgb_clip, plane=0)
    g_avg = core.std.PlaneStats(rgb_clip, plane=1)
    b_avg = core.std.PlaneStats(rgb_clip, plane=2)
    return core.std.FrameEval(rgb_clip, functools.partial(AutoWhiteAdjust, clip=rgb_clip, core=core), prop_src=[r_avg, g_avg, b_avg])
-   

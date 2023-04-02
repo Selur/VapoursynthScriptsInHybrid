@@ -121,7 +121,7 @@ def SpotLess(clip: vs.VideoNode,
     
     # Super
     pad = max(ablksize, 8)
-    sup = ref or (c.std.Convolution(matrix=[1, 2, 1, 2, 4, 2, 1, 2, 1]) if blur else clip)
+    sup = ref or (core.std.Convolution(clip, matrix=[1, 2, 1, 2, 4, 2, 1, 2, 1]) if blur else clip)
     sup = S(sup, hpad=pad, vpad=pad, pel=pel, sharp=ssharp, rfilter=rfilter)
     sup_rend = S(clip, pel=pel, sharp=ssharp, rfilter=rfilter, levels=1) if ref or blur else sup
 

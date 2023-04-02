@@ -24,6 +24,7 @@ core = vs.core
 
 import havsfunc
 import mvsfunc as mvf
+import nnedi3_resample
 
 ################################################################################################
 ###                                                                                          ###
@@ -173,7 +174,7 @@ def SMDegrain(input, tr=2, thSAD=300, thSADC=None, RefineMotion=False, contrasha
 
     # Subpixel 3
     if pelclip:
-        nnediMode = 'znedi3' if opencl else 'znedi'
+        nnediMode = 'nnedi3cl' if opencl else 'znedi3'
         cshift = 0.25 if pel == 2 else 0.375
         pclip = nnedi3_resample.nnedi3_resample(pref, w * pel, h * pel, src_left=cshift, src_top=cshift, nns=4, mode=nnediMode, device=device)
         if not GlobalR:

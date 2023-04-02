@@ -9,11 +9,11 @@ import vapoursynth as vs
 # Function KillerSpots 2.0
 # For primitive videos
 # Function for spot removal
-# Original idea by Didée (https://forum.doom9.org/showthread.php?p=1402690#post1402690)
+# Original idea by Didée (https://forum.doom9.org/showthread.php?p=1402690#post1402690 <> SpotRemover)
 # Adapted by GMJCZP
 # Requirements: MVTools, RGTools, RemoveDirt
 
-def KillerSpots(clip: vs.VideoNode, limit: int =10, advanced: bool =False):
+def KillerSpots(clip: vs.VideoNode, limit: int=10, advanced: bool=False):
   core = vs.core  
   # advanced: Use 'False' for best speed and original KillerSpots. Use 'True' to specify a 'limit'. Default True;
   # limit: default 10, spot removal limit (for advanced=true only)
