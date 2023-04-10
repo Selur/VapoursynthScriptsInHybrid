@@ -94,7 +94,7 @@ def SpotLess(clip: vs.VideoNode,
         
     if ssharp is None:
       ssharp = 1
-    if not ssharp in range(2):
+    if not ssharp in range(3):
       raise ValueError("Spotless: ssharp must be between 0 and 2 (inclusive)")
 
     if rec:
