@@ -6,6 +6,7 @@ def TFMBobN(clip: vs.VideoNode,
             pp: int = 6,
             cthresh: int = 9,
             MI: int = 80,
+            chroma: bool=False,
             openCL: bool = False):
   field = clip.get_frame(0).props['_FieldBased']
   if openCL:
@@ -26,6 +27,7 @@ def TFMBobQ(clip: vs.VideoNode,
             pp: int = 6,
             cthresh: int = 9,
             MI: int = 80,
+            chroma: bool=False,
             openCL: bool = False):
   import havsfunc
   field = clip.get_frame(0).props['_FieldBased']
@@ -34,8 +36,8 @@ def TFMBobQ(clip: vs.VideoNode,
     switchedField = 2
   else:  #TFF
     switchedField = 1
-  odd = core.tivtc.TFM(clip=clip, field=switchedField, clip2=q[::2], PP=pp, cthresh=cthresh, MI=MI)
-  even = core.tivtc.TFM(clip=clip, field=switchedField, clip2=q[1::2], PP=pp, cthresh=cthresh, MI=MI)
+  odd = core.tivtc.TFM(clip=clip, field=switchedField, clip2=q[::2], PP=pp, cthresh=cthresh, MI=MI, chroma=chroma)
+  even = core.tivtc.TFM(clip=clip, field=switchedField, clip2=q[1::2], PP=pp, cthresh=cthresh, MI=MI, chroma=chroma)
   return core.std.Interleave([odd,even])
 
 
