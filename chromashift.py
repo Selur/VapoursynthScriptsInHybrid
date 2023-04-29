@@ -32,12 +32,21 @@ def ChromaShift(clip, shift_left=0, shift_right=0, shift_top=0, shift_bottom=0):
   return clip
   
 # added ChromaShiftSP from https://forum.doom9.org/showthread.php?p=1951117#post1951117
-def ChromaShiftSP (clip, X=0.0, Y=0.0):
+def ChromaShiftSP (clip, X=0.0, Y=0.0, shiftU=True, shiftV=True):
 	#Vapoursynth version of Avisynth ChromaShiftSP
 	#Original AVS ChromaShift_SP: Shift chroma with subpixel accuracy, basic function by IanB, made standalone by McCauley
 	#X: positive values shift the chroma to left, negative values to right
 	#Y: positive values shift the chroma upwards, negative values downwards
 	Yplane = core.std.ShufflePlanes(clip, planes=0, colorfamily=vs.GRAY)
 	shift = core.resize.Spline16(clip, width=clip.width, height=clip.height, src_left=X, src_top=Y, src_width=clip.width + X, src_height=clip.height + Y)
-	merge = core.std.ShufflePlanes(clips=[Yplane, shift], planes=[0, 1, 2], colorfamily=vs.YUV)
+  if !shiftU and !shiftV:
+    raise vs.Error('ChromaShiftSP: at least U or V needs to be shifted!')
+  if shiftU and shiftV:
+	  merge = core.std.ShufflePlanes(clips=[Yplane, shift], planes=[0, 1, 2], colorfamily=vs.YUV)
+  elif shiftU:
+    Vplane = core.std.ShufflePlanes(clip, planes=2, colorfamily=vs.GRAY)
+    merge = core.std.ShufflePlanes(clips=[Yplane, shift, Vplane], planes=[0, 1, 2], colorfamily=vs.YUV)
+  elif shiftV:
+    Uplane = core.std.ShufflePlanes(clip, planes=2, colorfamily=vs.GRAY)
+    merge = core.std.ShufflePlanes(clips=[Yplane, Uplane, shift], planes=[0, 1, 2], colorfamily=vs.YUV)
 	return merge
