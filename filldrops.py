@@ -145,7 +145,7 @@ def fillMultipleWithSVP(clip, firstFrametoReplace=None, firstGoodFrame=None, gpu
 
   # interpolate
   r = core.svp2.SmoothFps(startend,super["clip"],super["data"],vectors["clip"],vectors["data"],"{rate:{num:"+str(firstGoodFrame-firstFrametoReplace+1)+",den:1,abs:false}}")
-  a = core.std.Trim(clip1, first=0, last=firstFrametoReplace-2) # last good frame before is part of r
+  a = core.std.Trim(clip1, first=0, last=firstFrametoReplace-1) # last good frame before is part of r
   b = core.std.Trim(clip1, first=firstGoodFrame+1) # first good frame, ist part of r
   # join
   join = a + r + b
