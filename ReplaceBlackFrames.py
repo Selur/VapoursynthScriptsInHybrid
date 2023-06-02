@@ -86,7 +86,7 @@ class ReplaceBlackFrames:
       else: # self.method == 'interpolateSVPCPU':
         super = core.svp1.Super(clip,"{gpu:0}")
       vectors = core.svp1.Analyse(super["clip"],super["data"],clip,"{}")
-      num = end - start + 1
+      num = end - start
       self.smooth = core.svp2.SmoothFps(clip,super["clip"],super["data"],vectors["clip"],vectors["data"],f"{{rate:{{num:{num},den:1,abs:true}}}}")
       self.smooth_start = start
       self.smooth_end   = end
