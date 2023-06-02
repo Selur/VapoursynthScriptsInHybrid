@@ -20,12 +20,11 @@ rifeSC: scene change threshld when RIFE is use for interpolation
 When SVP is used input need to be YUV420P8.
 When RIFE is used input need to be RGBS.
  
-v0.0.2 added RIFE interpolation
+v0.0.3 added RIFE interpolation
 '''
 class ReplaceBlackFrames:
   # constructor
   def __init__(self, clip: vs.VideoNode, thresh: float=0.1, debug: bool=False, method: str='previous', rifeSC: float=0.15):
-      self.clip = core.std.PlaneStats(clip)
       self.thresh = thresh
       self.debug = debug
       self.method = method
@@ -37,8 +36,12 @@ class ReplaceBlackFrames:
         raise ValueError(f'ReplaceBlackFrames: "float" needs to fullfill: 0 <= rifeSC <= 1')  
       if (method == 'interpolateSVP' or method == 'interpolateCPU') and (clip.format.id != vs.YUV420P8):
         raise ValueError(f'ReplaceBlackFrames: "clip" color format need to be YUV420P8 when SVP is used!\n{clip.format}')
-      if (method == 'interpolateRIFE') and (clip.format.id != vs.RGBS):
-        raise ValueError(f'ReplaceBlackFrames: "clip" color format need to be RGBS when RIFE is used!\n{clip.format}')
+      if (method == 'interpolateRIFE') and (clip.format.id != vs.RGBS) and (clip.format.id != vs.RGBH):
+        raise ValueError(f'ReplaceBlackFrames: "clip" color format need to be RGBS or RGBH when RIFE is used!\n{clip.format}')
+      if (clip.format.id == vs.RGBH):
+        self.clip = core.std.PlaneStats(clip.resize.Bicubic(format=vs.RGBS))
+      else:
+        self.clip = core.std.PlaneStats(clip)
 
   def previous(self, n, f):
     out = self.get_current_or_previous(n)
