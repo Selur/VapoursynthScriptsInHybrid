@@ -64,7 +64,7 @@ class ReplaceBlackFrames:
     if rifeThresh != 0:
       clip = core.misc.SCDetect(clip=clip,threshold=rifeThresh)
     
-    num = end - start + 1
+    num = end - start
     self.smooth = core.rife.RIFE(clip, model=rifeModel, factor_num=num, tta=rifeTTA,uhd=rifeUHD)
     self.smooth_start = start
     self.smooth_end   = end
