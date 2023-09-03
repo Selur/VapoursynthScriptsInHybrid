@@ -3897,9 +3897,11 @@ def MCTemporalDenoise(i, radius=None, pfMode=3, sigma=None, twopass=None, useTTm
     mod = bwbh if bwbh >= blksize else blksize
     xi = i.width
     xf = math.ceil(xi / mod) * mod - xi + mod
+    xf = xf + xf%4
     xn = int(xi + xf)
     yi = i.height
     yf = math.ceil(yi / mod) * mod - yi + mod
+    yf = yf + yf%4
     yn = int(yi + yf)
 
     pointresize_args = dict(width=xn, height=yn, src_left=-xf / 2, src_top=-yf / 2, src_width=xn, src_height=yn)
@@ -3926,6 +3928,7 @@ def MCTemporalDenoise(i, radius=None, pfMode=3, sigma=None, twopass=None, useTTm
 
     ### DEBLOCKING
     crop_args = dict(left=xf // 2, right=xf // 2, top=yf // 2, bottom=yf // 2)
+    
     if not deblock:
         d = i
     elif useQED:
