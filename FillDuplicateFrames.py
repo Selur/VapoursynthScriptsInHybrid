@@ -11,7 +11,7 @@ fdf = FillDuplicateFrames(clip, debug=True, thresh=0.001, method='SVP')
 clip = fdf.out
 
 Replaces duplicate frames with interpolations.
-v0.0.1
+v0.0.2
 '''
 
 class FillDuplicateFrames:
@@ -42,7 +42,7 @@ class FillDuplicateFrames:
     self.smooth_start = start
     self.smooth_end   = end
     return self.smooth[n-start]
-
+   
   def interpolateWithMV(self, clip, n, start, end):   
     num = end - start
     sup = core.mv.Super(clip, pel=2, hpad=0, vpad=0)
@@ -51,25 +51,33 @@ class FillDuplicateFrames:
     self.smooth = core.mv.FlowFPS(clip, sup, bvec, fvec, num=num, den=1, mask=2)
     self.smooth_start = start
     self.smooth_end   = end
-    return self.smooth[n-start]
+    out = self.smooth[n-start]
+    if self.debug:
+      return out.text.Text(text="MV",alignment=9)
+    return out
 
   def interpolateWithSVP(self, clip, n, start, end):   
-      if clip.format.id != vs.YUV420P8:
-        raise ValueError(f'FillDuplicateFrames: "clip" needs to be YUV420P8 when using \'{self.method}\'!')
-      if self.method == 'interpolateSVP':
-        super = core.svp1.Super(clip,"{gpu:1}")
-      else: # self.method == 'interpolateSVPCPU':
-        super = core.svp1.Super(clip,"{gpu:0}")
-      vectors = core.svp1.Analyse(super["clip"],super["data"],clip,"{}")
-      num = end - start
-      self.smooth = core.svp2.SmoothFps(clip,super["clip"],super["data"],vectors["clip"],vectors["data"],f"{{rate:{{num:{num},den:1,abs:true}}}}")
-      self.smooth_start = start
-      self.smooth_end   = end
-      return self.smooth[n-start]
+    if clip.format.id != vs.YUV420P8:
+      raise ValueError(f'FillDuplicateFrames: "clip" needs to be YUV420P8 when using \'{self.method}\'!')
+    if self.method == 'SVP':
+      super = core.svp1.Super(clip,"{gpu:1}")
+    else: # self.method == 'SVPCPU':
+      super = core.svp1.Super(clip,"{gpu:0}")
+    vectors = core.svp1.Analyse(super["clip"],super["data"],clip,"{}")
+    num = end - start
+    self.smooth = core.svp2.SmoothFps(clip,super["clip"],super["data"],vectors["clip"],vectors["data"],f"{{rate:{{num:{num},den:1,abs:true}}}}")
+    self.smooth_start = start
+    self.smooth_end   = end
+    out = self.smooth[n-start]
+    if self.debug:
+      return out.text.Text(text="SVP",alignment=9)
+    return out
   
   def get_current_or_interpolate(self, n):
     if self.is_not_duplicate(n):
       #current non dublicate selected
+      if self.debug:
+        return self.clip[n].text.Text(text="Input (1)", alignment=9)
       return self.clip[n]
 
     #dublicate frame, frame is interpolated
@@ -77,6 +85,8 @@ class FillDuplicateFrames:
       if self.is_not_duplicate(start):
         break
     else: #there are all black frames preceding n, return current n frame // will be executed then for-look does not end with a break
+      if self.debug:
+        return self.clip[n].text.Text(text="Input (2)", alignment=9)
       return self.clip[n]
   
     for end in range(n, len(self.clip)):
@@ -84,10 +94,14 @@ class FillDuplicateFrames:
         break
     else:
       #there are all black frames to the end, return current n frame
+      if self.debug:
+        return self.clip[n].text.Text(text="Input(3)", alignment=9)
       return self.clip[n]
 
     #does interpolated smooth clip exist for requested n frame? Use n frame from it.
     if self.smooth is not None and start >= self.smooth_start and end <= self.smooth_end:
+      if self.debug:
+        return self.smooth[n-start].text.Text(text=self.method, alignment=9)
       return self.smooth[n-start]
 
     #interpolating two frame clip  into end-start+1 fps
@@ -95,10 +109,10 @@ class FillDuplicateFrames:
     clip = clip.std.AssumeFPS(fpsnum=1, fpsden=1)
     if self.method == 'SVP' or self.method == 'SVPcpu':  
       return self.interpolateWithSVP(clip, n, start, end)
-    if self.method == 'RIFE':
-      return self.interpolateWithRIFE(clip, n, start, end, rifeThresh=self.rifeSceneThr)      
-    if self.method == 'MV':
-      return self.interpolateWithMV(clip, n, start, end)      
+    elif self.method == 'RIFE':
+      return self.interpolateWithRIFE(clip, n, start, end, rifeThresh=self.rifeSceneThr)
+    elif self.method == 'MV':
+      return self.interpolateWithMV(clip, n, start, end)
     else:
       raise ValueError(f'ReplaceBlackFrames: "method" \'{self.method}\' is not supported atm.')
 
