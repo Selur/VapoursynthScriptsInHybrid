@@ -99,7 +99,6 @@ def FillSingleDrops(clip, thresh=0.3, method="mv", rifeModel=0, rifeTTA=False, r
   fixed = core.std.FrameEval(clip, selectFunc, prop_src=diffclip)
   return fixed
 
-
 def InsertSingle(clip, afterEveryX=2, method="mv", rifeModel=0, rifeTTA=False, rifeUHD=False, rifeThresh=0.15, gmfssModel=0, gmfssThresh=0.15, debug=False):
   core = vs.core
   if not isinstance(clip, vs.VideoNode):
@@ -124,3 +123,29 @@ def InsertSingle(clip, afterEveryX=2, method="mv", rifeModel=0, rifeTTA=False, r
     return insertFrame.text.Text("Interpolated")
 
   return core.std.FrameEval(clip, selectFunc)
+  
+  
+def ReplaceSingle(clip, frameList, method="mv", rifeModel=0, rifeTTA=False, rifeUHD=False, rifeThresh=0.15, gmfssModel=0, gmfssThresh=0.15, debug=False):
+    core = vs.core
+    if not isinstance(clip, vs.VideoNode):
+        raise ValueError('This is not a clip')
+
+    def selectFunc(n):
+      if n in frameList:
+        if method == "mv":
+            insertFrame = fillWithMVTools(clip)
+        elif method == "svp":
+            insertFrame = fillWithSVP(clip, n)
+        elif method == "svp_gpu":
+            insertFrame = fillWithSVP(clip, n, gpu=True)
+        elif method == "rife":
+            insertFrame = fillWithRIFE(clip, n, rifeModel, rifeTTA, rifeUHD, rifeThresh)
+        elif method == "gmfssfortuna":
+            insertFrame = fillWithGMFSSUnion(clip, n, gmfssModel, gmfssThresh)
+        else:
+            raise vs.Error('replaceSingle: Unknown method ' + method)
+        if debug:
+           return core.text.Text(clip=insertFrame,text=method+", replaced frame: "+str(n),alignment=8)
+        return insertFrame;
+      return clip
+    return core.std.FrameEval(clip, selectFunc)
