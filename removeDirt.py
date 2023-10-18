@@ -2,7 +2,7 @@ import vapoursynth as vs
 # dependencies:
 # RemoveGrain (http://www.vapoursynth.com/doc/plugins/rgvs.html)
 # MVTools (https://github.com/dubhater/vapoursynth-mvtools) or SVP dlls when gpu=True is used
-# RemoveDirt (https://github.com/pinterf/removedirtvs)
+# RemoveDirt (https://github.com/pinterf/removedirtvs, https://github.com/Rational-Encoding-Thaumaturgy/vapoursynth-removedirt)
 # ChangeFPS (https://github.com/Selur/VapoursynthScriptsInHybrid/blob/master/ChangeFPS.py)
 
 def RemoveDirt(input, repmode=16, remgrainmode=17, limit=10):
@@ -16,7 +16,7 @@ def RemoveDirt(input, repmode=16, remgrainmode=17, limit=10):
   corrected = core.rdvs.RestoreMotionBlocks(cleansed, restore, neighbour=input, alternative=alt, gmthreshold=70, dist=1, dmode=2, noise=limit, noisy=12)
   return core.rgvs.RemoveGrain(corrected, mode=[remgrainmode,remgrainmode,1])
   
-def RemoveDirtMC(input, limit=6, block_size=8, block_over = 4, gpu=False):
+def RemoveDirtMC(input, limit=6, repmode=16, remgrainmode=17, block_size=8, block_over = 4, gpu=False):
   core = vs.core
   quad = core.rgvs.RemoveGrain(input, mode=[12,0,1])   # blur the luma for searching motion vectors  orig avs: mode=12, modeU=-1
   if gpu:
@@ -40,6 +40,6 @@ def RemoveDirtMC(input, limit=6, block_size=8, block_over = 4, gpu=False):
     forw  = core.mv.Flow(clip=quad,super=i,vectors=[fvec])
 
   clp = core.std.Interleave([backw,quad,forw])
-  clp = RemoveDirt(clp, remgrainmode=2, limit=limit)
+  clp = RemoveDirt(clp, repmode=2, remgrainmode=17, limit=limit)
   clp = core.std.SelectEvery(clp,3,1)
   return clp
