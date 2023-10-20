@@ -43,12 +43,14 @@ __all__ = [
     "Min", "Max", "Conditional"]
 
 
+_is_api4: bool = hasattr(vs, "__api_version__") and vs.__api_version__.api_major == 4
+
 class _Core:
     def __init__(self):
         self._registered_funcs = {} # type: Dict[str, Callable[..., '_VideoNode']]
 
     def __setattr__(self, name, value):
-        if name in ["num_threads", "add_cache", "max_cache_size"]:
+        if name in ["num_threads", "max_cache_size"]:
             setattr(_vscore, name, value)
         else:
             if callable(value):
@@ -118,7 +120,6 @@ class Recorder:
                 "import vapoursynth as vs\n"
                 "from vapoursynth import core\n"
                 "\n"
-                f"core.add_cache = {core.add_cache}\n"
                 f"core.num_threads = {core.num_threads}\n"
                 f"core.max_cache_size = {core.max_cache_size}\n"
                 "\n")
@@ -175,12 +176,15 @@ def _build_repr() -> Callable[..., str]:
         elif isinstance(obj, collections.abc.Sequence) and not isinstance(obj, (str, bytes, bytearray)):
             return f"[{', '.join(closure(elem, default_prefix) for elem in obj)}]"
 
-        elif isinstance(obj, (vs.ColorFamily, vs.PresetFormat, vs.SampleType)):
-            return f"vs.{obj!s}"
+        elif isinstance(obj, (
+            vs.ColorFamily, vs.SampleType,
+            getattr(vs, "PresetFormat", getattr(vs, "PresetVideoFormat", None))
+        )):
+            return f"vs.{obj.name}"
 
-        elif isinstance(obj, vs.Format):
+        elif isinstance(obj, (vs.VideoFormat if _is_api4 else vs.Format)):
             arg_str = ', '.join(f"{k}={closure(v)}" for k, v in obj._as_dict().items())
-            return f"core.register_format({arg_str})"
+            return f"core.query_video_format({arg_str})" if _is_api4 else f"core.register_format({arg_str})"
 
         else:
             return repr(obj)
@@ -275,6 +279,15 @@ class _Plugin:
                             recorder.buffer.append(self._get_str(func, args, kwargs, output) + '\n')
 
                     return _VideoNode(output)
+                elif isinstance(output, list) and len(output) > 0 and isinstance(output[0], vs.VideoNode):
+                    for item in output:
+                        _ = _repr(item, default_prefix="clip") # register output
+                    
+                    for recorder in Recorder._live_recorders:
+                        if recorder.is_recording:
+                            recorder.buffer.append(self._get_str(func, args, kwargs, output, check_output=False) + '\n')
+
+                    return list(_VideoNode(item) for item in output)
                 else:
                     return output
 
@@ -290,30 +303,31 @@ class _Plugin:
         return dir(self._plugin)
 
     @staticmethod
-    def _get_str(func: vs.Function, args, kwargs, output):
+    def _get_str(func: vs.Function, args, kwargs, output, check_output=True):
         output_str = ""
 
-        def diff_str(clip1: vs.VideoNode, clip2: vs.VideoNode):
-            """Compare two clips and output a string of their difference"""
-            res = []
-            for attr in ["width", "height", "num_frames"]:
-                if getattr(clip1, attr) != getattr(clip2, attr):
-                    res.append(f"{attr}: {getattr(clip1, attr)} -> {getattr(clip2, attr)}")
-            if clip1.format.name != clip2.format.name:
-                res.append(f"format: {clip1.format.name} -> {clip2.format.name}")
-            if clip1.fps != clip2.fps:
-                res.append(f"fps: {clip1.fps_num}/{clip1.fps_den} -> {clip2.fps_num}/{clip2.fps_den}")
-            return ', '.join(res)
+        if check_output:
+            def diff_str(clip1: vs.VideoNode, clip2: vs.VideoNode):
+                """Compare two clips and output a string of their difference"""
+                res = []
+                for attr in ["width", "height", "num_frames"]:
+                    if getattr(clip1, attr) != getattr(clip2, attr):
+                        res.append(f"{attr}: {getattr(clip1, attr)} -> {getattr(clip2, attr)}")
+                if clip1.format.name != clip2.format.name:
+                    res.append(f"format: {clip1.format.name} -> {clip2.format.name}")
+                if clip1.fps != clip2.fps:
+                    res.append(f"fps: {clip1.fps_num}/{clip1.fps_den} -> {clip2.fps_num}/{clip2.fps_den}")
+                return ', '.join(res)
 
-        if len(args) > 0 and isinstance(args[0], vs.VideoNode):
-            if diff_str(args[0], output) != "":
-                output_str += f"# {diff_str(args[0], output)}\n"
-        elif kwargs.get("clip", None):
-            if diff_str(kwargs["clip"], output) != "":
-                output_str += f"# {diff_str(kwargs['clip'], output)}\n"
-        else:
-            output_str += (f"# output: {output.width} x {output.height}, {output.format.name}, "
-                           f"{output.num_frames} frames, {output.fps_num}/{output.fps_den} fps\n")
+            if len(args) > 0 and isinstance(args[0], vs.VideoNode):
+                if diff_str(args[0], output) != "":
+                    output_str += f"# {diff_str(args[0], output)}\n"
+            elif kwargs.get("clip", None):
+                if diff_str(kwargs["clip"], output) != "":
+                    output_str += f"# {diff_str(kwargs['clip'], output)}\n"
+            else:
+                output_str += (f"# output: {output.width} x {output.height}, {output.format.name}, "
+                            f"{output.num_frames} frames, {output.fps_num}/{output.fps_den} fps\n")
 
         args_dict = inspect.signature(func).bind(*args, **kwargs).arguments
 
@@ -913,7 +927,8 @@ class _ArithmeticExpr(_Fake_VideoNode):
                     if bits == in_format.bits_per_sample:
                         out_format = None
                     else:
-                        out_format = core.register_format(
+                        query_video_format = core.query_video_format if _is_api4 else core.register_format
+                        out_format = query_video_format(
                             color_family=in_format.color_family, 
                             sample_type=vs.INTEGER if bits <= 16 else vs.FLOAT, 
                             bits_per_sample=bits, 
@@ -1060,8 +1075,7 @@ def _build_VideoNode(fake_vn=None):
     _plane_idx_mapping = {
         vs.YUV: {'Y': 0, 'U': 1, 'V': 2}, 
         vs.RGB: {'R': 0, 'G': 1, 'B': 2}, 
-        vs.GRAY: {'GRAY': 0, 'Y': 0}, 
-        vs.YCOCG: {'Y': 0, 'CO': 1, 'CG': 2}
+        vs.GRAY: {'GRAY': 0, 'Y': 0}
     }
 
     def __init__(self, node: vs.VideoNode):
@@ -1094,8 +1108,8 @@ def _build_VideoNode(fake_vn=None):
                 def closure(*args, **kwargs):
                     for recorder in Recorder._live_recorders:
                         if recorder.is_recording:
-                            args_str = ', '.join(args)
-                            kwargs_str = ', '.join(f"{k}={_repr(v)}" for k, v in kwargs)
+                            args_str = ', '.join(map(_repr, args))
+                            kwargs_str = ', '.join(f"{k}={_repr(v)}" for k, v in kwargs.items())
                             call_str = ', '.join(s for s in [args_str, kwargs_str] if s != '')
                             recorder.buffer.append(f"{_repr(self)}.{name}({call_str})\n")
 
