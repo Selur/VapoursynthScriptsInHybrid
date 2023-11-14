@@ -1,5 +1,6 @@
 from vapoursynth import core
 import vapoursynth as vs
+import math
 
 # DeStripe works on YUVXXXPY
 # "low frequency" stripes/bands removal filter
@@ -187,3 +188,37 @@ def deflickerPreset3(sm: vs.VideoNode, chroma: bool):
   if chroma:
     return core.cnr2.Cnr2(smm, mode="ooo", ln=10, lm=255, un=35, vn=35, scdthr=2.0)
   return smm
+
+def get_rgb(temp: int=6500):
+    temp = temp / 100
+    if temp <= 66:
+        r = 255
+    else:
+        r = temp - 60
+        r = 329.698727466 * math.pow(r, -0.1332047592)
+        r = min(max(0, r), 255)
+
+    if temp <= 66:
+        g = temp
+        g = 99.4708025861 * math.log(g) - 161.1195681661
+    else:
+        g = temp - 60
+        g = 288.1221695283 * math.pow(g, -0.0755148492)
+    g = min(max(0, g), 255)
+
+    if temp >= 66:
+        b = 255
+    else:
+        if temp <= 19:
+            b = 0
+        else:
+            b = temp - 10
+            b = 138.5177312231 * math.log(b) - 305.0447927307
+            b = min(max(0, b), 255)
+
+    return round(r), round(g), round(b)
+
+def change_temperature(clip: vs.VideoNode, temp: int=6500):
+    rgb = get_rgb(temp)
+    r, g, b = [value/255.0 for value in rgb]
+    return core.std.Expr([clip], expr=[f"x {r} *", f"x {g} *", f"x {b} *"])

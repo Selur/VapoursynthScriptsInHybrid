@@ -13,13 +13,12 @@ def fillWithRIFE(clip, firstframe=None, rifeModel=1, rifeTTA=False, rifeUHD=Fals
   end = core.std.Trim(clip1, first=firstframe+1, length=1)
   startend = start + end
   if clip.format != vs.RGBS:
-    r = core.resize.Point(startend, format=vs.RGBS, matrix_in_s="709")
+    r = core.resize.Bicubic(startend, format=vs.RGBS, matrix_in_s="709")
   if rifeThresh != 0:
     r = core.misc.SCDetect(clip=r,threshold=rifeThresh)
-  r = core.rife.RIFE(r, model=rifeModel, tta=rifeTTA,uhd=rifeUHD)
+  r = core.rife.RIFE(r, model=rifeModel, tta=rifeTTA, uhd=rifeUHD)
   if clip.format != vs.RGBS:
-    r = core.resize.Point(r, format=clip.format, matrix_s="709")
-
+    r = core.resize.Bicubic(r, format=clip.format, matrix_s="709")
   r = core.std.Trim(r, first=1, last=1) 
   r = core.std.AssumeFPS(r, fpsnum=1, fpsden=1)
   a = core.std.Trim(clip1, first=0, last=firstframe-1) 
@@ -35,10 +34,10 @@ def fillWithGMFSSUnion(clip, firstframe=None, gmfssModel=0, gmfssThresh=0.15):
   end = core.std.Trim(clip1, first=firstframe+1, length=1)
   startend = start + end
   if clip.format != vs.RGBH:
-    r = core.resize.Point(startend, format=vs.RGBH, matrix_in_s="709")
+    r = core.resize.Bicubic(startend, format=vs.RGBH, matrix_in_s="709")
   r = gmfss_fortuna(r, model=gmfssModel, sc_threshold=gmfssThresh)
   if clip.format != vs.RGBH:
-    r = core.resize.Point(r, format=clip.format, matrix_s="709")
+    r = core.resize.Bicubic(r, format=clip.format, matrix_s="709")
   r = core.std.Trim(r, first=1, last=1) 
   r = core.std.AssumeFPS(r, fpsnum=1, fpsden=1)
   a = core.std.Trim(clip1, first=0, last=firstframe-1) 
