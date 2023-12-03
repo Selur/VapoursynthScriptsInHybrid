@@ -16,13 +16,14 @@ v0.0.2
 
 class FillDuplicateFrames:
   # constructor
-  def __init__(self, clip: vs.VideoNode, thresh: float=0.001, method: str='SVP', debug: bool=False, rifeSceneThr: float=0.15):
+  def __init__(self, clip: vs.VideoNode, thresh: float=0.001, method: str='SVP', debug: bool=False, rifeSceneThr: float=0.15, device_index: int=0):
       self.clip = core.std.PlaneStats(clip, clip[0]+clip)
       self.thresh = thresh
       self.debug = debug
       self.method = method
       self.smooth = None
       self.rifeSceneThr = rifeSceneThr
+      self.device_index = device_index
           
   def interpolate(self, n, f):
     out = self.get_current_or_interpolate(n)
@@ -30,15 +31,20 @@ class FillDuplicateFrames:
       return out.text.Text(text="avg: "+str(f.props['PlaneStatsDiff']),alignment=8)            
     return out
 
-  def interpolateWithRIFE(self, clip, n, start, end, rifeModel=22, rifeTTA=False, rifeUHD=False, rifeThresh=0):
-    if clip.format.id != vs.RGBS:
-      raise ValueError(f'FillDuplicateFrames: "clip" needs to be RGBS when using \'{self.method}\'!')
+  def interpolateWithRIFE(self, clip, n, start, end, rifeModel=22, rifeTTA=False, rifeUHD=False):
+    if clip.format.id != vs.RGBS and clip.format.id != vs.RGBS:
+      raise ValueError(f'FillDuplicateFrames: "clip" needs to be RGBS or RGBH when using \'{self.method}\'!')
       
-    if rifeThresh != 0:
-      clip = core.misc.SCDetect(clip=clip,threshold=rifeThresh)
+    if self.rifeSceneThr != 0:
+      fp16 = clip.format.id == vs.RGBH
+      if (fp16):
+        clip = core.resize.Bicubic(clip=clip,format=vs.RGBS)
+      clip = core.misc.SCDetect(clip=clip,threshold=self.rifeSceneThr)
+      if (fp16):
+        clip = core.resize.Bicubic(clip=clip,format=vs.RGBH)
     
     num = end - start
-    self.smooth = core.rife.RIFE(clip, model=rifeModel, factor_num=num, tta=rifeTTA,uhd=rifeUHD)
+    self.smooth = core.rife.RIFE(clip, model=rifeModel, factor_num=num, tta=rifeTTA,uhd=rifeUHD,gpu_id=self.device_index)
     self.smooth_start = start
     self.smooth_end   = end
     return self.smooth[n-start]
@@ -110,7 +116,7 @@ class FillDuplicateFrames:
     if self.method == 'SVP' or self.method == 'SVPcpu':  
       return self.interpolateWithSVP(clip, n, start, end)
     elif self.method == 'RIFE':
-      return self.interpolateWithRIFE(clip, n, start, end, rifeThresh=self.rifeSceneThr)
+      return self.interpolateWithRIFE(clip, n, start, end)
     elif self.method == 'MV':
       return self.interpolateWithMV(clip, n, start, end)
     else:
