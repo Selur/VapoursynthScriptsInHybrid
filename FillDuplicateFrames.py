@@ -11,13 +11,19 @@ fdf = FillDuplicateFrames(clip, debug=True, thresh=0.001, method='SVP')
 clip = fdf.out
 
 Replaces duplicate frames with interpolations.
-v0.0.2
+v0.0.3
+0.0.3 allow to set device_index for RIFE and support RGBH input for RIFE
 '''
 
 class FillDuplicateFrames:
   # constructor
   def __init__(self, clip: vs.VideoNode, thresh: float=0.001, method: str='SVP', debug: bool=False, rifeSceneThr: float=0.15, device_index: int=0):
-      self.clip = core.std.PlaneStats(clip, clip[0]+clip)
+      if (clip.format.id == vs.RGBH):
+        clip = core.resize.Bicubic(clip=clip,format=vs.RGBS)
+        self.clip = core.std.PlaneStats(clip, clip[0]+clip)
+        clip = core.resize.Bicubic(clip=clip,format=vs.RGBH)
+      else:
+        self.clip = core.std.PlaneStats(clip, clip[0]+clip)
       self.thresh = thresh
       self.debug = debug
       self.method = method
@@ -32,7 +38,7 @@ class FillDuplicateFrames:
     return out
 
   def interpolateWithRIFE(self, clip, n, start, end, rifeModel=22, rifeTTA=False, rifeUHD=False):
-    if clip.format.id != vs.RGBS and clip.format.id != vs.RGBS:
+    if clip.format.id != vs.RGBS and clip.format.id != vs.RGBH:
       raise ValueError(f'FillDuplicateFrames: "clip" needs to be RGBS or RGBH when using \'{self.method}\'!')
       
     if self.rifeSceneThr != 0:
@@ -44,6 +50,8 @@ class FillDuplicateFrames:
         clip = core.resize.Bicubic(clip=clip,format=vs.RGBH)
     
     num = end - start
+    
+    from vsrife import rife
     self.smooth = core.rife.RIFE(clip, model=rifeModel, factor_num=num, tta=rifeTTA,uhd=rifeUHD,gpu_id=self.device_index)
     self.smooth_start = start
     self.smooth_end   = end
