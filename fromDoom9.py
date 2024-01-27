@@ -189,6 +189,17 @@ def deflickerPreset3(sm: vs.VideoNode, chroma: bool):
     return core.cnr2.Cnr2(smm, mode="ooo", ln=10, lm=255, un=35, vn=35, scdthr=2.0)
   return smm
 
+
+## Change Temperature by _Al_ https://forum.doom9.org/showthread.php?p=1993851#post1993851
+def change_temperature(clip: vs.VideoNode, temp: int=6500):
+
+    if clip.format.color_family is not vs.RGB or clip.format.sample_type is not vs.FLOAT:
+       raise vs.Error('change_temperature: clip must be RGBS')
+
+    rgb = get_rgb(temp)
+    r, g, b = [value/255.0 for value in rgb]
+    return core.std.Expr([clip], expr=[f"x {r} *", f"x {g} *", f"x {b} *"])
+    
 def get_rgb(temp: int=6500):
     temp = temp / 100
     if temp <= 66:
@@ -218,7 +229,82 @@ def get_rgb(temp: int=6500):
 
     return round(r), round(g), round(b)
 
-def change_temperature(clip: vs.VideoNode, temp: int=6500):
-    rgb = get_rgb(temp)
-    r, g, b = [value/255.0 for value in rgb]
-    return core.std.Expr([clip], expr=[f"x {r} *", f"x {g} *", f"x {b} *"])
+
+# Port from AVILs Avisynth version: https://forum.doom9.org/showthread.php?t=185261
+# Required masktools2, mvtools2
+# Should work on YUVXXXP8 
+
+def blur(clip: vs.VideoNode, blur_radius: float=0.5) -> vs.VideoNode:
+  # Define the blur radius
+  kernel_size = 3  # Use 3 for kernel size 9, or 5 for kernel size 25
+  sigma = blur_radius / 3.0
+  blur_kernel = [
+      round((1 / (2 * 3.14159 * sigma**2)) * 2.71828**(-((x - kernel_size//2)**2 + (y - kernel_size//2)**2) / (2 * sigma**2)), 4)
+      for y in range(kernel_size)
+      for x in range(kernel_size)
+  ]
+  sum_kernel = sum(blur_kernel)
+  blur_kernel = [val / sum_kernel for val in blur_kernel]
+  return vs.core.std.Convolution(clip=clip, matrix=blur_kernel)
+
+def VHSClean(clip: vs.VideoNode, ths: int=100, blur_sharp=True) -> vs.VideoNode:
+ 
+  lambda_      = 40000
+  pel         =  2
+  tm          = False
+  srhp        = 2
+  srch        = 4
+  badsad      = 2000
+  chroma =True
+  thsc = ths * 2
+  ths1=  ths * 4
+  thsc1= ths1* 2
+  bs = 8
+  bblur  = 0.6
+  
+  
+  sx = core.mv.Super(clip=clip, pel=pel, sharp=1)  
+  
+  #phase 1. Soft denoising
+  f1x = core.mv.Analyse(super_=sx,delta=1,isb=False,truemotion=tm,blksize=16,blksizev=8,overlap=8,overlapv=4,search=srch,searchparam=srhp,badsad=badsad,dct=1,chroma=chroma,lambda_=lambda_)
+  b1x = core.mv.Analyse(super_=sx,delta=1,isb=True,truemotion=tm,blksize=16,blksizev=8,overlap=8,overlapv=4,search=srch,searchparam=srhp,badsad=badsad,dct=1,chroma=chroma,lambda_=lambda_)
+  f2x = core.mv.Analyse(super_=sx,delta=2,isb=False,truemotion=tm,blksize=16,blksizev=8,overlap=8,overlapv=4,search=srch,searchparam=srhp,badsad=badsad,dct=1,chroma=chroma,lambda_=lambda_)
+  b2x = core.mv.Analyse(super_=sx,delta=2,isb=True,truemotion=tm,blksize=16,blksizev=8,overlap=8,overlapv=4,search=srch,searchparam=srhp,badsad=badsad,dct=1,chroma=chroma,lambda_=lambda_)
+  x2 = core.mv.Degrain2(clip,sx,b1x,f1x,b2x,f2x,thsad=ths,thsadc=thsc)
+
+  #phase 2. Reinject denoised over original (like a sharpening using blurred version)
+  x3=core.std.Expr([clip,x2],expr="x 2 * y -")
+
+  #phase 3. Strong denoising. Same style as MCDegrainSharp (By Didée and Stainless)
+  if (blur_sharp):
+    sharpen_kernel = [-0.1, -0.1, -0.1, -0.1, 2.0, -0.1, -0.1, -0.1, -0.1] # csharp = 0.6
+    x0 = core.std.Convolution(clip=x3, matrix=sharpen_kernel)
+    x1 = blur(clip=x3, blur_radius=bblur)
+  else:
+    x0 = x3
+    x1 = x3
+
+  sx0 = core.mv.Super(clip=x0,pel=pel,sharp=1,levels=1)   # Only 1 Level required for sharpened Super (not MAnalyse-ing)
+  sx1 = core.mv.Super(clip=x1,pel=pel,sharp=1)
+
+  f1x1 = core.mv.Analyse(super_=sx1,delta=1,isb=False,truemotion=tm,blksize=64,blksizev=64,overlap=32,overlapv=32,search=srch,searchparam=srhp,badsad=badsad,dct=0,chroma=chroma,lambda_=lambda_)
+  b1x1 = core.mv.Analyse(super_=sx1,delta=1,isb=True,truemotion=tm,blksize=64,blksizev=64,overlap=32,overlapv=32,search=srch,searchparam=srhp,badsad=badsad,dct=0,chroma=chroma,lambda_=lambda_)
+  f2x1 = core.mv.Analyse(super_=sx1,delta=2,isb=False,truemotion=tm,blksize=64,blksizev=64,overlap=32,overlapv=32,search=srch,searchparam=srhp,badsad=badsad,dct=0,chroma=chroma,lambda_=lambda_)
+  b2x1 = core.mv.Analyse(super_=sx1,delta=2,isb=True,truemotion=tm,blksize=64,blksizev=64,overlap=32,overlapv=32,search=srch,searchparam=srhp,badsad=badsad,dct=0,chroma=chroma,lambda_=lambda_)
+  f3x1 = core.mv.Analyse(super_=sx1,delta=3,isb=False,truemotion=tm,blksize=64,blksizev=64,overlap=32,overlapv=32,search=srch,searchparam=srhp,badsad=badsad,dct=0,chroma=chroma,lambda_=lambda_)
+  b3x1 = core.mv.Analyse(super_=sx1,delta=3,isb=True,truemotion=tm,blksize=64,blksizev=64,overlap=32,overlapv=32,search=srch,searchparam=srhp,badsad=badsad,dct=0,chroma=chroma,lambda_=lambda_)
+  f4x1 = core.mv.Analyse(super_=sx1,delta=4,isb=False,truemotion=tm,blksize=64,blksizev=64,overlap=32,overlapv=32,search=srch,searchparam=srhp,badsad=badsad,dct=0,chroma=chroma,lambda_=lambda_)
+  b4x1 = core.mv.Analyse(super_=sx1,delta=4,isb=True,truemotion=tm,blksize=64,blksizev=64,overlap=32,overlapv=32,search=srch,searchparam=srhp,badsad=badsad,dct=0,chroma=chroma,lambda_=lambda_)
+  f5x1 = core.mv.Analyse(super_=sx1,delta=5,isb=False,truemotion=tm,blksize=64,blksizev=64,overlap=32,overlapv=32,search=srch,searchparam=srhp,badsad=badsad,dct=0,chroma=chroma,lambda_=lambda_)
+  b5x1 = core.mv.Analyse(super_=sx1,delta=5,isb=True,truemotion=tm,blksize=64,blksizev=64,overlap=32,overlapv=32,search=srch,searchparam=srhp,badsad=badsad,dct=0,chroma=chroma,lambda_=lambda_)
+  f6x1 = core.mv.Analyse(super_=sx1,delta=6,isb=False,truemotion=tm,blksize=64,blksizev=64,overlap=32,overlapv=32,search=srch,searchparam=srhp,badsad=badsad,dct=0,chroma=chroma,lambda_=lambda_)
+  b6x1 = core.mv.Analyse(super_=sx1,delta=6,isb=True,truemotion=tm,blksize=64,blksizev=64,overlap=32,overlapv=32,search=srch,searchparam=srhp,badsad=badsad,dct=0,chroma=chroma,lambda_=lambda_)
+
+  mv123 = core.mv.Degrain3(x1, sx0, b1x1,f1x1,b2x1,f2x1,b3x1,f3x1,thsad=ths1,thsadc=thsc1)
+  mv456 = core.mv.Degrain3(x1, sx0, b4x1,f4x1,b5x1,f5x1,b6x1,f6x1,thsad=ths1,thsadc=thsc1)
+  x4 = core.std.Merge(mv123, mv456, weight=[0.4615])
+ 
+
+  #phase 4. Recover quick flying objects and water drops
+  mx=core.std.Expr([blur(clip=x4, blur_radius=1.5),blur(clip=x3, blur_radius=1.5)],expr="y x - abs 12 >  255 0 ?")
+  return core.std.MaskedMerge(clipa=x4,clipb=x3,mask=core.std.BoxBlur(mx,2),planes=[0, 1, 2])
