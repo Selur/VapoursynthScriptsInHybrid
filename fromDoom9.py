@@ -230,6 +230,18 @@ def get_rgb(temp: int=6500):
     return round(r), round(g), round(b)
 
 
+# ChannelMixer port from _AI_
+# https://forum.doom9.org/showthread.php?p=1962889#post1962889
+# ChannelMixer (clip, float "RR", float "RG", float "RB", float "GR", float "GG", float "GB", float "BR", float "BG", float "BB")
+def channel_mixer(rgb, RR=100.0, RG=0.0,   RB=0.0,
+                       GR=0.0,   GG=100.0, GB=0.0,
+                       BR=0.0,   BG=0.0,   BB=100.0):
+    if not rgb.format.color_family == vs.RGB:
+        raise ValueError('channel_mixer: input clip must be RGB color_family')
+    return core.std.Expr(rgb, expr = [f'0.01 {RR} * x * 0.01 {RG} * x * + 0.01 {RB} * x * +',
+                                      f'0.01 {GR} * x * 0.01 {GG} * x * + 0.01 {GB} * x * +',
+                                      f'0.01 {BR} * x * 0.01 {BG} * x * + 0.01 {BB} * x * +'])  
+
 # Port from AVILs Avisynth version: https://forum.doom9.org/showthread.php?t=185261
 # Required masktools2, mvtools2
 # Should work on YUVXXXP8 

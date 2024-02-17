@@ -96,7 +96,7 @@ class FillDuplicateFrames:
       if self.is_not_duplicate(end):
         break
     else:
-      #there are all black frames to the end, return current n frame
+      #there are all duplicate frames to the end, return current n frame
       if self.debug:
         return self.clip[n].text.Text(text="Input(3)", alignment=9)
       return self.clip[n]
@@ -117,7 +117,7 @@ class FillDuplicateFrames:
     elif self.method == 'MV':
       return self.interpolateWithMV(clip, n, start, end)
     else:
-      raise ValueError(f'ReplaceBlackFrames: "method" \'{self.method}\' is not supported atm.')
+      raise ValueError(f'FillDuplicateFrames: "method" \'{self.method}\' is not supported atm.')
 
   def is_not_duplicate(self, n):
     return self.clip.get_frame(n).props['PlaneStatsDiff'] > self.thresh
