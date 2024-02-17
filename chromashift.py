@@ -49,6 +49,6 @@ def ChromaShiftSP (clip, X=0.0, Y=0.0, shiftU=True, shiftV=True):
     Vplane = core.std.ShufflePlanes(clip, planes=2, colorfamily=vs.GRAY)
     merge = core.std.ShufflePlanes(clips=[Yplane, shift, Vplane], planes=[0, 1, 0], colorfamily=vs.YUV)
   elif shiftV:
-    Uplane = core.std.ShufflePlanes(clip, planes=2, colorfamily=vs.GRAY)
+    Uplane = core.std.ShufflePlanes(clip, planes=1, colorfamily=vs.GRAY)
     merge = core.std.ShufflePlanes(clips=[Yplane, Uplane, shift], planes=[0, 0, 2], colorfamily=vs.YUV)
   return merge

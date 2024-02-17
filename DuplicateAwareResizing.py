@@ -9,13 +9,13 @@ except:
   pass
 
 '''
-DubplicateAwareResizing:
-The idea of DubplicateAwareResizing is that if you have a clip with duplicate frames in it,
+DuplicateAwareResizing:
+The idea of DuplicateAwareResizing is that if you have a clip with duplicate frames in it,
 instead of applying the frame based resizer (without a temporal component) to each frame of a row of duplicates,
 you just apply it to the first frame and than duplicate that frame to replace the duplicates.
 
 call using:
-from DubplicateAwareResizing import DAResizer
+from DuplicateAwareResizing import DAResizer
 sr = DAResizer(clip, thresh=0.001, method='XXX')
 clip = sr.out
 
@@ -68,11 +68,10 @@ class DAResizer:
       for model in self.models:
         self.vsgan.load(model)
         self.vsgan.apply()
-      resized = self.vsgan.clip
-      if inFormat == vs.RGBH:
-        resized = core.resize.Bicubic(clip=resized, format=vs.RGBS)  
-      resized = core.fmtc.resample(clip=resized, w=self.tWidth, h=self.tHeight, kernel="spline64", interlaced=False, interlacedd=False)
-      if inFormat == vs.RGBH:
+        resized = self.vsgan.clip
+        if inFormat == vs.RGBH:
+          resized = core.resize.Bicubic(clip=resized, format=vs.RGBS)  
+        resized = core.fmtc.resample(clip=resized, w=self.tWidth, h=self.tHeight, kernel="spline64", interlaced=False, interlacedd=False)
         resized = core.resize.Bicubic(clip=resized, format=inFormat, range_s="full")
       self.previous = resized
       return resized
