@@ -20,6 +20,18 @@ sr = DAResizer(clip, thresh=0.001, method='XXX')
 clip = sr.out
 
 '''
+# wrapper for easier usage by _AI_
+def daResizer(clip:         vs.VideoNode,
+              tWidth:       int,
+              tHeight:      int,
+              thresh:       float=0.001,
+              method:       str='Bicubic',
+              vsgan_models: List[str]=None,
+              debug:        bool=False,
+              device_index: int=0):
+
+  sr = DAResizer(clip, tWidth, tHeight, thresh, method, vsgan_models, debug, device_index)
+  return sr.out
 
 # tWidth, tHeight: target resolution
 # thresh: threshold for duplicate detection
