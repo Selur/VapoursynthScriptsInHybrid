@@ -3384,13 +3384,13 @@ def blah(clip, sstr=4, de=0.2, re=0.1, cstr=0.5, thr=72):
     MinMax_High_V = core.std.Expr([Max_V, Min_V], expr=[expr2, ''])
     MinMax_Low_V = core.std.Expr([Max_V, Min_V], expr=[expr3, ''])
     minmax_UL_V = core.std.Expr([MinMax_Low_V, MinMax_High_V], expr=['x y x - -', ''])
-    minmax_G_V = core.misc.AverageFrames([MinMax_High_V, MinMax_Low_V, minmax_UL_V], [2, 7, 11], planes=[0])
+    minmax_G_V = core.std.AverageFrames([MinMax_High_V, MinMax_Low_V, minmax_UL_V], [2, 7, 11], planes=[0])
     Max_H = clip.avs.mt_luts(clip, mode='max', pixels='0 1 0 -1', expr=expr1, U=1, V=1)
     Min_H = clip.avs.mt_luts(clip, mode='min', pixels='0 1 0 -1', expr=expr1, U=1, V=1)
     MinMax_High_H = core.std.Expr([Max_H, Min_H], expr=[expr2, ''])
     MinMax_Low_H = core.std.Expr([Max_H, Min_H], expr=[expr3, ''])
     minmax_UL_H = core.std.Expr([MinMax_Low_H, MinMax_High_H], expr=['x y x - -', ''])
-    minmax_G_H = core.misc.AverageFrames([MinMax_High_H, MinMax_Low_H, minmax_UL_H], [2, 7, 11], planes=[0])
+    minmax_G_H = core.std.AverageFrames([MinMax_High_H, MinMax_Low_H, minmax_UL_H], [2, 7, 11], planes=[0])
     expr4 = 'x 128 - y 1 > y 1 ? * y x 128 - abs - 1 > y x 128 - abs - 1 ? / 128 +'
     Diff_V = core.std.Expr([Diff_V, minmax_G_V], expr=[expr4, ''])
     Diff_H = core.std.Expr([Diff_H, minmax_G_H], expr=[expr4, ''])
@@ -3489,7 +3489,7 @@ def Recon(clip, sstr=4, rad=2, lmode=1, thr=720):
     MinMax_High_V = core.std.Expr([Max_V, Min_V], expr=[expr2, ''])
     MinMax_Low_V = core.std.Expr([Max_V, Min_V], expr=[expr3, ''])
     minmax_UL_V = core.std.Expr([MinMax_Low_V, MinMax_High_V], expr=['x y x - -', ''])
-    minmaxmed_v = core.misc.AverageFrames([MinMax_High_V, MinMax_Low_V, minmax_UL_V, Med_V], [2, 8, 11, 11], planes=[0])
+    minmaxmed_v = core.std.AverageFrames([MinMax_High_V, MinMax_Low_V, minmax_UL_V, Med_V], [2, 8, 11, 11], planes=[0])
 
     if rad == 0.5:
         Max_H = clip.avs.mt_luts(clip, mode='max', pixels='1 0 -1 0', expr=expr1, U=1, V=1)
@@ -3541,7 +3541,7 @@ def Recon(clip, sstr=4, rad=2, lmode=1, thr=720):
     MinMax_High_H = core.std.Expr([Max_H, Min_H], expr=[expr2, ''])
     MinMax_Low_H = core.std.Expr([Max_H, Min_H], expr=[expr3, ''])
     minmax_UL_H = core.std.Expr([MinMax_Low_H, MinMax_High_H], expr=['x y x - -', ''])
-    minmaxmed_h = core.misc.AverageFrames([MinMax_High_H, MinMax_Low_H, minmax_UL_H, Med_H], [2, 8, 11, 11], planes=[0])
+    minmaxmed_h = core.std.AverageFrames([MinMax_High_H, MinMax_Low_H, minmax_UL_H, Med_H], [2, 8, 11, 11], planes=[0])
 
     if rad == 1:
         Blur_V = NLL(clip, 'v', 1)
