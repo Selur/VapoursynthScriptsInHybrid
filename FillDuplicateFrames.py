@@ -12,6 +12,7 @@ clip = fdf.out
 
 Replaces duplicate frames with interpolations.
 v0.0.3
+0.0.4 removed and added back RGBH support or RIFE
 0.0.3 allow to set device_index for RIFE and support RGBH input for RIFE
 0.0.4 removed RGBH since 
 '''
@@ -19,7 +20,13 @@ v0.0.3
 class FillDuplicateFrames:
   # constructor
   def __init__(self, clip: vs.VideoNode, thresh: float=0.001, method: str='SVP', debug: bool=False, rifeSceneThr: float=0.15, device_index: int=0):
-      self.clip = core.std.PlaneStats(clip, clip[0]+clip)
+      fp16 = clip.format.id == vs.RGBH
+      if (fp16):
+        clip = core.resize.Bicubic(clip=clip,format=vs.RGBS)
+        self.clip = core.std.PlaneStats(clip, clip[0]+clip)
+        clip = core.resize.Bicubic(clip=clip,format=vs.RGBH)
+      else:
+        self.clip = core.std.PlaneStats(clip, clip[0]+clip)
       self.thresh = thresh
       self.debug = debug
       self.method = method
@@ -38,7 +45,13 @@ class FillDuplicateFrames:
       raise ValueError(f'FillDuplicateFrames: "clip" needs to be RGBS when using \'{self.method}\'!')
       
     if self.rifeSceneThr != 0:
+      fp16 = clip.format.id == vs.RGBH
+      if (fp16):
+        clip = core.resize.Bicubic(clip=clip,format=vs.RGBS)
       clip = core.misc.SCDetect(clip=clip,threshold=self.rifeSceneThr)
+      if (fp16):
+        clip = core.resize.Bicubic(clip=clip,format=vs.RGBH)
+        
     num = end - start
     
     self.smooth = core.rife.RIFE(clip, model=rifeModel, factor_num=num, tta=rifeTTA,uhd=rifeUHD,gpu_id=self.device_index)
