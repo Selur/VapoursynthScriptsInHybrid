@@ -12,13 +12,34 @@ def fillWithRIFE(clip, firstframe=None, rifeModel=1, rifeTTA=False, rifeUHD=Fals
   start = core.std.Trim(clip1, first=firstframe-1, length=1)
   end = core.std.Trim(clip1, first=firstframe+1, length=1)
   startend = start + end
-  if clip.format != vs.RGBS:
-    r = core.resize.Bicubic(startend, format=vs.RGBS, matrix_in_s="709")
+  adjustColor = clip.format.id != vs.RGBS
+  if adjustColor:
+    startend = core.resize.Bicubic(startend, format=vs.RGBS, matrix_in_s="709")
   if rifeThresh != 0:
-    r = core.misc.SCDetect(clip=r,threshold=rifeThresh)
-  r = core.rife.RIFE(r, model=rifeModel, tta=rifeTTA, uhd=rifeUHD)
-  if clip.format != vs.RGBS:
+    startend = core.misc.SCDetect(clip=startend,threshold=rifeThresh)
+  r = core.rife.RIFE(startend, model=rifeModel, tta=rifeTTA, uhd=rifeUHD)
+  if adjustColor:
     r = core.resize.Bicubic(r, format=clip.format, matrix_s="709")
+  r = core.std.Trim(r, first=1, last=1) 
+  r = core.std.AssumeFPS(r, fpsnum=1, fpsden=1)
+  a = core.std.Trim(clip1, first=0, last=firstframe-1) 
+  b = core.std.Trim(clip1, first=firstframe+1)
+  join = a + r + b
+  return core.std.AssumeFPS(join, src=clip)
+
+def fillWithSVP(clip, firstframe=None, gpu=False):
+  clip1 = core.std.AssumeFPS(clip, fpsnum=1, fpsden=1)
+  start = core.std.Trim(clip1, first=firstframe-1, length=1)
+  end = core.std.Trim(clip1, first=firstframe+1, length=1)
+  startend = start + end
+  
+  if gpu:
+    super  = core.svp1.Super(startend,"{gpu:1}")
+  else:
+    super  = core.svp1.Super(startend,"{gpu:0}")
+  vectors= core.svp1.Analyse(super["clip"],super["data"],startend,"{}")
+  r = core.svp2.SmoothFps(startend,super["clip"],super["data"],vectors["clip"],vectors["data"],"{}")
+  
   r = core.std.Trim(r, first=1, last=1) 
   r = core.std.AssumeFPS(r, fpsnum=1, fpsden=1)
   a = core.std.Trim(clip1, first=0, last=firstframe-1) 
