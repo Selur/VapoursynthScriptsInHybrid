@@ -154,7 +154,7 @@ def ReplaceSingle(clip, frameList, method="mv", rifeModel=0, rifeTTA=False, rife
     core = vs.core
     if not isinstance(clip, vs.VideoNode):
         raise ValueError('This is not a clip')
-    if clip.formatcolor_family != vs.YUV:
+    if clip.format.color_family != vs.YUV:
        raise ValueError('ReplaceSingle requires YUV input')
     if method == "rife" and rifeThresh != 0:
        clip = core.misc.SCDetect(clip=clip,threshold=rifeThresh)
