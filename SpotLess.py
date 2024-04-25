@@ -19,7 +19,7 @@ def SpotLess(clip: vs.VideoNode,
              truemotion: bool = True,
              rfilter: int = None,
              blur: bool = False,
-             
+             smoother: str = 'tmedian',
              ref: vs.VideoNode = None
             ) -> vs.VideoNode:
             
@@ -60,6 +60,7 @@ def SpotLess(clip: vs.VideoNode,
             4 : cubic filter like BicubicResize(b=1,c=0) for even more smoothing 
           blur (bool): apply additional bluring during mvtools Super
           truemotion: mvtools Analyse and Recalculate truemotion parameter.
+          smoother (string): which smoother to use (tmedian, ttsmooth, zsmooth)
             
     """     
     fpsnum = clip.fps_num;
@@ -157,7 +158,14 @@ def SpotLess(clip: vs.VideoNode,
       doCompensate(bc, fc, bv, fv, delta, thsad, thsad2)
     
     ic =  core.std.Interleave(bc + [clip] + fc)
-    output = core.tmedian.TemporalMedian(ic, radius=radT)
+    if smoother == 'tmedian':
+       output = core.tmedian.TemporalMedian(ic, radius=radT)
+    elif smoother == 'ttsmooth':
+       output = core.ttmpsm.TTempSmooth(ic, maxr=min(7, radT))
+    elif smoother == 'zsmooth':   
+       output = core.zsmooth.TemporalMedian(ic, radius=radT)
+    else:
+       raise ValueError("Spotless: unknown smoother "+smoother+"!")  
     output = output.std.SelectEvery(radT*2+1, radT)  # Return middle frame
     return core.std.AssumeFPS(clip=output, fpsnum=fpsnum, fpsden=fpsden)
     
