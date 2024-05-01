@@ -58,7 +58,10 @@ import math
 from collections.abc import Sequence
 from ._metadata import __version__
 
-core = vs.core
+if not hasattr(vs, 'core'):
+    core = vs.get_core()
+else:
+    core = vs.core
 
 ################################################################################################################################
 
@@ -253,6 +256,7 @@ def Depth(input, depth=None, sample=None, fulls=None, fulld=None,
             elif dither == "random":
                 if kwargs['ampn'] is None:
                     dither = 1
+                    kwargs['ampn'] = 1
                 elif kwargs['ampn'] > 0:
                     dither = 1
                 else:
@@ -1657,9 +1661,13 @@ def Avg(clip1, clip2, mode=None):
 ##     planes {int[]}: specify which planes to process
 ##         unprocessed planes will be copied from "src"
 ##         default: all planes will be processed, [0,1,2] for YUV/RGB input, [0] for Gray input
+##     safe {bool}: a safe version of the expression to avoid unexpected filtering results
+##         keep "src" unchanged if the filtering difference of "flt1" and "flt2" are of opposite direction
+##         with safe=True, MinFilter aligns to the same behavior as the expression in MinBlur
+##         default: True
 ################################################################################################################################
-def MinFilter(src, flt1, flt2, planes=None):
-    return _min_max_filter(src, flt1, flt2, planes, 'MinFilter')
+def MinFilter(src, flt1, flt2, planes=None, safe=True):
+    return _min_max_filter(src, flt1, flt2, planes, 'MinFilter', safe)
 ################################################################################################################################
 
 
@@ -1678,9 +1686,12 @@ def MinFilter(src, flt1, flt2, planes=None):
 ##     planes {int[]}: specify which planes to process
 ##         unprocessed planes will be copied from "src"
 ##         default: all planes will be processed, [0,1,2] for YUV/RGB input, [0] for Gray input
+##     safe {bool}: a safe version of the expression to avoid unexpected filtering results
+##         keep "src" unchanged if the filtering difference of "flt1" and "flt2" are of opposite direction
+##         default: True
 ################################################################################################################################
-def MaxFilter(src, flt1, flt2, planes=None):
-    return _min_max_filter(src, flt1, flt2, planes, 'MaxFilter')
+def MaxFilter(src, flt1, flt2, planes=None, safe=True):
+    return _min_max_filter(src, flt1, flt2, planes, 'MaxFilter', safe)
 ################################################################################################################################
 
 
@@ -2392,6 +2403,8 @@ def GetMatrix(clip, matrix=None, dIsRGB=None, id=False):
 
     if clip.width <= 1024 and clip.height <= 576:
         SD = True
+    elif clip.width <= 2048 and clip.height <= 1536:
+        pass # HD
     else:
         UHD = True
 
@@ -3048,7 +3061,7 @@ def _operator2(clip1, clip2, mode, neutral, name):
 ################################################################################################################################
 ## Internal used function for MinFilter() and MaxFilter()
 ################################################################################################################################
-def _min_max_filter(src, flt1, flt2, planes, name):
+def _min_max_filter(src, flt1, flt2, planes, name, safe=True):
     # input clip
     if not isinstance(src, vs.VideoNode):
         raise type_error('"src" must be a clip!', num_stacks=2)
@@ -3090,11 +3103,14 @@ def _min_max_filter(src, flt1, flt2, planes, name):
     for i in range(sNumPlanes):
         if process[i]:
             if name == 'MinFilter':
-                expr.append("x z - abs x y - abs < z y ?")
+                _expr = "x z - abs x y - abs < z y ?"
             elif name == 'MaxFilter':
-                expr.append("x z - abs x y - abs > z y ?")
+                _expr = "x z - abs x y - abs > z y ?"
             else:
                 raise value_error('Unknown "name" specified!', num_stacks=1)
+            if safe:
+                _expr = f"x y - x z - * 0 < x {_expr} ?"
+            expr.append(_expr)
         else:
             expr.append("")
 
