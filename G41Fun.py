@@ -3169,7 +3169,7 @@ def SuperToon(clip, power=.69, mode=0, nthr=4, ncap=32, lthr=0, hthr=255, lcap=2
     elif mode == 2:
         mask = mask.avs.mt_luts(mask, pixels=core.avs.mt_square(4), mode='med', expr='y x - abs {} < x y > & {} y x + {} - ?'.format(sthr, mid, mid), U=1, V=1)
     elif mode == 3:
-        diff = core.std.MakeDiff(core.std.Expr([clip.ctmf.CTMF(radius=2, planes=[0]), clip], ['x y max', '']), clip, [0])
+        diff = core.std.MakeDiff(core.std.Expr([clip.ctmf.CTMF(radius=2, opt=2, planes=[0]), clip], ['x y max', '']), clip, [0])
         mask = core.std.Expr([diff, mask], ['x y {} - {} / +'.format(mid, nthr), ''])
 
     mask = R(R(core.std.ShufflePlanes(mask, [0], vs.GRAY), [1]).std.Levels(min_in=minin, max_in=peak, min_out=0, max_out=cont), [1])
@@ -3716,7 +3716,7 @@ def ContraSharpening(clip, src, radius=None, rep=13, planes=[0, 1, 2]):
     mid = 0 if isFLOAT else 1 << (bd - 1) 
     num = clip.format.num_planes
     R = core.rgsf.Repair if isFLOAT else core.rgvs.Repair
-
+    
     s = MinBlur(clip, radius, planes) # damp down remaining spots of the denoised clip
 
     if radius <= 1:
@@ -3731,11 +3731,11 @@ def ContraSharpening(clip, src, radius=None, rep=13, planes=[0, 1, 2]):
     allD = core.std.MakeDiff(src, clip, planes) # the difference achieved by the denoising
   
     ssDD = R(ssD, allD, [rep if i in planes else 0 for i in range(num)]) # limit the difference to the max of what the denoising removed locally
-   
+    
     expr = 'x abs y abs < x y ?' if isFLOAT else 'x {} - abs y {} - abs < x y ?'.format(mid, mid) # abs(diff) after limiting may not be bigger than before
 
     ssDD = core.std.Expr([ssDD, ssD], [expr if i in planes else '' for i in range(num)])
-    
+
     return core.std.MergeDiff(clip, ssDD, planes) # apply the limited difference (sharpening is just inverse blurring)
 
 
@@ -3766,10 +3766,10 @@ def MinBlur(clip, rad=1, planes=[0, 1, 2]):
         RG4 = core.std.Median(clip, planes)
     elif rad == 2:
         RG11 = core.std.Convolution(clip, matrix=mat1, planes=planes).std.Convolution(matrix=mat2, planes=planes)
-        RG4 = core.ctmf.CTMF(clip.fmtc.bitdepth(bits=16, dmode=1), radius=2, planes=planes).fmtc.bitdepth(flt=1) if isFLOAT else core.ctmf.CTMF(clip, radius=2, planes=planes)
+        RG4 = core.ctmf.CTMF(clip.fmtc.bitdepth(bits=16, dmode=1), radius=2, opt=2, planes=planes).fmtc.bitdepth(flt=1) if isFLOAT else core.ctmf.CTMF(clip, radius=2, opt=2, planes=planes)
     else:
         RG11 = core.std.Convolution(clip, matrix=mat1, planes=planes).std.Convolution(matrix=mat2, planes=planes).std.Convolution(matrix=mat2, planes=planes)
-        RG4 = core.ctmf.CTMF(clip.fmtc.bitdepth(bits=12, dmode=1), radius=3, planes=planes).fmtc.bitdepth(bits=bd) if bd > 12 else core.ctmf.CTMF(clip, radius=3, planes=planes)
+        RG4 = core.ctmf.CTMF(clip.fmtc.bitdepth(bits=12, dmode=1), radius=3, opt=2, planes=planes).fmtc.bitdepth(bits=bd) if bd > 12 else core.ctmf.CTMF(clip, radius=3, opt=2, planes=planes)
 
     expr = 'x y - x z - * 0 < x dup y - abs x z - abs < y z ? ?'
     return core.std.Expr([clip, RG11, RG4], [expr if i in planes else '' for i in range(clip.format.num_planes)])
