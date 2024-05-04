@@ -21,6 +21,7 @@ When SVP is used input need to be YUV420P8.
 When RIFE is used input need to be RGBS.
  
 v0.0.3 added RIFE interpolation
+v0.0.4 RIFE RGBH
 '''
 class ReplaceBlackFrames:
   # constructor
@@ -65,7 +66,12 @@ class ReplaceBlackFrames:
 
   def interpolateWithRIFE(self, clip, n, start, end, rifeModel=22, rifeTTA=False, rifeUHD=False, rifeThresh=0):
     if rifeThresh != 0:
-      clip = core.misc.SCDetect(clip=clip,threshold=rifeThresh)
+      fp16 = clip.format.id == vs.RGBH
+      if (fp16):
+        clip = core.resize.Bicubic(clip=clip,format=vs.RGBS)
+      self.cip = core.misc.SCDetect(clip=clip,threshold=rifeThresh)
+      if (fp16):
+        self.cip = core.resize.Bicubic(clip=clip,format=vs.RGBH)  
     
     num = end - start
     self.smooth = core.rife.RIFE(clip, model=rifeModel, factor_num=num, tta=rifeTTA,uhd=rifeUHD)

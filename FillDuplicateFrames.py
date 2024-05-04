@@ -7,7 +7,7 @@ call using:
 from FillDuplicateFrames import FillDuplicateFrames
 fdf = FillDuplicateFrames(clip, debug=True, thresh=0.001, method='SVP')
 //fdf = FillDuplicateFrames(clip, debug=True, thresh=0.001, method='MV')
-//fdf = FillDuplicateFrames(clip, debug=True, thresh=0.001, method='RIFE', rifeSceneThr=0.15)
+//fdf = FillDuplicateFrames(clip, debug=True, thresh=0.001, method='RIFE')
 clip = fdf.out
 
 Replaces duplicate frames with interpolations.
@@ -15,24 +15,28 @@ v0.0.3
 0.0.4 removed and added back RGBH support or RIFE
 0.0.3 allow to set device_index for RIFE and support RGBH input for RIFE
 0.0.4 removed RGBH since 
+0.0.5 add RGBH back, general sceneThr
 '''
 
 class FillDuplicateFrames:
   # constructor
-  def __init__(self, clip: vs.VideoNode, thresh: float=0.001, method: str='SVP', debug: bool=False, rifeSceneThr: float=0.15, device_index: int=0):
-      fp16 = clip.format.id == vs.RGBH
-      if (fp16):
-        clip = core.resize.Bicubic(clip=clip,format=vs.RGBS)
-        self.clip = core.std.PlaneStats(clip, clip[0]+clip)
-        clip = core.resize.Bicubic(clip=clip,format=vs.RGBH)
-      else:
-        self.clip = core.std.PlaneStats(clip, clip[0]+clip)
+  def __init__(self, clip: vs.VideoNode, thresh: float=0.001, method: str='SVP', debug: bool=False, sceneThr: float=0.15, device_index: int=0):
+      # calculte stats
       self.thresh = thresh
       self.debug = debug
       self.method = method
       self.smooth = None
-      self.rifeSceneThr = rifeSceneThr
+      self.sceneThr = sceneThr
       self.device_index = device_index
+
+      if self.sceneThr != 0:
+        fp16 = clip.format.id == vs.RGBH
+        if (fp16):
+          clip = core.resize.Bicubic(clip=clip,format=vs.RGBS)
+        self.cip = core.misc.SCDetect(clip=clip,threshold=self.sceneThr)
+        if (fp16):
+          self.cip = core.resize.Bicubic(clip=clip,format=vs.RGBH)      
+      self.clip = core.std.PlaneStats(clip, clip[0]+clip)
           
   def interpolate(self, n, f):
     out = self.get_current_or_interpolate(n)
@@ -42,15 +46,7 @@ class FillDuplicateFrames:
 
   def interpolateWithRIFE(self, clip, n, start, end, rifeModel=22, rifeTTA=False, rifeUHD=False):
     if clip.format.id != vs.RGBS:
-      raise ValueError(f'FillDuplicateFrames: "clip" needs to be RGBS when using \'{self.method}\'!')
-      
-    if self.rifeSceneThr != 0:
-      fp16 = clip.format.id == vs.RGBH
-      if (fp16):
-        clip = core.resize.Bicubic(clip=clip,format=vs.RGBS)
-      clip = core.misc.SCDetect(clip=clip,threshold=self.rifeSceneThr)
-      if (fp16):
-        clip = core.resize.Bicubic(clip=clip,format=vs.RGBH)
+      raise ValueError(f'FillDuplicateFrames: "clip" needs to be RGBS when using \'{self.method}\'!')     
         
     num = end - start
     
@@ -91,8 +87,12 @@ class FillDuplicateFrames:
   
   def get_current_or_interpolate(self, n):
     if self.is_not_duplicate(n):
-      #current non dublicate selected
-      if self.debug:
+    
+      if self.potential_scene_change(n):
+        if self.debug:
+          return self.clip[n].text.Text(text="Input (scene change - 1)", alignment=9)
+      elif self.debug:
+        #current non dublicate selected
         return self.clip[n].text.Text(text="Input (1)", alignment=9)
       return self.clip[n]
 
@@ -106,6 +106,11 @@ class FillDuplicateFrames:
       return self.clip[n]
   
     for end in range(n, len(self.clip)):
+      if self.potential_scene_change(end):
+        #there are all duplicate frames to the end, return current n frame
+        if self.debug:
+          return self.clip[n].text.Text(text="Input(before scene change)", alignment=9)
+        return self.clip[n]
       if self.is_not_duplicate(end):
         break
     else:
@@ -135,9 +140,11 @@ class FillDuplicateFrames:
   def is_not_duplicate(self, n):
     return self.clip.get_frame(n).props['PlaneStatsDiff'] > self.thresh
   
+  def potential_scene_change(self, n):
+    return self.clip.get_frame(n).props['PlaneStatsDiff'] > self.sceneThr
+  
   @property
   def out(self):
-    self.clip = core.std.PlaneStats(self.clip, self.clip[0] + self.clip)
     return core.std.FrameEval(self.clip, self.interpolate, prop_src=self.clip)
     
     
