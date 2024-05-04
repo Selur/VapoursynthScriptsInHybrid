@@ -37,12 +37,11 @@ class ReplaceBlackFrames:
         raise ValueError(f'ReplaceBlackFrames: "float" needs to fullfill: 0 <= rifeSC <= 1')  
       if (method == 'interpolateSVP' or method == 'interpolateCPU') and (clip.format.id != vs.YUV420P8):
         raise ValueError(f'ReplaceBlackFrames: "clip" color format need to be YUV420P8 when SVP is used!\n{clip.format}')
-      if (method == 'interpolateRIFE') and (clip.format.id != vs.RGBS) and (clip.format.id != vs.RGBH):
-        raise ValueError(f'ReplaceBlackFrames: "clip" color format need to be RGBS or RGBH when RIFE is used!\n{clip.format}')
-      if (clip.format.id == vs.RGBH):
-        self.clip = core.std.PlaneStats(clip.resize.Bicubic(format=vs.RGBS))
-      else:
-        self.clip = core.std.PlaneStats(clip)
+      if (method == 'interpolateRIFE') and clip.format.id != vs.RGBS:
+        raise ValueError(f'ReplaceBlackFrames: "clip" color format need to be RGBS when RIFE is used!\n{clip.format}')
+      if (method == 'interpolateRIFE') and rifeSC != 0:
+        self.clip = core.misc.SCDetect(clip=clip,threshold=rifeSC)
+      self.clip = core.std.PlaneStats(clip)
 
   def previous(self, n, f):
     out = self.get_current_or_previous(n)
@@ -65,13 +64,6 @@ class ReplaceBlackFrames:
       return self.clip[n]
 
   def interpolateWithRIFE(self, clip, n, start, end, rifeModel=22, rifeTTA=False, rifeUHD=False, rifeThresh=0):
-    if rifeThresh != 0:
-      fp16 = clip.format.id == vs.RGBH
-      if (fp16):
-        clip = core.resize.Bicubic(clip=clip,format=vs.RGBS)
-      self.cip = core.misc.SCDetect(clip=clip,threshold=rifeThresh)
-      if (fp16):
-        self.cip = core.resize.Bicubic(clip=clip,format=vs.RGBH)  
     
     num = end - start
     self.smooth = core.rife.RIFE(clip, model=rifeModel, factor_num=num, tta=rifeTTA,uhd=rifeUHD)

@@ -12,7 +12,7 @@ def fillWithRIFE(clip, firstframe=None, rifeModel=1, rifeTTA=False, rifeUHD=Fals
   start = core.std.Trim(clip1, first=firstframe-1, length=1)
   end = core.std.Trim(clip1, first=firstframe+1, length=1)
   startend = start + end
-  startend = core.resize.Bicubic(startend, format=vs.RGBH, matrix_in_s="709")
+  startend = core.resize.Bicubic(startend, format=vs.RGBS, matrix_in_s="709")
   r = core.rife.RIFE(startend, model=rifeModel, tta=rifeTTA, uhd=rifeUHD, sc=sceneThresh>0)
   r = core.resize.Bicubic(r, format=clip.format, matrix_s="709")
   r = core.std.Trim(r, first=1, last=1) 

@@ -14,8 +14,8 @@ Replaces duplicate frames with interpolations.
 v0.0.3
 0.0.4 removed and added back RGBH support or RIFE
 0.0.3 allow to set device_index for RIFE and support RGBH input for RIFE
-0.0.4 removed RGBH since 
-0.0.5 add RGBH back, general sceneThr
+0.0.4 removed RGBH since RIFE ncnn does not support it
+0.0.5 add general sceneThr
 '''
 
 class FillDuplicateFrames:
@@ -28,14 +28,6 @@ class FillDuplicateFrames:
       self.smooth = None
       self.sceneThr = sceneThr
       self.device_index = device_index
-
-      if self.sceneThr != 0:
-        fp16 = clip.format.id == vs.RGBH
-        if (fp16):
-          clip = core.resize.Bicubic(clip=clip,format=vs.RGBS)
-        self.cip = core.misc.SCDetect(clip=clip,threshold=self.sceneThr)
-        if (fp16):
-          self.cip = core.resize.Bicubic(clip=clip,format=vs.RGBH)      
       self.clip = core.std.PlaneStats(clip, clip[0]+clip)
           
   def interpolate(self, n, f):
