@@ -29,6 +29,8 @@ class FillDuplicateFrames:
       self.sceneThr = sceneThr
       self.device_index = device_index
       self.clip = core.std.PlaneStats(clip, clip[0]+clip)
+      if sceneThr > 0 and method == 'RIFE':
+        clip = core.misc.SCDetect(clip=clip,threshold=sceneThr)
           
   def interpolate(self, n, f):
     out = self.get_current_or_interpolate(n)
