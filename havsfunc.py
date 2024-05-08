@@ -2272,12 +2272,19 @@ def QTGMC_Interpolate(
 
     field = 3 if TFF else 2
 
+    
     if opencl:
         nnedi3 = partial(core.nnedi3cl.NNEDI3CL, field=field, device=device, **nnedi3_args)
-        eedi3 = partial(core.eedi3m.EEDI3CL, field=field, planes=planes, mdis=EdiMaxD, device=device, **eedi3_args)
+        if hasattr(core, 'EEDI3CL'):
+          eedi3 = partial(core.eedi3m.EEDI3CL, field=field, planes=planes, mdis=EdiMaxD, device=device, **eedi3_args)
+        else:
+          eedi3 = partial(core.eedi3m.EEDI3, field=field, planes=planes, mdis=EdiMaxD, **eedi3_args)
     else:
         nnedi3 = partial(core.znedi3.nnedi3, field=field, **nnedi3_args)
-        eedi3 = partial(core.eedi3m.EEDI3, field=field, planes=planes, mdis=EdiMaxD, **eedi3_args)
+        if hasattr(core, 'EEDI3'):
+          eedi3 = partial(core.eedi3m.EEDI3, field=field, planes=planes, mdis=EdiMaxD, **eedi3_args)
+        else:
+          eedi3 = partial(core.eedi3m.EEDI3CL, field=field, planes=planes, mdis=EdiMaxD, device=device, **eedi3_args)
 
     if InputType == 1:
         return Input
