@@ -16,11 +16,12 @@ v0.0.3
 0.0.3 allow to set device_index for RIFE and support RGBH input for RIFE
 0.0.4 removed RGBH since RIFE ncnn does not support it
 0.0.5 add general sceneThr
+0.0.6 add rifeModel parameter
 '''
 
 class FillDuplicateFrames:
   # constructor
-  def __init__(self, clip: vs.VideoNode, thresh: float=0.001, method: str='SVP', debug: bool=False, sceneThr: float=0.15, device_index: int=0):
+  def __init__(self, clip: vs.VideoNode, thresh: float=0.001, method: str='SVP', debug: bool=False, sceneThr: float=0.15, rifeModel: int=22, device_index: int=0):
       # calculte stats
       self.thresh = thresh
       self.debug = debug
@@ -28,6 +29,7 @@ class FillDuplicateFrames:
       self.smooth = None
       self.sceneThr = sceneThr
       self.device_index = device_index
+      self.rifeModel = rifeModel
       self.clip = core.std.PlaneStats(clip, clip[0]+clip)
       if sceneThr > 0 and method == 'RIFE':
         clip = core.misc.SCDetect(clip=clip,threshold=sceneThr)
@@ -38,13 +40,13 @@ class FillDuplicateFrames:
       return out.text.Text(text="avg: "+str(f.props['PlaneStatsDiff']),alignment=8)            
     return out
 
-  def interpolateWithRIFE(self, clip, n, start, end, rifeModel=22, rifeTTA=False, rifeUHD=False):
+  def interpolateWithRIFE(self, clip, n, start, end, rifeTTA=False, rifeUHD=False):
     if clip.format.id != vs.RGBS:
       raise ValueError(f'FillDuplicateFrames: "clip" needs to be RGBS when using \'{self.method}\'!')     
         
     num = end - start
     
-    self.smooth = core.rife.RIFE(clip, model=rifeModel, factor_num=num, tta=rifeTTA,uhd=rifeUHD,gpu_id=self.device_index)
+    self.smooth = core.rife.RIFE(clip, model=self.rifeModel, factor_num=num, tta=rifeTTA,uhd=rifeUHD,gpu_id=self.device_index)
     self.smooth_start = start
     self.smooth_end   = end
     return self.smooth[n-start]
