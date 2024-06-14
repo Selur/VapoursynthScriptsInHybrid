@@ -17,12 +17,12 @@ v0.0.3
 0.0.4 removed RGBH since RIFE ncnn does not support it
 0.0.5 add general sceneThr
 0.0.6 add rifeModel parameter
-0.0.7 add mode: FillDuplicate|FillDrops|Replace
+0.0.7 add mode: FillDuplicate|FillDrops|Replace, add: rifeTTA, rifeUHD
 '''
 
 class FillDuplicateFrames:
   # constructor
-  def __init__(self, clip: vs.VideoNode, mode='FillDuplicate', thresh: float=0.001, method: str='SVP', sceneThr: float=0.15, rifeModel: int=22, frames = [], debug: bool=False, device_index: int=0):
+  def __init__(self, clip: vs.VideoNode, mode='FillDuplicate', thresh: float=0.001, method: str='SVP', sceneThr: float=0.15, rifeModel: int=22, rifeTTA=False, rifeUHD=False, frames = [], debug: bool=False, device_index: int=0):
       # calculte stats
       self.thresh = thresh
       self.debug = debug
@@ -31,6 +31,8 @@ class FillDuplicateFrames:
       self.sceneThr = sceneThr
       self.device_index = device_index
       self.rifeModel = rifeModel
+      self.rifeTTA = rifeTTA
+      self.rifeUHD = rifeUHD
       self.clip = core.std.PlaneStats(clip, clip[0]+clip)
       self.mode = mode
       self.frames = frames
@@ -53,13 +55,13 @@ class FillDuplicateFrames:
       return out.text.Text(text="avg: "+str(f.props['PlaneStatsDiff']),alignment=8)            
     return out
 
-  def interpolateWithRIFE(self, clip, n, start, end, rifeTTA=False, rifeUHD=False):
+  def interpolateWithRIFE(self, clip, n, start, end):
     if clip.format.id != vs.RGBS:
       raise ValueError(f'FillDuplicateFrames: "clip" needs to be RGBS when using \'{self.method}\'!')     
         
     num = end - start
     
-    self.smooth = core.rife.RIFE(clip, model=self.rifeModel, factor_num=num, tta=rifeTTA,uhd=rifeUHD,gpu_id=self.device_index)
+    self.smooth = core.rife.RIFE(clip, model=self.rifeModel, factor_num=num, tta=self.rifeTTA,uhd=self.rifeUHD,gpu_id=self.device_index)
     self.smooth_start = start
     self.smooth_end   = end
     return self.smooth[n-start]
