@@ -7,7 +7,7 @@ def fillWithMVTools(clip):
   vbe = core.mv.Analyse(super, truemotion=True, isb=True, delta=1)
   return core.mv.FlowInter(clip, super, mvbw=vbe, mvfw=vfe, time=50)
     
-def fillWithRIFE(clip, firstframe=None, rifeModel=1, rifeTTA=False, rifeUHD=False, sceneThresh=0.15):
+def fillWithRIFE(clip, firstframe=None, rifeModel=22, rifeTTA=False, rifeUHD=False, sceneThresh=0.15):
   clip1 = core.std.AssumeFPS(clip, fpsnum=1, fpsden=1)
   start = core.std.Trim(clip1, first=firstframe-1, length=1)
   end = core.std.Trim(clip1, first=firstframe+1, length=1)
@@ -15,9 +15,9 @@ def fillWithRIFE(clip, firstframe=None, rifeModel=1, rifeTTA=False, rifeUHD=Fals
   startend = core.resize.Bicubic(startend, format=vs.RGBS, matrix_in_s="709")
   r = core.rife.RIFE(startend, model=rifeModel, tta=rifeTTA, uhd=rifeUHD, sc=sceneThresh>0)
   r = core.resize.Bicubic(r, format=clip.format, matrix_s="709")
-  r = core.std.Trim(r, first=1, last=1) 
+  r = core.std.Trim(r, first=1, last=1)
   r = core.std.AssumeFPS(r, fpsnum=1, fpsden=1)
-  a = core.std.Trim(clip1, first=0, last=firstframe-1) 
+  a = core.std.Trim(clip1, first=0, last=firstframe-1)
   b = core.std.Trim(clip1, first=firstframe+1)
   join = a + r + b
   return core.std.AssumeFPS(join, src=clip)
@@ -81,7 +81,7 @@ def fillWithSVP(clip, firstframe=None, gpu=False):
   join = a + r + b
   return core.std.AssumeFPS(join, src=clip)
     
-def FillSingleDrops(clip, thresh=0.3, method="mv", rifeModel=0, rifeTTA=False, rifeUHD=False, sceneThresh=0.15, gmfssModel=0, debug=False):
+def FillSingleDrops(clip, thresh=0.3, method="mv", rifeModel=22, rifeTTA=False, rifeUHD=False, sceneThresh=0.15, gmfssModel=0, debug=False):
   core = vs.core
   if not isinstance(clip, vs.VideoNode):
     raise ValueError('This is not a clip')
@@ -93,7 +93,7 @@ def FillSingleDrops(clip, thresh=0.3, method="mv", rifeModel=0, rifeTTA=False, r
     clip = core.misc.SCDetect(clip=clip,threshold=sceneThresh)
     
   def selectFunc(n, f):
-    if f.props['PlaneStatsDiff'] > thresh or n == 0:
+    if f.props['PlaneStatsDiff'] > thresh or n == 0 or n >= clip.num_frames -1 :
       if debug:
         return core.text.Text(clip=clip,text="Org, diff: "+str(f.props['PlaneStatsDiff']),alignment=8)
       return clip
@@ -133,6 +133,7 @@ def InsertSingle(clip, afterEveryX=2, method="mv", rifeModel=0, rifeTTA=False, r
     if n == 0 or n%afterEveryX != 0:
       return clip
     else:
+      
       if method == "mv":
         insertFrame=fillWithMVTools(clip)
       elif method == "svp":
