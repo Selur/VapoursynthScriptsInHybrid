@@ -141,6 +141,7 @@ def SMDegrain(input, tr=2, thSAD=300, thSADC=None, RefineMotion=False, contrasha
         inputP = input
     else:
         inputP = input.std.SeparateFields(tff=tff)
+        h = h/2
 
     # Prefilter & Motion Filter
     if mfilter is None:
