@@ -32,7 +32,7 @@ def ChromaShift(clip, shift_left=0, shift_right=0, shift_top=0, shift_bottom=0):
   return clip
   
 # added ChromaShiftSP from https://forum.doom9.org/showthread.php?p=1951117#post1951117
-def ChromaShiftSP (clip, X=0.0, Y=0.0, shiftU=True, shiftV=True, jeh=False):
+def ChromaShiftSP (clip, X=0.0, Y=0.0, shiftU=True, shiftV=True, jeh=True):
 	#Vapoursynth version of Avisynth ChromaShiftSP
 	#Original AVS ChromaShift_SP: Shift chroma with subpixel accuracy, basic function by IanB, made standalone by McCauley
 	#X: positive values shift the chroma to left, negative values to right
