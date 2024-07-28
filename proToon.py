@@ -20,8 +20,6 @@
 #   Sharpening on/off. 
 # bool  mask = true
 #   Masking on/off. 
-# bool  show = false
-#   Show the showclip or the output, true/false. 
 # int  ssw = 4
 #   Supersample factor horizontally, 0-inf. 
 # int  ssh = 4
@@ -61,9 +59,12 @@ def Xsharpen(clip: vs.VideoNode, strength: int = 128, threshold: int = 8) -> vs.
     expr = f"y x - x z - min {threshold} < x z - y x - < z y ? {strength / 256} * x {(256 - strength) / 256} * + x ?"
     return core.std.Expr([clip, clip.std.Maximum(planes=0), clip.std.Minimum(planes=0)], [expr, ""])
 
+def merge_chroma(luma: vs.VideoNode, chroma: vs.VideoNode) -> vs.VideoNode:
+    return core.std.ShufflePlanes([luma, chroma], planes=[0, 1, 2], colorfamily=vs.YUV)
+
 def proToon(input: vs.VideoNode, 
             strength: int = 48, luma_cap: int = 191, threshold: int = 4, thinning: int = 0, 
-            sharpen: bool = True, mask: bool = True, show: bool = False, 
+            sharpen: bool = True, mask: bool = True, 
             ssw: int = 4, ssh: int = 4, 
             xstren: int = 255, xthresh: int = 255, pcScale: bool = False) -> vs.VideoNode:
 
@@ -103,7 +104,7 @@ def proToon(input: vs.VideoNode,
         ).std.Convolution(matrix=[1, 1, 1, 1, 1, 1, 1, 1, 1])
     )
 
-    masked = mask and core.std.MaskedMerge(input, darkened, edgemask) or core.std.MergeChroma(darkened, input)
+    masked = mask and core.std.MaskedMerge(input, darkened, edgemask) or merge_chroma(darkened, input)
 
     if sharpen:
         upscaled = core.resize.Lanczos(masked, width=input.width * ssw, height=input.height * ssh)
@@ -118,5 +119,6 @@ def proToon(input: vs.VideoNode,
     if not pcScale:
         output = core.std.Limiter(output, min=16 * scale // 255, max=235 * scale // 255)
 
-    final = show and core.std.MergeChroma(core.std.Overlay(input, core.std.BlankClip(input, color=[0, scale, 0]), mask=edgemask)) or output
-    return final
+    return output
+
+
