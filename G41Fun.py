@@ -2454,6 +2454,8 @@ def TemporalDegrain2(clip, degrainTR=1, degrainPlane=4, grainLevel=2, grainLevel
         expr = 'x abs y abs < x y ?' if isFLOAT else f'x {mid} - abs y {mid} - abs < x y ?'
         DD   = core.std.Expr([spatD, NR1D], [expr])
         NR1x = core.std.MakeDiff(clip, DD, [0])
+    else:
+        NR1x = clip
   
     # Second MV-denoising stage. We use MDegrain.
     if degrainTR > 0:
