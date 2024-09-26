@@ -140,9 +140,9 @@ class FillDuplicateFrames:
     clip = clip.std.AssumeFPS(fpsnum=1, fpsden=1)
     if self.method.lower() == 'svp' or self.method == 'SVPcpu' or self.method == 'svp_gpu':  
       return self.interpolateWithSVP(clip, n, start, end)
-    elif self.method == 'RIFE':
+    elif self.method.lower() == 'rife':
       return self.interpolateWithRIFE(clip, n, start, end)
-    elif self.method == 'MV':
+    elif self.method.lower() == 'mv':
       return self.interpolateWithMV(clip, n, start, end)
     else:
       raise ValueError(f'FillDuplicateFrames: {self.mode} "method" \'{self.method}\' is not supported atm.')
@@ -243,7 +243,7 @@ class FillDuplicateFrames:
     #interpolating two frame clip  into end-start+1 fps
     clip = self.clip[start] + self.clip[end]
     clip = clip.std.AssumeFPS(fpsnum=1, fpsden=1)
-    if self.method == 'svp_gpu' or self.method == 'svp':  
+    if self.method.lower() == 'svp_gpu' or self.method.lower() == 'svp':  
       return self.interpolateWithSVP(clip, n, start, end)
     elif self.method.lower() == 'rife':
       return self.interpolateWithRIFE(clip, n, start, end)
@@ -257,7 +257,7 @@ class FillDuplicateFrames:
     return self.clip.get_frame(n).props['PlaneStatsDiff'] > self.thresh
   
   def potential_scene_change(self, n):
-    return self.clip.get_frame(n).props['PlaneStatsDiff'] > self.sceneThr
+    return self.sceneThr > 0 and self.clip.get_frame(n).props['PlaneStatsDiff'] > self.sceneThr
   
   @property
   def out(self):
