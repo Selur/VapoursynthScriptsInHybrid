@@ -336,3 +336,33 @@ def maskedCAS(clip: vs.VideoNode, strength: float=0.2):
   eMask = core.std.Sobel(clip=iMask, planes=[0]).std.InvertMask().std.Levels(min_in=0, gamma=2, max_in=2 << clip.format.bits_per_sample -1).std.BoxBlur()
   sharp = core.cas.CAS(clip=clip, sharpness=1)
   return havsfunc.Overlay(base=clip, overlay=sharp, mask=eMask, opacity=strength)
+  
+  
+# Vapoursynth port of ContrastMask from javlak
+# https://forum.doom9.org/showthread.php?p=1514814#post1514814
+# requires masktools and TCanny
+# the default 'enhance' seems to be too high for normal usage, best start with 1 and increase it slowly
+def ContrastMask(clip, gblur=20.0, enhance=10.0):
+    enhance = max(0.0, min(enhance, 10.0)) * 0.1
+
+    # Convert to grayscale and invert
+    v2 = core.std.ShufflePlanes(clip, planes=0, colorfamily=vs.GRAY)
+    v2 = core.std.Invert(v2)
+
+    # Apply Gaussian blur
+    v2 = core.tcanny.TCanny(v2, sigma=gblur)
+
+    # Get the bit depth and scaling factors
+    bit_depth = clip.format.bits_per_sample
+    max_val = (1 << bit_depth) - 1
+    half_max_val = max_val / 2.0
+
+    # Apply the contrast mask effect using Expr
+    expr = f"x {half_max_val} > y {max_val} x - {half_max_val} / * x {max_val} x - - + y x {half_max_val} / * ?"
+    photoshop_overlay = core.std.Expr([clip.std.ShufflePlanes(planes=0, colorfamily=vs.GRAY), v2], [expr])
+
+    # Merge the original and overlay clips
+    photoshop_overlay = core.std.ShufflePlanes([photoshop_overlay, clip], planes=[0, 1, 2], colorfamily=vs.YUV)
+    merged = core.std.Merge(clip, photoshop_overlay, weight=enhance)
+
+    return merged
