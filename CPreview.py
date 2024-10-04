@@ -1,6 +1,6 @@
 # ===============================================================================
 # ===============================================================================
-#            CPreview 2024-06-10
+#            CPreview 2024-10-04
 # ===============================================================================
 # ===============================================================================
 
@@ -9,109 +9,119 @@ from functools import partial
 import vapoursynth as vs
 core = vs.core
 
-# -------------------------------------------------------------------------------
+# ===============================================================================
 
-def CPreview(Source, CL, CR, CT, CB, Frame=False, Time=False, Type=1, CropText=True):
+def CPreview(Source, CL, CR, CT, CB, Frame=False, Time=False, Type=1):
 
-    if not isinstance(Source, vs.VideoNode):
-        raise vs.Error('CPreview: Source must be a video')
-
-# -------------------------------------------------------------------------------
+    if not isinstance(Source, vs.VideoNode): raise vs.Error('CPreview: Source must be a video')
 
     Source_Width = Source.width
-    F_Source_Width = float(Source_Width)
     Source_Height = Source.height
+    F_Source_Width = float(Source_Width)
     F_Source_Height = float(Source_Height)
+    Source_Bits = Source.format.bits_per_sample
+    Scale = 2 ** (Source_Bits - 8)
+    CropLine = P_Line(Source_Width, Source_Height) if (1 <= Type <= 3) else Q_Line(Source_Width, Source_Height)
+    IsHalfFloat = Source.format.name.endswith("H")
+    IsFloat = Source.format.name.endswith("S")
+    IsRGBSource = (Source.format.color_family == vs.RGB)
+    IsGraySource = (Source.format.color_family == vs.GRAY)
+    IsChromaSS = \
+      not ((Source.format.subsampling_w == 0 == Source.format.subsampling_h) or IsRGBSource or IsGraySource)
 
     if (Source_Width == 0) or (Source_Height == 0):
         raise vs.Error('CPreview: Only video with a constant width and height is supported')
+    if not ((isinstance(CL, bool) is False) and isinstance(CL, int) and (CL >= 0)):
+        raise vs.Error(f'CPreview: Left cropping must be zero or a positive integer')
+    if not ((isinstance(CR, bool) is False) and isinstance(CR, int) and (CR >= 0)):
+        raise vs.Error(f'CPreview: Right cropping must be zero or a positive integer')
+    if not ((isinstance(CT, bool) is False) and isinstance(CT, int) and (CT >= 0)):
+        raise vs.Error(f'CPreview: Top cropping must be zero or a positive integer')
+    if not ((isinstance(CB, bool) is False) and isinstance(CB, int) and (CB >= 0)):
+        raise vs.Error(f'CPreview: Bottom cropping must be zero or a positive integer')
+    if not ((isinstance(CropLine, bool) is False) and isinstance(CropLine, int) and (CropLine >= 1)):
+        raise vs.Error('CPreview: The LineThickness functions must return an integer greater than or equal to 1')
+    if (1 <= Type <= 3) and IsHalfFloat:
+        raise vs.Error('CPreview: The cropping previews beginning with "p" cannot be used with ' + \
+          f'{Source.format.name} as half float formats are not supported by the VapourSynth Text function')
 
-    SCFamily = Source.format.color_family
-    SFName = Source.format.name
-    Source_Bits = Source.format.bits_per_sample
-    Source_Sample_Type = Source.format.sample_type
+    PropNum = Source.get_frame(0).props.get('_SARNum', 0)
+    PropDen = Source.get_frame(0).props.get('_SARDen', 0)
+    PropRange = Source.get_frame(0).props.get("_ColorRange", -1)
+    PropRange = PropRange if (-1 <= PropRange <= 1) else -1
+    PropChroma = None if not IsChromaSS else Source.get_frame(0).props.get("_ChromaLocation", None)
 
-    Is444 = (Source.format.subsampling_w == 0 == Source.format.subsampling_h)
-
-    PropsNum = Source.get_frame(0).props.get('_SARNum', 0)
-    PropsDen = Source.get_frame(0).props.get('_SARDen', 0)
-
-    CropLine = 1 if (Source_Width <= 1920) and (Source_Height <= 1080) else 2
-
-    if not ((isinstance(Type, bool) is False) and isinstance(Type, int) and (CropLine >= 1)):
-        raise vs.Error('CPreview: CropLine must be an integer greater than or equal to 1')
-
-    CW = Source_Width - CL - CR
-    CH = Source_Height - CT - CB
+    Cropped_Width = Source_Width - CL - CR
+    Cropped_Height = Source_Height - CT - CB
     CLineL = min(CL, CropLine)
     CLineR = min(CR, CropLine)
     CLineT = min(CT, CropLine)
     CLineB = min(CB, CropLine)
 
-    Source444 = \
-      core.resize.Bicubic(Source, format=vs.RGB48) \
-      if (SCFamily == vs.RGB) and SFName.endswith("H") else \
-      core.resize.Bicubic(Source, format=vs.GRAY16) \
-      if (SCFamily == vs.GRAY) and SFName.endswith("H") else \
-      core.resize.Bicubic(Source, format=vs.YUV444P16) \
-      if SFName.endswith("H") else \
-      core.resize.Bicubic(Source, format=vs.YUV444PS) \
-      if (SCFamily == vs.YUV) and (Is444 is False) and SFName.endswith("S") else \
-      eval("core.resize.Bicubic(Source, format=vs.YUV444P" + str(Source_Bits) + ")") \
-      if (SCFamily == vs.YUV) and (Is444 is False) else Source
+    CropTest = core.std.Crop(Source, CL, CR, CT, CB)
 
-    CropTest = None if (SCFamily == vs.RGB) or (SCFamily == vs.GRAY) or (Is444 is True) else \
-      core.std.Crop(Source, CL, CR, CT, CB)
+    Source444 = Source if not (IsChromaSS or IsHalfFloat) else \
+      core.resize.Bicubic(Source, format=vs.RGBS) if IsRGBSource and IsHalfFloat else \
+      core.resize.Bicubic(Source, format=vs.GRAYS) if IsGraySource and IsHalfFloat else \
+      core.resize.Bicubic(Source, format=vs.YUV444PS) if IsHalfFloat or (IsFloat and IsChromaSS) else \
+      eval("core.resize.Bicubic(Source, format=vs.YUV444P" + str(Source_Bits) + ")")
+
     Cropped444 = core.std.Crop(Source444, CL, CR, CT, CB)
 
-    Scale = 2 ** (Source444.format.bits_per_sample - 8)
-    MinIn = 16 * Scale
-    MaxInL = 235 * Scale
-    MaxInC = 240 * Scale
-    MaxOut = 255 * Scale
+# -------------------------------------------------------------------------------
 
-    SubText = "" if (CropText is False) else \
-      f'Source Resolution\n{Source_Width} x {Source_Height}' + \
-      '\n\nCropping\nLeft ' + str(CL) + ', Right ' + str(CR) + \
-      ', Top ' + str(CT) + ', Bottom ' + str(CB) + \
+    SubText = "" if (4 <= Type <= 6) else f'Source Resolution\n{Source_Width} x {Source_Height}' + \
+      CR_PicMod(Source_Width, Source_Height) + \
+      '\n\nCropping\nLeft ' + str(CL) + ', Right ' + str(CR) + ', Top ' + str(CT) + ', Bottom ' + str(CB) + \
       '\n\nCropped Resolution\n' + f'{Cropped444.width} x {Cropped444.height}' + \
-      '\n\nFrame Properties SAR  ' + (f'{PropsNum}:{PropsDen}' if (PropsNum > 0 < PropsDen) else 'None')
+      CR_PicMod(Cropped_Width, Cropped_Height) + \
+      '\n\nFrame Properties SAR  ' + (f'{PropNum}:{PropDen}' if (PropNum > 0 < PropDen) else 'None')
 
-    BVid = core.std.BlankClip(Cropped444)
+# -------------------------------------------------------------------------------
 
-    if (Type == 1):
+    Black = RGBColor(Source444)
+    BClip = core.std.BlankClip(Cropped444, color=Black)
 
-        OVid = BVid.std.AddBorders(CLineL, CLineR, CLineT, CLineB, color=RGBColor(Source444, 'FFFF00'))
-        OVid = OVid.std.AddBorders(CL - CLineL, CR - CLineR, CT - CLineT, CB - CLineB)
-        MVid = BVid.std.AddBorders(CLineL, CLineR, CLineT, CLineB, color=RGBColor(Source444, 'B1B1B1'))
-        MVid = MVid.std.AddBorders(CL - CLineL, CR - CLineR, CT - CLineT, CB - CLineB)
+    if (Type == 1) or (Type == 4):
 
-    elif (Type == 2):
+        OClip = BClip.std.AddBorders(CLineL, CLineR, CLineT, CLineB, color=RGBColor(Source444,'FFFF00'))
+        OClip = OClip.std.AddBorders(CL-CLineL, CR-CLineR, CT-CLineT, CB-CLineB, color=Black)
+        MClip = BClip.std.AddBorders(CLineL, CLineR, CLineT, CLineB, color=RGBColor(Source444,'E4E4E4'))
+        MClip = MClip.std.AddBorders(CL-CLineL, CR-CLineR, CT-CLineT, CB-CLineB, color=Black)
 
-        OVid = BVid.std.AddBorders(CL, CR, CT, CB, color=RGBColor(Source444, 'FFFF00'))
-        MVid = BVid.std.AddBorders(CL, CR, CT, CB, color=RGBColor(Source444, '4B4B4B'))
+    elif (Type == 2) or (Type == 5):
+
+        OClip = BClip.std.AddBorders(CL, CR, CT, CB, color=RGBColor(Source444,'FFFF00'))
+        MClip = BClip.std.AddBorders(CL, CR, CT, CB, color=RGBColor(Source444,'4B4B4B'))
 
     else:
 
-        OVid = Cropped444.std.AddBorders(CL, CR, CT, CB)
-        MVid = core.std.BlankClip(Cropped444, color=RGBColor(Source444, 'FFFFFF'))
-        MVid = MVid.std.AddBorders(CL, CR, CT, CB)
+        OClip = Cropped444.std.AddBorders(CL, CR, CT, CB, color=Black)
+        MClip = core.std.BlankClip(Cropped444, color=RGBColor(Source444,'FFFFFF'))
+        MClip = MClip.std.AddBorders(CL, CR, CT, CB, color=Black)
 
-    MVid = MVid if (SCFamily == vs.RGB) or SFName.endswith("S") else \
-      MVid.std.Levels(min_in=MinIn, max_in=MaxInL, min_out=0, max_out=MaxOut, planes=0)
-    MVid = MVid if (SCFamily == vs.RGB) or (SCFamily == vs.GRAY) or SFName.endswith("S") else \
-      MVid.std.Levels(min_in=MinIn, max_in=MaxInC, min_out=0, max_out=MaxOut, planes=[1, 2])
+    Planes = [0, 1, 2] if IsRGBSource else 0
+    FirstPlane = False if IsRGBSource else True
 
-    Output = Source444 if (0 == CL == CT == CR == CB) else \
-      core.std.MaskedMerge(Source444, OVid, mask=MVid, first_plane=True) \
-      if (Type == 1) or (Type == 2) else \
-      core.std.MaskedMerge(core.std.Invert(Source444), OVid, mask=MVid, first_plane=True)
+    MClip = MClip if (PropRange == 0) or ((PropRange == -1) and IsRGBSource) or IsFloat or IsHalfFloat else \
+      MClip.std.Levels(min_in=16*Scale, max_in=235*Scale, min_out=0, max_out=255*Scale, planes=Planes)
 
-    Output = Output if (CropText is False) or (Frame is True) or (Time is True) else \
-      core.text.Text(Output, SubText, alignment=5)
+# -------------------------------------------------------------------------------
 
-    return Output if (Frame is False) and (Time is False) else \
-      CP_Position(Output, Frame, Time, SubText)
+    CPreviewVideo = core.std.MaskedMerge(Source444, OClip, mask=MClip, first_plane=FirstPlane) \
+      if (1 <= Type <= 2) or (4 <= Type <= 5) else \
+      core.std.MaskedMerge(core.std.Invert(Source444), OClip, mask=MClip, first_plane=FirstPlane)
+
+    CPreviewVideo = CPreviewVideo if ((Type == 1) or (Type == 4) or not IsChromaSS) and not IsHalfFloat else \
+      core.resize.Bicubic(CPreviewVideo, format=vs.RGBH) if IsRGBSource else \
+      core.resize.Bicubic(CPreviewVideo, format=vs.GRAYH) if IsGraySource else \
+      core.resize.Bicubic(CPreviewVideo, format=vs.YUV444PH) if (Type == 1) or (Type == 4) else \
+      core.resize.Bicubic(CPreviewVideo, format=Source.format.id, chromaloc=PropChroma)
+
+    CPreviewVideo = CPreviewVideo if (Frame or Time) or (4 <= Type <= 6) else \
+      core.text.Text(CPreviewVideo, SubText, alignment=5)
+
+    return CPreviewVideo if not (Frame or Time) else CP_Position(CPreviewVideo, Frame, Time, SubText)
 
 # ===============================================================================
 # ===============================================================================
@@ -123,196 +133,115 @@ def CPreview(Source, CL, CR, CT, CB, Frame=False, Time=False, Type=1, CropText=T
 #            pCrop / pCropf / pCropt / pCropp
 # -------------------------------------------------------------------------------
 
-def pCrop(Source, CL, CR, CT, CB):
-    return CPreview(Source, CL, CR, CT, CB, False, False, 1)
-
-def pCropf(Source, CL, CR, CT, CB):
-    return CPreview(Source, CL, CR, CT, CB, True, False, 1)
-
-def pCropt(Source, CL, CR, CT, CB):
-    return CPreview(Source, CL, CR, CT, CB, False, True, 1)
-
-def pCropp(Source, CL, CR, CT, CB):
-    return CPreview(Source, CL, CR, CT, CB, True, True, 1)
+def pCrop(Source,  CL, CR, CT, CB): return CPreview(Source, CL, CR, CT, CB, False, False, 1)
+def pCropf(Source, CL, CR, CT, CB): return CPreview(Source, CL, CR, CT, CB, True,  False, 1)
+def pCropt(Source, CL, CR, CT, CB): return CPreview(Source, CL, CR, CT, CB, False, True,  1)
+def pCropp(Source, CL, CR, CT, CB): return CPreview(Source, CL, CR, CT, CB, True,  True,  1)
 
 # -------------------------------------------------------------------------------
 #            ppCrop / ppCropf / ppCropt / ppCropp
 # -------------------------------------------------------------------------------
 
-def ppCrop(Source, CL, CR, CT, CB):
-    return CPreview(Source, CL, CR, CT, CB, False, False, 2)
-
-def ppCropf(Source, CL, CR, CT, CB):
-    return CPreview(Source, CL, CR, CT, CB, True, False, 2)
-
-def ppCropt(Source, CL, CR, CT, CB):
-    return CPreview(Source, CL, CR, CT, CB, False, True, 2)
-
-def ppCropp(Source, CL, CR, CT, CB):
-    return CPreview(Source, CL, CR, CT, CB, True, True, 2)
+def ppCrop(Source,  CL, CR, CT, CB): return CPreview(Source, CL, CR, CT, CB, False, False, 2)
+def ppCropf(Source, CL, CR, CT, CB): return CPreview(Source, CL, CR, CT, CB, True,  False, 2)
+def ppCropt(Source, CL, CR, CT, CB): return CPreview(Source, CL, CR, CT, CB, False, True,  2)
+def ppCropp(Source, CL, CR, CT, CB): return CPreview(Source, CL, CR, CT, CB, True,  True,  2)
 
 # -------------------------------------------------------------------------------
 #            pppCrop / pppCropf / pppCropt / pppCropp
 # -------------------------------------------------------------------------------
 
-def pppCrop(Source, CL, CR, CT, CB):
-    return CPreview(Source, CL, CR, CT, CB, False, False, 3)
-
-def pppCropf(Source, CL, CR, CT, CB):
-    return CPreview(Source, CL, CR, CT, CB, True, False, 3)
-
-def pppCropt(Source, CL, CR, CT, CB):
-    return CPreview(Source, CL, CR, CT, CB, False, True, 3)
-
-def pppCropp(Source, CL, CR, CT, CB):
-    return CPreview(Source, CL, CR, CT, CB, True, True, 3)
+def pppCrop(Source,  CL, CR, CT, CB): return CPreview(Source, CL, CR, CT, CB, False, False, 3)
+def pppCropf(Source, CL, CR, CT, CB): return CPreview(Source, CL, CR, CT, CB, True,  False, 3)
+def pppCropt(Source, CL, CR, CT, CB): return CPreview(Source, CL, CR, CT, CB, False, True,  3)
+def pppCropp(Source, CL, CR, CT, CB): return CPreview(Source, CL, CR, CT, CB, True,  True,  3)
 
 # -------------------------------------------------------------------------------
 #            qCrop / qCropf / qCropt / qCropp
 # -------------------------------------------------------------------------------
 
-def qCrop(Source, CL, CR, CT, CB):
-    return CPreview(Source, CL, CR, CT, CB, False, False, 1, False)
-
-def qCropf(Source, CL, CR, CT, CB):
-    return CPreview(Source, CL, CR, CT, CB, True, False, 1, False)
-
-def qCropt(Source, CL, CR, CT, CB):
-    return CPreview(Source, CL, CR, CT, CB, False, True, 1, False)
-
-def qCropp(Source, CL, CR, CT, CB):
-    return CPreview(Source, CL, CR, CT, CB, True, True, 1, False)
+def qCrop(Source,  CL, CR, CT, CB): return CPreview(Source, CL, CR, CT, CB, False, False, 4)
+def qCropf(Source, CL, CR, CT, CB): return CPreview(Source, CL, CR, CT, CB, True,  False, 4)
+def qCropt(Source, CL, CR, CT, CB): return CPreview(Source, CL, CR, CT, CB, False, True,  4)
+def qCropp(Source, CL, CR, CT, CB): return CPreview(Source, CL, CR, CT, CB, True,  True,  4)
 
 # -------------------------------------------------------------------------------
 #            qqCrop / qqCropf / qqCropt / qqCropp
 # -------------------------------------------------------------------------------
 
-def qqCrop(Source, CL, CR, CT, CB):
-    return CPreview(Source, CL, CR, CT, CB, False, False, 2, False)
-
-def qqCropf(Source, CL, CR, CT, CB):
-    return CPreview(Source, CL, CR, CT, CB, True, False, 2, False)
-
-def qqCropt(Source, CL, CR, CT, CB):
-    return CPreview(Source, CL, CR, CT, CB, False, True, 2, False)
-
-def qqCropp(Source, CL, CR, CT, CB):
-    return CPreview(Source, CL, CR, CT, CB, True, True, 2, False)
+def qqCrop(Source,  CL, CR, CT, CB): return CPreview(Source, CL, CR, CT, CB, False, False, 5)
+def qqCropf(Source, CL, CR, CT, CB): return CPreview(Source, CL, CR, CT, CB, True,  False, 5)
+def qqCropt(Source, CL, CR, CT, CB): return CPreview(Source, CL, CR, CT, CB, False, True,  5)
+def qqCropp(Source, CL, CR, CT, CB): return CPreview(Source, CL, CR, CT, CB, True,  True,  5)
 
 # -------------------------------------------------------------------------------
 #            qqqCrop / qqqCropf / qqqCropt / qqqCropp
 # -------------------------------------------------------------------------------
 
-def qqqCrop(Source, CL, CR, CT, CB):
-    return CPreview(Source, CL, CR, CT, CB, False, False, 3, False)
-
-def qqqCropf(Source, CL, CR, CT, CB):
-    return CPreview(Source, CL, CR, CT, CB, True, False, 3, False)
-
-def qqqCropt(Source, CL, CR, CT, CB):
-    return CPreview(Source, CL, CR, CT, CB, False, True, 3, False)
-
-def qqqCropp(Source, CL, CR, CT, CB):
-    return CPreview(Source, CL, CR, CT, CB, True, True, 3, False)
+def qqqCrop(Source,  CL, CR, CT, CB): return CPreview(Source, CL, CR, CT, CB, False, False, 6)
+def qqqCropf(Source, CL, CR, CT, CB): return CPreview(Source, CL, CR, CT, CB, True,  False, 6)
+def qqqCropt(Source, CL, CR, CT, CB): return CPreview(Source, CL, CR, CT, CB, False, True,  6)
+def qqqCropp(Source, CL, CR, CT, CB): return CPreview(Source, CL, CR, CT, CB, True,  True,  6)
 
 # -------------------------------------------------------------------------------
 #            Cropf / Cropt / Cropp
 # -------------------------------------------------------------------------------
 
-def Cropf(Source, CL, CR, CT, CB):
-    Output = core.std.Crop(Source, CL, CR, CT, CB)
-    return CP_Position(Output, True, False)
-
-def Cropt(Source, CL, CR, CT, CB):
-    Output = core.std.Crop(Source, CL, CR, CT, CB)
-    return CP_Position(Output, False, True)
-
-def Cropp(Source, CL, CR, CT, CB):
-    Output = core.std.Crop(Source, CL, CR, CT, CB)
-    return CP_Position(Output, True, True)
+def Cropf(Source, CL, CR, CT, CB): return CP_Position(core.std.Crop(Source, CL, CR, CT, CB), True, False)
+def Cropt(Source, CL, CR, CT, CB): return CP_Position(core.std.Crop(Source, CL, CR, CT, CB), False, True)
+def Cropp(Source, CL, CR, CT, CB): return CP_Position(core.std.Crop(Source, CL, CR, CT, CB), True,  True)
 
 # ===============================================================================
 # ===============================================================================
-#            Helper Functions
+#            VapourSynth's Crop
 # ===============================================================================
 # ===============================================================================
 
-def Crop(Source, CL, CR, CT, CB):
+def Crop(Source, CL, CR, CT, CB): return core.std.Crop(Source, CL, CR, CT, CB)
 
-    if not isinstance(Source, vs.VideoNode):
-        raise vs.Error('CPreview: Source must be a video')
-
-    return core.std.Crop(Source, CL, CR, CT, CB)
-
-# -------------------------------------------------------------------------------
-# -------------------------------------------------------------------------------
-#            Position
-# -------------------------------------------------------------------------------
-# -------------------------------------------------------------------------------
-
-def CP_Position(Source, Frame, Time, SubText=""):
-
-    SCFamily = Source.format.color_family
-    SFName = Source.format.name
-
-    Source = \
-      core.resize.Bicubic(Source, format=vs.RGB48) \
-      if (SCFamily == vs.RGB) and SFName.endswith("H") else \
-      core.resize.Bicubic(Source, format=vs.GRAY16) \
-      if (SCFamily == vs.GRAY) and SFName.endswith("H") else \
-      core.resize.Bicubic(Source, format=vs.YUV444P16) \
-      if SFName.endswith("H") else Source
-
-    return core.std.FrameEval(Source, \
-      partial(CP_Pos, Source=Source, Frame=Frame, Time=Time, SubText=SubText))
-
-# ---------------------------------------
-
-def CP_Pos(n, Source, Frame, Time, SubText):
-
-    FRateNum = Source.fps.numerator
-    FRateDen = Source.fps.denominator
-    Time = Time if (FRateNum > 0 < FRateDen) else False
-
-    if (Time is True):
-
-        F_Position = n * FRateDen / FRateNum
-        HH = m.floor(F_Position / 3600)
-        MM = m.floor(F_Position / 60) % 60
-        SS = m.floor(F_Position) % 60
-        MS = m.floor((F_Position - m.floor(F_Position)) * 1000)
-        Pos = "{:02.0f}:{:02.0f}:{:02.0f}.{:03.0f}".format(HH, MM, SS, MS) + "\n\n"
-
-    PosText = str(n) + "\n" + Pos if (Frame is True) and (Time is True) else \
-      str(n) + "\n\n" if (Frame is True) else Pos if (Time is True) else ""
-
-    return core.text.Text(Source, PosText + SubText, alignment=5)
-
-# -------------------------------------------------------------------------------
-# -------------------------------------------------------------------------------
+# ===============================================================================
+# ===============================================================================
 #            RGBColor
-# -------------------------------------------------------------------------------
-# -------------------------------------------------------------------------------
+# ===============================================================================
+# ===============================================================================
 
 def RGBColor(clip, color=None, matrix=None, range=None):
 
-    if not isinstance(clip, vs.VideoNode):
-        raise vs.Error('RGBColor: clip must be a video')
+    if not isinstance(clip, vs.VideoNode): raise vs.Error('CPreview (RGBColor): clip must be a video')
+
+    PropMatrix = clip.get_frame(0).props.get("_Matrix", -1)
+    PropRange = clip.get_frame(0).props.get("_ColorRange", -1)
+
+# -------------------------------------------------------------------------------
+
+    if not ((-1 <= PropMatrix <= 2) or (4 <= PropMatrix <= 10)):
+        raise vs.Error('CPreview (RGBColor): Video has an unsupported value ' + \
+          f'({PropMatrix}) for "_Matrix" in frame properties')
+    if not (-1 <= PropRange <= 1):
+        raise vs.Error('CPreview (RGBColor): Video has an unsupported value ' + \
+          f'({PropRange}) for "_ColorRange" in frame properties')
+    if (clip.format.name).endswith("H"):
+        raise vs.Error(f'CPreview (RGBColor): {clip.format.name} is not supported')
     if not ((color is None) or isinstance(color, str)):
-        raise vs.Error('RGBColor: color must be a string, for example "darkblue" or "00008B"')
+        raise vs.Error('CPreview (RGBColor): "color" must be a string, for example "darkblue" or "00008B"')
     if not ((matrix is None) or isinstance(matrix, str) or \
       (isinstance(matrix, int) and (isinstance(matrix, bool) is False))):
-        raise vs.Error('RGBColor: matrix must be an integer or string')
+        raise vs.Error('CPreview (RGBColor): matrix must be an integer or string')
+    if (matrix is not None) and (clip.format.color_family == vs.RGB):
+        raise vs.Error('CPreview (RGBColor): A matrix cannot be specified for an RGB source')
     if not ((range is None) or (isinstance(range, str) and \
       ((range.lower().strip() == 'full') or (range.lower().strip() == 'limited') or \
       (range.lower().strip() == 'f') or (range.lower().strip() == 'l')))):
-        raise vs.Error('RGBColor: range must be "full" or "f", or "limited" or "l"')
-    if (clip.format.name).endswith("H"):
-        raise vs.Error(f'RGBColor: {clip.format.name} is not supported')
+        raise vs.Error('CPreview (RGBColor): ' + \
+          'range must be "full" or "f", or "limited" or "l" (not case sensitive)')
 
-    color = None if (color is None) else color.lower().strip()
+# -------------------------------------------------------------------------------
+#            Color
+# -------------------------------------------------------------------------------
 
-    colors = {'aliceblue'            : 'F0F8FF',
+    color = 'black' if (color is None) else color.lower().strip()
+
+    Colors = {'aliceblue'            : 'F0F8FF',
               'antiquewhite'         : 'FAEBD7',
               'aqua'                 : '00FFFF',
               'aquamarine'           : '7FFFD4',
@@ -478,72 +407,139 @@ def RGBColor(clip, color=None, matrix=None, range=None):
               'gray90'               : 'E4E4E4',
               'grey90'               : 'E4E4E4'}
 
-    if (colors.get(color) is None) and (color is not None) and (len(color) != 6):
-        raise vs.Error('RGBColor: Invalid color string specified')
+    if (Colors.get(color) is None) and (color.upper() not in Colors.values()):
+        raise vs.Error('CPreview (RGBColor): Invalid color string specified')
 
-    elif (colors.get(color) is None):
-        try: v0, v1, v2 = tuple(int(color[i : i + 2], 16) for i in (0, 2, 4))
-        except: raise vs.Error('RGBColor: Invalid color string specified')
+    if (Colors.get(color) is not None):
+        v0, v1, v2 = tuple(int(Colors.get(color)[i : i + 2], 16) for i in (0, 2, 4))
 
-    else: v0, v1, v2 = tuple(int(colors.get(color)[i : i + 2], 16) for i in (0, 2, 4))
+    else: v0, v1, v2 = tuple(int(color[i : i + 2], 16) for i in (0, 2, 4))
+
+# -------------------------------------------------------------------------------
+#            Matrix For YUV
+# -------------------------------------------------------------------------------
+
+    MatrixNum = None
 
     if (clip.format.color_family != vs.RGB):
-        matrix = matrix if (matrix is None) or isinstance(matrix, int) else \
-          matrix.lower().strip()
 
-        if (matrix is not None) and isinstance(matrix, str):
-            MatrixNum = \
-              1 if (matrix == '709') else 4 if (matrix == 'fcc') else \
-              5 if (matrix == '470bg') else 6 if (matrix == '170m') else \
-              7 if (matrix == '240m') else 8 if (matrix == 'ycgco') else \
-              9 if (matrix == '2020ncl') else 10 if (matrix == '2020cl') else -1
+        matrix = matrix if (matrix is None) or isinstance(matrix, int) else matrix.lower().strip()
 
-        if (matrix is not None) and isinstance(matrix, int):
-            MatrixNum = matrix if (matrix == 1) or (4 <= matrix <= 10) else -1
+        MatrixNum = None if (matrix is None) else \
+          (matrix if (0 <= matrix <= 1) or (4 <= matrix <= 10) else -1) \
+          if isinstance(matrix, int) else \
+          1 if (matrix == '709') else 4 if (matrix == 'fcc') else \
+          5 if (matrix == '470bg') else 6 if (matrix == '170m') else \
+          7 if (matrix == '240m') else 8 if (matrix == 'ycgco') else \
+          9 if (matrix == '2020ncl') else 10 if (matrix == '2020cl') else -1
 
         if (matrix is not None) and (MatrixNum == -1):
-            raise vs.Error('RGBColor: Unsupported matrix specified')
+            raise vs.Error('CPreview (RGBColor): Unsupported matrix specified')
 
-        PropMatrix = clip.get_frame(0).props.get("_Matrix", None)
-
-        if (PropMatrix is not None) and (PropMatrix > 10):
-            raise vs.Error(f'RGBColor: Video has an unsupported value ({PropMatrix}) ' + \
-                     'for "_Matrix" in frame properties')
-
-        PropMatrix = PropMatrix if (PropMatrix is None) else \
-          PropMatrix if (PropMatrix == 1) or (4 <= PropMatrix <= 10) else None
+        PropMatrix = None if (PropMatrix == -1) or (PropMatrix == 2) else PropMatrix
 
         if (matrix is not None) and (PropMatrix is not None) and (MatrixNum != PropMatrix):
-            raise vs.Error(f'RGBColor: The value for "_Matrix" ({PropMatrix}) ' + \
-                     'in frame properties doesn\'t match the specified matrix')
+            raise vs.Error(f'CPreview (RGBColor): The value for "_Matrix" ({PropMatrix}) ' + \
+              'in frame properties doesn\'t match the specified matrix')
 
-        matrix = MatrixNum if (matrix is not None) else \
+        MatrixNum = matrix if (matrix is not None) else \
           PropMatrix if (PropMatrix is not None) else \
-          5 if (clip.width <= 1024) and (clip.height <= 576) else \
-          1 if (clip.width <= 1920) and (clip.height <= 1080) else 9
+          5 if (clip.width <= 1056) and (clip.height < 600) else \
+          9 if (clip.width > 1920) and (clip.height > 1080) else 1
 
-    range = range if (range is None) else range.lower().strip()
-    range = range if (range is None) else \
-      0 if (range == 'full') or (range == 'f') else \
-      1 if (range == 'limited') or (range == 'l') else None
+# -------------------------------------------------------------------------------
+#            Color Range
+# -------------------------------------------------------------------------------
 
-    PropRange = clip.get_frame(0).props.get("_ColorRange", None)
-    PropRange = PropRange if (PropRange is None) else \
-      PropRange if (0 <= PropRange <= 1) else None
+    range = None if (range is None) else range.lower().strip()
 
-    if (range is not None) and (PropRange is not None) and (range != PropRange):
-        raise vs.Error(f'RGBColor: The value for "_ColorRange" ({PropRange}) ' + \
-                 'in frame properties doesn\'t match the specified range')
+    range = None if (range is None) else \
+      'limited' if (range == 'limited') or (range == 'l') else \
+      'full' if (range == 'full') or (range == 'f') else None
 
-    range = range if (range is not None) else PropRange
+    PropRangeStr = "limited" if (PropRange == 1) else "full" if (PropRange == 0) else None
 
-    BlankRGBClip = core.std.BlankClip(color=(v0, v1, v2))
-    ColorClip = BlankRGBClip.resize.Point(format=clip.format.id, matrix=matrix, range=range)
+    if (range is not None) and (PropRangeStr is not None) and (range != PropRangeStr):
+        raise vs.Error(f'CPreview (RGBColor): The value for "_ColorRange" ({PropRange}) ' + \
+          'in frame properties doesn\'t match the specified range')
+
+    range = PropRangeStr if (PropRangeStr is not None) else range
+
+# -------------------------------------------------------------------------------
+#            RGBColor Output
+# -------------------------------------------------------------------------------
+
+    BlankRGB = core.std.BlankClip(color=(v0, v1, v2))
+    ColorClip = BlankRGB.resize.Point(format=clip.format.id, matrix=MatrixNum, range_s=range)
 
     f = ColorClip.get_frame(0)
     p0 = f[0][0,0]
 
     return p0 if (clip.format.color_family == vs.GRAY) else (p0, f[1][0,0], f[2][0,0])
+
+# ===============================================================================
+# ===============================================================================
+#            Picture Mod
+# ===============================================================================
+# ===============================================================================
+
+def CR_PicMod(W, H):
+
+    WMod = 16 if (W % 16 == 0) else 8 if (W % 8 == 0) else 4 if (W % 4 == 0) else 2 if (W % 2 == 0) else 1
+    HMod = 16 if (H % 16 == 0) else 8 if (H % 8 == 0) else 4 if (H % 4 == 0) else 2 if (H % 2 == 0) else 1
+
+    return f'  (Mod {WMod}x{HMod})'
+
+# ===============================================================================
+# ===============================================================================
+#            Position
+# ===============================================================================
+# ===============================================================================
+
+def CP_Position(Source, Frame, Time, SubText=""):
+
+    if (Frame or Time) and Source.format.name.endswith("H"):
+        raise vs.Error('CPreview: The Cropf, Cropt & Cropp functions cannot be used with ' + \
+          f'{Source.format.name} as half float formats are not supported by the VapourSynth Text function')
+
+    return core.std.FrameEval(Source, \
+      partial(CP_Pos, Source=Source, Frame=Frame, Time=Time, SubText=SubText))
+
+# ---------------------------------------
+
+def CP_Pos(n, Source, Frame, Time, SubText):
+
+    FRateNum = Source.fps.numerator
+    FRateDen = Source.fps.denominator
+    Time = Time if (FRateNum > 0 < FRateDen) else False
+
+    if Time:
+
+        F_Position = n * FRateDen / FRateNum
+        HH = m.floor(F_Position / 3600)
+        MM = m.floor(F_Position / 60) % 60
+        SS = m.floor(F_Position) % 60
+        MS = m.floor((F_Position - m.floor(F_Position)) * 1000)
+        Pos = "{:02.0f}:{:02.0f}:{:02.0f}.{:03.0f}".format(HH, MM, SS, MS) + "\n\n"
+
+    PosText = str(n) + "\n" + Pos if Frame and Time else str(n) + "\n\n" if Frame else Pos if Time else ""
+
+    return core.text.Text(Source, PosText + SubText, alignment=5)
+
+# ===============================================================================
+# ===============================================================================
+#            Line Thickness For pCrop & qCrop
+# ===============================================================================
+# ===============================================================================
+#
+#  Modifying the return value of the functions below will change
+#  the thickness of the lines in the pCrop & qCrop previews.
+#  These funtions are required and cannot be commented out.
+#
+# -------------------------------------------------------------------------------
+
+def P_Line(W, H): return 1 if (W <= 1920) and (H <= 1080) else 2
+def Q_Line(W, H): return 1 if (W <= 1920) and (H <= 1080) else 2
 
 # ===============================================================================
 # ===============================================================================
