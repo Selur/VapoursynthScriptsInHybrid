@@ -350,11 +350,17 @@ def ContrastMask(clip, gblur=20.0, enhance=10.0):
     v2 = core.std.Invert(v2)
 
     # Apply Gaussian blur
-    v2 = core.tcanny.TCanny(v2, sigma=gblur)
+    v2 = core.tcanny.TCanny(v2, sigma=gblur, mode=-1)
 
     # Get the bit depth and scaling factors
     bit_depth = clip.format.bits_per_sample
-    max_val = (1 << bit_depth) - 1
+    color_range = clip.get_frame(0).props.get('_ColorRange', vs.RANGE_FULL)
+
+    if color_range == vs.RANGE_LIMITED:
+        max_val = 235 << (bit_depth - 8)
+    else:  # full range
+        max_val = (1 << bit_depth) - 1
+    
     half_max_val = max_val / 2.0
 
     # Apply the contrast mask effect using Expr
