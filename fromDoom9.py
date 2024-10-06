@@ -314,13 +314,17 @@ def VHSClean(clip: vs.VideoNode, ths: int=100, blur_sharp=True) -> vs.VideoNode:
 
   mv123 = core.mv.Degrain3(x1, sx0, b1x1,f1x1,b2x1,f2x1,b3x1,f3x1,thsad=ths1,thsadc=thsc1)
   mv456 = core.mv.Degrain3(x1, sx0, b4x1,f4x1,b5x1,f5x1,b6x1,f6x1,thsad=ths1,thsadc=thsc1)
-  x4 = core.std.Merge(mv123, mv456, weight=[0.4615])
+  x4 = core.std.Merge(mv123, mv456, weight=[0.3])
  
 
   #phase 4. Recover quick flying objects and water drops
   mx=core.std.Expr([blur(clip=x4, blur_radius=1.5),blur(clip=x3, blur_radius=1.5)],expr="y x - abs 12 >  255 0 ?")
-  return core.std.MaskedMerge(clipa=x4,clipb=x3,mask=core.std.BoxBlur(mx,2),planes=[0, 1, 2])
-
+  if hasattr(vs.core, 'vszip'):
+    return core.std.MaskedMerge(clipa=x4,clipb=x3,mask=core.vszip.BoxBlur(mx,2),planes=[0, 1, 2])
+  else:
+    return core.std.MaskedMerge(clipa=x4,clipb=x3,mask=core.std.BoxBlur(mx,2),planes=[0, 1, 2])
+    
+    
 # masked CAS port of MCAS by Atak_Snajpera https://forum.doom9.org/showthread.php?p=2003218#post2003218
 # requires:
 #  CAS: https://github.com/HomeOfVapourSynthEvolution/VapourSynth-CAS
@@ -333,7 +337,10 @@ def maskedCAS(clip: vs.VideoNode, strength: float=0.2):
     raise vs.Error('strength not valid (range: [0-1]')
   import havsfunc
   iMask = core.std.Levels(clip=clip, min_in=0, gamma=2, max_in=2 << clip.format.bits_per_sample -1)
-  eMask = core.std.Sobel(clip=iMask, planes=[0]).std.InvertMask().std.Levels(min_in=0, gamma=2, max_in=2 << clip.format.bits_per_sample -1).std.BoxBlur()
+  if hasattr(vs.core, 'vszip'):
+    eMask = core.std.Sobel(clip=iMask, planes=[0]).std.InvertMask().std.Levels(min_in=0, gamma=2, max_in=2 << clip.format.bits_per_sample -1).vszip.BoxBlur()  
+  else:
+    eMask = core.std.Sobel(clip=iMask, planes=[0]).std.InvertMask().std.Levels(min_in=0, gamma=2, max_in=2 << clip.format.bits_per_sample -1).std.BoxBlur()
   sharp = core.cas.CAS(clip=clip, sharpness=1)
   return havsfunc.Overlay(base=clip, overlay=sharp, mask=eMask, opacity=strength)
   
