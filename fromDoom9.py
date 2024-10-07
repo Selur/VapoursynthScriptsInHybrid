@@ -357,7 +357,7 @@ def ContrastMask(clip, gblur=20.0, enhance=10.0):
     v2 = core.std.Invert(v2)
 
     # Apply Gaussian blur
-    v2 = core.tcanny.TCanny(v2, sigma=gblur, mode=-1)
+    v2 = core.tcanny.TCanny(v2, sigma=50, sigma_v=50+gblur, mode=-1)
 
     # Get the bit depth and scaling factors
     bit_depth = clip.format.bits_per_sample
