@@ -1,6 +1,8 @@
 import vapoursynth as vs
 core = vs.core
 
+# 2024.10.18: extended the script to also filter first and last frame (Selur)
+
 def SpotLess(clip: vs.VideoNode,
              radT: int = 1,
              thsad: int = 10000,
@@ -72,7 +74,10 @@ def SpotLess(clip: vs.VideoNode,
       pel = 1 if clip.width > 960 else 2
     if not pel in [1, 2, 4]:
       raise ValueError("Spotless: pel must be 1, 2 or 4")
-    
+    preClip = core.std.Trim(clip, 0, radT-1)
+    postClip = core.std.Trim(clip, clip.num_frames - radT)
+    clip = core.std.Reverse(preClip) + clip + postClip
+        
     thsad2 = thsad2 or thsad
     thsad2 = (thsad + thsad2)/2 if radT>=3 else thsad2
     
@@ -166,6 +171,10 @@ def SpotLess(clip: vs.VideoNode,
        output = core.zsmooth.TemporalMedian(ic, radius=radT)
     else:
        raise ValueError("Spotless: unknown smoother "+smoother+"!")  
+    
     output = output.std.SelectEvery(radT*2+1, radT)  # Return middle frame
+    
+    output = core.std.Trim(output, preClip.num_frames, output.num_frames -1 - radT)
+    
     return core.std.AssumeFPS(clip=output, fpsnum=fpsnum, fpsden=fpsden)
     
