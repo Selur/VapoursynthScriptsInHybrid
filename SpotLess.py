@@ -76,7 +76,7 @@ def SpotLess(clip: vs.VideoNode,
       raise ValueError("Spotless: pel must be 1, 2 or 4")
     preClip = core.std.Trim(clip, 0, radT-1)
     postClip = core.std.Trim(clip, clip.num_frames - radT)
-    clip = core.std.Reverse(preClip) + clip + postClip
+    clip = core.std.Reverse(preClip) + clip + core.std.Reverse(postClip)
         
     thsad2 = thsad2 or thsad
     thsad2 = (thsad + thsad2)/2 if radT>=3 else thsad2
