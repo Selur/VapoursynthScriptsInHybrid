@@ -1,7 +1,8 @@
 import vapoursynth as vs
 core = vs.core
 
-# 2024.10.18: extended the script to also filter first and last frame (Selur)
+# 2024.10.19: fix bug and made adjustments optional
+# 2024.10.18: extended the script to also filter first and last frame
 
 def SpotLess(clip: vs.VideoNode,
              radT: int = 1,
@@ -22,7 +23,9 @@ def SpotLess(clip: vs.VideoNode,
              rfilter: int = None,
              blur: bool = False,
              smoother: str = 'tmedian',
-             ref: vs.VideoNode = None
+             ref: vs.VideoNode = None,
+             mStart: bool = False,
+             mEnd: bool = False
             ) -> vs.VideoNode:
             
     """
@@ -63,7 +66,8 @@ def SpotLess(clip: vs.VideoNode,
           blur (bool): apply additional bluring during mvtools Super
           truemotion: mvtools Analyse and Recalculate truemotion parameter.
           smoother (string): which smoother to use (tmedian, ttsmooth, zsmooth)
-            
+          mStart,  Default False. Mirror start to allow filtering first frame
+          mEnd,    Default False. Mirror end to allow filtering first frame  
     """     
     fpsnum = clip.fps_num;
     fpsden = clip.fps_den;
@@ -74,10 +78,11 @@ def SpotLess(clip: vs.VideoNode,
       pel = 1 if clip.width > 960 else 2
     if not pel in [1, 2, 4]:
       raise ValueError("Spotless: pel must be 1, 2 or 4")
-    preClip = core.std.Trim(clip, 0, radT-1)
-    postClip = core.std.Trim(clip, clip.num_frames - radT)
-    clip = core.std.Reverse(preClip) + clip + core.std.Reverse(postClip)
-        
+    
+    # Add mirrored frames if specified
+    clip = core.std.Reverse(core.std.Trim(clip, 1, radT)) + clip if mStart else clip
+    clip = core.std.Reverse(core.std.Trim(clip, clip.num_frames - radT - 1, clip.num_frames - 2)) + clip if mEnd else clip
+    
     thsad2 = thsad2 or thsad
     thsad2 = (thsad + thsad2)/2 if radT>=3 else thsad2
     
@@ -172,9 +177,9 @@ def SpotLess(clip: vs.VideoNode,
     else:
        raise ValueError("Spotless: unknown smoother "+smoother+"!")  
     
-    output = output.std.SelectEvery(radT*2+1, radT)  # Return middle frame
-    
-    output = core.std.Trim(output, preClip.num_frames, output.num_frames -1 - radT)
-    
+    output = core.std.SelectEvery(output, radT*2+1, radT)  # Return middle frame
+        
+    output = core.std.Trim(output, radT, output.num_frames - 1) if (mStart) else output
+    output = core.std.Trim(output, 0, output.num_frames - 1 - radT) if (mEnd) else output
     return core.std.AssumeFPS(clip=output, fpsnum=fpsnum, fpsden=fpsden)
     
