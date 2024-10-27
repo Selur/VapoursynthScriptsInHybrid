@@ -102,7 +102,7 @@ def EZdenoise(clip: vs.VideoNode, thSAD: int=150, thSADC: int=-1, tr: int=3, blk
 #  Cnr2: https://github.com/dubhater/vapoursynth-cnr2
 #  MSmooth: https://github.com/dubhater/vapoursynth-msmoosh
 #  TemporalSoften2: https://github.com/dubhater/vapoursynth-temporalsoften2
-#  SceneChange: https://forum.doom9.org/showthread.php?t=166769
+#  SceneChange: https://github.com/vapoursynth/vs-miscfilters-obsolete
 
 # USAGE:
 # Small_Deflicker(clip, width_clip=width(clip)/4, height_clip=height(clip)/4, preset=2, cnr=False, rep=Dalse) (default values)
@@ -118,7 +118,7 @@ def EZdenoise(clip: vs.VideoNode, thSAD: int=150, thSADC: int=-1, tr: int=3, blk
 # - Repair is an option for certain sources or anime/cartoon content, where ghosting may be evident
 # By default it is disabled (maybe for preset = 1 it is not necessary to activate it)
 def Small_Deflicker(clip: vs.VideoNode, width: int=0, height: int=0, preset: int=2, cnr: bool=False,rep: bool=True):
-  clip = core.scd.Detect(clip)
+  clip = core.misc.Detect(clip)
   if width == 0:
     width = toMod(clip.width/4,16)
   if height == 0:
@@ -379,3 +379,42 @@ def ContrastMask(clip, gblur=20.0, enhance=10.0):
     merged = core.std.Merge(clip, photoshop_overlay, weight=enhance)
 
     return merged
+
+
+def HaloBuster(input: vs.VideoNode, a: int = 32, h: float = 6.4, thr: float = 1.0, elast: float = 1.5) -> vs.VideoNode:
+    # Convert to grayscale format if not already
+    gray_format = vs.GRAY16 if input.format.bits_per_sample > 8 else vs.GRAY8
+    gray = input.resize.Point(format=gray_format)
+    
+    # Add borders for padding
+    gray = core.std.AddBorders(gray, left=a, top=a, right=a, bottom=a)
+
+    # Apply KNLMeansCL denoising
+    clean = core.knlm.KNLMeansCL(gray, d=0, a=a, s=0, h=h)
+    
+    # Apply TCanny for edge detection
+    mask = core.tcanny.TCanny(clean, sigma=1.5, mode=1)
+    max_pixel_value = (1 << gray.format.bits_per_sample) - 1
+    mask = core.std.Lut(mask, function=lambda x: int(min(max((x / max_pixel_value - 0.24) * 3.2, 0.0), 1.0) * max_pixel_value))
+    mask = core.std.Maximum(mask)
+    mask = core.std.Inflate(mask)
+
+    # Merge the clean image back using the mask
+    merge = core.std.MaskedMerge(gray, clean, mask)
+    
+    # Limit the merge differences
+    limit = core.rgvs.RemoveGrain(merge, mode=[20])
+    
+    # Crop the added borders
+    crop = core.std.CropRel(limit, left=a, top=a, right=a, bottom=a)
+
+    # Combine the final planes to get the final output
+    final = core.std.ShufflePlanes([crop, input], planes=[0, 1, 2], colorfamily=vs.YUV)
+
+    return final
+
+
+# Usage example:
+# input = core.ffms2.Source("input_file")
+# result = HaloBuster(input, a=16, h=3.5, thr=1.2, elast=1.8)
+# result.set_output()
