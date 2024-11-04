@@ -1887,16 +1887,16 @@ def QTGMC(
             dnWindow = mvf.BM3D(noiseWindow, radius1=NoiseTR, sigma=[Sigma if plane in CNplanes else 0 for plane in range(3)])
         elif Denoiser == 'dfttest':
             dnWindow = noiseWindow.dfttest.DFTTest(sigma=Sigma * 4, tbsize=noiseTD, planes=CNplanes)
-        elif Denoiser in ['knlm', 'knlmeanscl']:
+        elif Denoiser in ['knlm', 'knlmeanscl', 'nlm_cuda']:
             if ChromaNoise and not is_gray:
                 dnWindow = KNLMeansCL(noiseWindow, d=NoiseTR, h=Sigma)
             else:
-                dnWindow = noiseWindow.knlm.KNLMeansCL(d=NoiseTR, h=Sigma)
+                nlmeans_func = noiseWindow.nlm_cuda.NLMeans if hasattr(core, 'nlm_cuda') else noiseWindow.knlm.KNLMeansCL
+                dnWindow = nlmeans_func(d=NoiseTR, h=Sigma)
         else:
-            if hasattr(core, 'neo_fft3d'):
-              dnWindow = noiseWindow.neo_fft3d.FFT3D(sigma=Sigma, planes=CNplanes, bt=noiseTD)
-            else:
-              dnWindow = noiseWindow.fft3dfilter.FFT3DFilter(sigma=Sigma, planes=CNplanes, bt=noiseTD, ncpu=FftThreads)
+            fft3d_func = noiseWindow.neo_fft3d.FFT3D if hasattr(core, 'neo_fft3d') else noiseWindow.fft3dfilter.FFT3DFilter
+            dnWindow = fft3d_func(sigma=Sigma, planes=CNplanes, bt=noiseTD, ncpu=FftThreads)
+
 
         # Rework denoised clip to match source format - various code paths here: discard the motion compensation window, discard doubled lines (from point resize)
         # Also reweave to get interlaced noise if source was interlaced (could keep the full frame of noise, but it will be poor quality from the point resize)
@@ -3196,25 +3196,30 @@ def logoNR(dlg, src, chroma=True, l=0, t=0, r=0, b=0, d=1, a=2, s=2, h=3):
     else:
         dlg_orig = None
 
-    b_crop = (l != 0) or (t != 0) or (r != 0) or (b != 0)
-    if b_crop:
+    if l or t or r or b:
         src = src.std.Crop(left=l, right=r, top=t, bottom=b)
         last = dlg.std.Crop(left=l, right=r, top=t, bottom=b)
     else:
         last = dlg
 
-    if chroma:
-        clp_nr = KNLMeansCL(last, d=d, a=a, s=s, h=h)
-    else:
-        clp_nr = last.knlm.KNLMeansCL(d=d, a=a, s=s, h=h)
+    nlmeans_func = core.nlm_cuda.NLMeans if hasattr(core, 'nlm_cuda') else core.knlm.KNLMeansCL
+
+    clp_nr = nlmeans_func(last, d=d, a=a, s=s, h=h)
+
+    if not chroma:
+        clp_nr = mvf.GetPlane(clp_nr, 0)
+
     logoM = mt_expand_multi(core.std.Expr([last, src], expr=['x y - abs 16 *']), mode='losange', sw=3, sh=3).std.Convolution(matrix=[1, 1, 1, 1, 0, 1, 1, 1, 1]).std.Deflate()
     clp_nr = core.std.MaskedMerge(last, clp_nr, logoM)
-    if b_crop:
+
+    if l or t or r or b:
         clp_nr = Overlay(dlg, clp_nr, x=l, y=t)
 
     if dlg_orig is not None:
         clp_nr = core.std.ShufflePlanes([clp_nr, dlg_orig], planes=[0, 1, 2], colorfamily=dlg_orig.format.color_family)
+
     return clp_nr
+
 
 
 # Vinverse: a small, but effective function against (residual) combing, by Didée
@@ -4267,10 +4272,8 @@ def SMDegrain(input, tr=2, thSAD=300, thSADC=None, RefineMotion=False, contrasha
                                         mvf.GetPlane(inputP, 0).std.Expr(expr=[expr]),
                                         planes=planes)
         elif prefilter >= 4:
-            if chroma:
-                pref = KNLMeansCL(inputP, d=1, a=1, h=7)
-            else:
-                pref = inputP.knlm.KNLMeansCL(d=1, a=1, h=7)
+            nlmeans_func = core.nlm_cuda.NLMeans if hasattr(core, 'nlm_cuda') else core.knlm.KNLMeansCL
+            pref = nlmeans_func(inputP, d=1, a=1, h=7)
         else:
             pref = MinBlur(inputP, r=prefilter, planes=planes)
     else:
@@ -5981,12 +5984,20 @@ def KNLMeansCL(
     if clip.format.color_family != vs.YUV:
         raise vs.Error('KNLMeansCL: this wrapper is intended to be used only for YUV format')
 
-    if clip.format.subsampling_w > 0 or clip.format.subsampling_h > 0:
-        return clip.knlm.KNLMeansCL(d=d, a=a, s=s, h=h, wmode=wmode, wref=wref, device_type=device_type, device_id=device_id).knlm.KNLMeansCL(
+    use_cuda = hasattr(core, 'nlm_cuda')
+    subsampled = clip.format.subsampling_w > 0 or clip.format.subsampling_h > 0
+
+    if use_cuda:
+        nlmeans = clip.nlm_cuda.NLMeans
+    else:
+        nlmeans = clip.knlm.KNLMeansCL
+
+    if subsampled:
+        return nlmeans(d=d, a=a, s=s, h=h, wmode=wmode, wref=wref, device_type=device_type, device_id=device_id).knlm.KNLMeansCL(
             d=d, a=a, s=s, h=h, channels='UV', wmode=wmode, wref=wref, device_type=device_type, device_id=device_id
         )
     else:
-        return clip.knlm.KNLMeansCL(d=d, a=a, s=s, h=h, channels='YUV', wmode=wmode, wref=wref, device_type=device_type, device_id=device_id)
+        return nlmeans(d=d, a=a, s=s, h=h, channels='YUV', wmode=wmode, wref=wref, device_type=device_type, device_id=device_id)
 
 
 def Overlay(

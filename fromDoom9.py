@@ -118,7 +118,7 @@ def EZdenoise(clip: vs.VideoNode, thSAD: int=150, thSADC: int=-1, tr: int=3, blk
 # - Repair is an option for certain sources or anime/cartoon content, where ghosting may be evident
 # By default it is disabled (maybe for preset = 1 it is not necessary to activate it)
 def Small_Deflicker(clip: vs.VideoNode, width: int=0, height: int=0, preset: int=2, cnr: bool=False,rep: bool=True):
-  clip = core.misc.Detect(clip)
+  clip = core.misc.SCDetect(clip)
   if width == 0:
     width = toMod(clip.width/4,16)
   if height == 0:
