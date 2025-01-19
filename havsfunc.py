@@ -1008,25 +1008,19 @@ def HQDeringmod(
     # Kernel: Smoothing
     if smoothed is None:
         if nrmode <= 0:
-          try:
-                dfttest2 = importlib.import_module('dfttest2')
-          except ModuleNotFoundError:
-                dfttest2 = None
-          # Currently the CPU backend only supports `sbsize == 16`
-          use_dfttest2 = dfttest2 and (cuda or sbsize == 16)
-          if use_dfttest2:
-              if sbsize == 16:
-                  # NVRTC is faster than cuFFT but only supports `sbsize == 16`
-                  backend = dfttest2.Backend.NVRTC if cuda else dfttest2.Backend.CPU
-              else:
-                  backend = dfttest2.Backend.cuFFT
-              smoothed = dfttest2.DFTTest(
-                  input, sbsize=sbsize, sosize=sosize, tbsize=1, slocation=[0.0, sigma2, 0.05, sigma, 0.5, sigma, 0.75, sigma2, 1.0, 0.0], planes=planes, backend=backend
-              )
+          if cuda and sbsize == 16:
+            try:
+              dfttest2 = importlib.import_module('dfttest2')
+            except ModuleNotFoundError:
+              dfttest2 = None
+          else:
+            dfttest2 = None
+            
+          if dfttest2:
+              # NVRTC is faster than cuFFT but only supports `sbsize == 16`
+              smoothed = dfttest2.DFTTest(input, sbsize=sbsize, sosize=sosize, tbsize=1, slocation=[0.0, sigma2, 0.05, sigma, 0.5, sigma, 0.75, sigma2, 1.0, 0.0], planes=planes, backend=dfttest2.Backend.NVRTC)
           else:                      
-            smoothed = input.dfttest.DFTTest(
-                sbsize=sbsize, sosize=sosize, tbsize=1, slocation=[0.0, sigma2, 0.05, sigma, 0.5, sigma, 0.75, sigma2, 1.0, 0.0], planes=planes
-            )
+            smoothed = input.dfttest.DFTTest(sbsize=sbsize, sosize=sosize, tbsize=1, slocation=[0.0, sigma2, 0.05, sigma, 0.5, sigma, 0.75, sigma2, 1.0, 0.0], planes=planes)
         else:
             smoothed = MinBlur(input, nrmode, planes)
 
@@ -1889,6 +1883,13 @@ def QTGMC(
         if Denoiser == 'bm3d':
             dnWindow = mvf.BM3D(noiseWindow, radius1=NoiseTR, sigma=[Sigma if plane in CNplanes else 0 for plane in range(3)])
         elif Denoiser == 'dfttest':
+          if opencl:
+            try:
+               dfttest2 = importlib.import_module('dfttest2')
+               dnWindow = dfttest2.DFTTest(noiseWindow, sigma=Sigma * 4, tbsize=noiseTD, planes=CNplanes, backend=dfttest2.Backend.NVRTC)
+            except ModuleNotFoundError:
+               dnWindow = noiseWindow.dfttest.DFTTest(sigma=Sigma * 4, tbsize=noiseTD, planes=CNplanes)
+          else:
             dnWindow = noiseWindow.dfttest.DFTTest(sigma=Sigma * 4, tbsize=noiseTD, planes=CNplanes)
         elif Denoiser in ['knlm', 'knlmeanscl', 'nlm_cuda']:
             if ChromaNoise and not is_gray:
@@ -3834,7 +3835,7 @@ def GSMC(input, p=None, Lmask=None, nrmode=None, radius=1, adapt=-1, rep=13, pla
 def MCTemporalDenoise(i, radius=None, pfMode=3, sigma=None, twopass=None, useTTmpSm=False, limit=None, limit2=None, post=0, chroma=None, refine=False, deblock=False, useQED=None, quant1=None,
                       quant2=None, edgeclean=False, ECrad=None, ECthr=None, stabilize=None, maxr=None, TTstr=None, bwbh=None, owoh=None, blksize=None, overlap=None, bt=None, ncpu=1, thSAD=None,
                       thSADC=None, thSAD2=None, thSADC2=None, thSCD1=None, thSCD2=None, truemotion=False, MVglobal=True, pel=None, pelsearch=None, search=4, searchparam=2, MVsharp=None, DCT=0, p=None,
-                      settings='low'):
+                      settings='low', cuda=False):
     if not isinstance(i, vs.VideoNode):
         raise vs.Error('MCTemporalDenoise: this is not a clip')
 
@@ -3932,6 +3933,14 @@ def MCTemporalDenoise(i, radius=None, pfMode=3, sigma=None, twopass=None, useTTm
     pointresize_args = dict(width=xn, height=yn, src_left=-xf / 2, src_top=-yf / 2, src_width=xn, src_height=yn)
     i = i.resize.Point(**pointresize_args)
 
+    if cuda:
+      try:
+         dfttest2 = importlib.import_module('dfttest2')
+      except ModuleNotFoundError:
+        dfttest2 = None
+    else:
+      dfttest2 = None
+
     ### PREFILTERING
     fft3d_args = dict(planes=planes, bw=bwbh, bh=bwbh, bt=bt, ow=owoh, oh=owoh, ncpu=ncpu)
     if p is not None:
@@ -3944,7 +3953,10 @@ def MCTemporalDenoise(i, radius=None, pfMode=3, sigma=None, twopass=None, useTTm
         else:                              
             p = i.fft3dfilter.FFT3DFilter(sigma=sigma * 0.8, sigma2=sigma * 0.6, sigma3=sigma * 0.4, sigma4=sigma * 0.2, **fft3d_args)
     elif pfMode >= 3:
-        p = i.dfttest.DFTTest(tbsize=1, slocation=[0.0,4.0, 0.2,9.0, 1.0,15.0], planes=planes)
+        if dfttest2:
+          p = dfttest2.DFTTest(i, tbsize=1, slocation=[0.0,4.0, 0.2,9.0, 1.0,15.0], planes=planes, backend=dfttest2.Backend.NVRTC)
+        else:
+          p = i.dfttest.DFTTest(tbsize=1, slocation=[0.0,4.0, 0.2,9.0, 1.0,15.0], planes=planes)
     else:
         p = MinBlur(i, r=pfMode, planes=planes)
 
@@ -4132,8 +4144,10 @@ def MCTemporalDenoise(i, radius=None, pfMode=3, sigma=None, twopass=None, useTTm
         mP = AvsPrewitt(mvf.GetPlane(smP, 0))
         mS = mt_expand_multi(mP, sw=ECrad, sh=ECrad).std.Inflate()
         mD = core.std.Expr([mS, mP.std.Inflate()], expr=[f'x y - {ECthr} <= 0 x y - ?']).std.Inflate().std.Convolution(matrix=[1, 1, 1, 1, 1, 1, 1, 1, 1])
-        smP = core.std.MaskedMerge(smP, DeHalo_alpha(smP.dfttest.DFTTest(tbsize=1, planes=planes), darkstr=0), mD, planes=planes)
-
+        if dfttest2:
+          smP = core.std.MaskedMerge(smP, DeHalo_alpha(dfttest2.DFTTest(smP, tbsize=1, planes=planes), darkstr=0), mD, planes=planes, backend=dfttest2.Backend.NVRTC)
+        else:
+          smP = core.std.MaskedMerge(smP, DeHalo_alpha(smP.dfttest.DFTTest(tbsize=1, planes=planes), darkstr=0), mD, planes=planes)
     ### STABILIZING
     if stabilize:
         # mM = core.std.Merge(mvf.GetPlane(SAD_f1m, 0), mvf.GetPlane(SAD_b1m, 0)).std.Lut(function=lambda x: min(cround(x ** 1.6), peak))
@@ -4274,7 +4288,19 @@ def SMDegrain(input, tr=2, thSAD=300, thSADC=None, RefineMotion=False, contrasha
             pref = inputP
         elif prefilter == 3:
             expr = 'x {i} < {peak} x {j} > 0 {peak} x {i} - {peak} {j} {i} - / * - ? ?'.format(i=scale(16, peak), j=scale(75, peak), peak=peak)
-            pref = core.std.MaskedMerge(inputP.dfttest.DFTTest(tbsize=1, slocation=[0.0,4.0, 0.2,9.0, 1.0,15.0], planes=planes),
+            dfttest2 = None
+            if opencl:
+              try:
+                dfttest2 = importlib.import_module('dfttest2')
+              except ModuleNotFoundError:
+                dfttest2 = None
+            if dfttest2:
+              pref = core.std.MaskedMerge(inputP.dfttest2.DFTTest(tbsize=1, slocation=[0.0,4.0, 0.2,9.0, 1.0,15.0], planes=planes, backend=dfttest2.Backend.NVRTC),
+                                        inputP,
+                                        mvf.GetPlane(inputP, 0).std.Expr(expr=[expr]),
+                                        planes=planes)
+            else:
+              pref = core.std.MaskedMerge(inputP.dfttest.DFTTest(tbsize=1, slocation=[0.0,4.0, 0.2,9.0, 1.0,15.0], planes=planes),
                                         inputP,
                                         mvf.GetPlane(inputP, 0).std.Expr(expr=[expr]),
                                         planes=planes)
@@ -5637,7 +5663,7 @@ def Toon(input, str=1.0, l_thr=2, u_thr=12, blur=2, depth=32):
 ###
 ################################################################################################
 def LSFmod(input, strength=None, Smode=None, Smethod=None, kernel=11, preblur=None, secure=None, source=None, Szrp=16, Spwr=None, SdmpLo=None, SdmpHi=None, Lmode=None, overshoot=None, undershoot=None,
-           overshoot2=None, undershoot2=None, soft=None, soothe=None, keep=None, edgemode=0, edgemaskHQ=None, ss_x=None, ss_y=None, dest_x=None, dest_y=None, defaults='fast'):
+           overshoot2=None, undershoot2=None, soft=None, soothe=None, keep=None, edgemode=0, edgemaskHQ=None, ss_x=None, ss_y=None, dest_x=None, dest_y=None, defaults='fast', cuda=False):
     if not isinstance(input, vs.VideoNode):
         raise vs.Error('LSFmod: this is not a clip')
 
@@ -5747,7 +5773,14 @@ def LSFmod(input, strength=None, Smode=None, Smethod=None, kernel=11, preblur=No
         pre = tmp
     elif preblur >= 3:
         expr = 'x {i} < {peak} x {j} > 0 {peak} x {i} - {peak} {j} {i} - / * - ? ?'.format(i=scale(16, peak), j=scale(75, peak), peak=peak)
-        pre = core.std.MaskedMerge(tmp.dfttest.DFTTest(tbsize=1, slocation=[0.0,4.0, 0.2,9.0, 1.0,15.0]), tmp, tmp.std.Expr(expr=[expr]))
+        if cuda:
+          try:
+            dfttest2 = importlib.import_module('dfttest2')
+            pre = core.std.MaskedMerge(dfttest2.DFTTest(tmp, tbsize=1, slocation=[0.0,4.0, 0.2,9.0, 1.0,15.0]), tmp, tmp.std.Expr(expr=[expr]))
+          except ModuleNotFoundError:
+            pre = core.std.MaskedMerge(tmp.dfttest.DFTTest(tbsize=1, slocation=[0.0,4.0, 0.2,9.0, 1.0,15.0]), tmp, tmp.std.Expr(expr=[expr]))
+        else:
+          pre = core.std.MaskedMerge(tmp.dfttest.DFTTest(tbsize=1, slocation=[0.0,4.0, 0.2,9.0, 1.0,15.0]), tmp, tmp.std.Expr(expr=[expr]))
     else:
         pre = MinBlur(tmp, r=preblur)
 
