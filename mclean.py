@@ -4,7 +4,7 @@ import muvsfunc as muf
 import mvsfunc as mvf
 
 """
-adjusted to use zsmooth for TemporalMedian
+adjusted to use zsmooth for TemporalMedian, RemoveGrain
 """
 
 def mClean(clip, thSAD=400, chroma=True, sharp=10, rn=14, deband=0, depth=0, strength=20, outbits=None, icalc=True, rgmode=18):
@@ -64,6 +64,7 @@ def mClean(clip, thSAD=400, chroma=True, sharp=10, rn=14, deband=0, depth=0, str
     bd = clip.format.bits_per_sample
     isFLOAT = clip.format.sample_type == vs.FLOAT
     icalc = False if isFLOAT else icalc
+    zsmooth = hasattr(core, 'zsmooth')
     if hasattr(core, 'mvsf'):  
       S = core.mv.Super if icalc else core.mvsf.Super
       A = core.mv.Analyse if icalc else core.mvsf.Analyse
@@ -83,7 +84,11 @@ def mClean(clip, thSAD=400, chroma=True, sharp=10, rn=14, deband=0, depth=0, str
         outbits = min(outbits, 16)
 
     RE = core.rgsf.Repair if outbits == 32 else core.rgvs.Repair
-    RG = core.rgsf.RemoveGrain if outbits == 32 else core.rgvs.RemoveGrain
+    if zsmooth:
+      RG = core.zsmooth.RemoveGrain
+    else:
+      RG = core.rgsf.RemoveGrain if outbits == 32 else core.rgvs.RemoveGrain
+    
     sc = 8 if defH > 2880 else 4 if defH > 1440 else 2 if defH > 720 else 1
     i = 0.00392 if outbits == 32 else 1 << (outbits - 8)
     peak = 1.0 if outbits == 32 else (1 << outbits) - 1
@@ -135,8 +140,8 @@ def mClean(clip, thSAD=400, chroma=True, sharp=10, rn=14, deband=0, depth=0, str
         c = c.fmtc.bitdepth(bits=outbits, dmode=1)
         cy = cy.fmtc.bitdepth(bits=outbits, dmode=1)
         clean = clean.fmtc.bitdepth(bits=outbits, dmode=1)
-
-    uv = core.std.MergeDiff(clean, core.zsmooth.TemporalMedian(core.std.MakeDiff(c, clean, [1, 2]), 1, [1, 2]), [1, 2]) if chroma else c
+    TM = core.zsmooth.TemporalMedian if zsmooth else tmedian.TemporalMedian
+    uv = core.std.MergeDiff(clean, TM(core.std.MakeDiff(c, clean, [1, 2]), 1, [1, 2]), [1, 2]) if chroma else c
     clean = core.std.ShufflePlanes(clean, [0], vs.GRAY) if clean.format.num_planes != 1 else clean
 
     # Post clean, pre-process deband
@@ -156,13 +161,13 @@ def mClean(clip, thSAD=400, chroma=True, sharp=10, rn=14, deband=0, depth=0, str
             clsharp = core.std.MakeDiff(clean, muf.Blur(clean2, amountH=0.08+0.03*sharp))
         else:
             clsharp = core.std.MakeDiff(clean, clean2.tcanny.TCanny(sigma=(sharp-46)/4, mode=-1))
-        clsharp = core.std.MergeDiff(clean2, RE(clsharp.zsmooth.TemporalMedian(), clsharp, 12))
+        clsharp = core.std.MergeDiff(clean2, RE(TM(clsharp), clsharp, 12))
 
     # If selected, combining ReNoise
     noise_diff = core.std.MakeDiff(clean2, cy)
     if rn:
         expr = "x {a} < 0 x {b} > {p} 0 x {c} - {p} {a} {d} - / * - ? ?".format(a=32*i, b=45*i, c=35*i, d=65*i, p=peak)
-        clean1 = core.std.Merge(clean2, core.std.MergeDiff(clean2, Tweak(noise_diff.zsmooth.TemporalMedian(), cont=1.008+0.00016*rn)), 0.3+rn*0.035)
+        clean1 = core.std.Merge(clean2, core.std.MergeDiff(clean2, Tweak(TM(noise_diff), cont=1.008+0.00016*rn)), 0.3+rn*0.035)
         clean2 = core.std.MaskedMerge(clean2, clean1, core.std.Expr([core.std.Expr([clean, clean.std.Invert()], 'x y min')], [expr]))
 
     # Combining spatial detail enhancement with spatial noise reduction using prepared mask

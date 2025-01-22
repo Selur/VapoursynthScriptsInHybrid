@@ -573,9 +573,10 @@ def EdgeCleaner(c: vs.VideoNode, strength: int = 10, rep: bool = True, rmode: in
     if hot:
         final = core.rgvs.Repair(final, c, mode=2)
     if smode > 0:
-        clean = c.rgvs.RemoveGrain(mode=17)
+        RG = core.zsmooth.RemoveGrain if hasattr(core,'zsmooth') else core.rgvs.RemoveGrain
+        clean = RG(c, mode=17)
         diff = core.std.MakeDiff(c, clean)
-        mask = AvsPrewitt(diff.std.Levels(min_in=scale_value(40, 8, bits), max_in=scale_value(168, 8, bits), gamma=0.35).rgvs.RemoveGrain(mode=7)).std.Expr(
+        mask = AvsPrewitt(diff.std.Levels(min_in=scale_value(40, 8, bits), max_in=scale_value(168, 8, bits), gamma=0.35).RG(mode=7)).std.Expr(
             expr=f'x {scale_value(4, 8, bits)} < 0 x {scale_value(16, 8, bits)} > {peak} x ? ?'
         )
         final = core.std.MaskedMerge(final, c, mask)
@@ -2447,7 +2448,8 @@ def QTGMC_MakeLossless(Input: vs.VideoNode, Source: vs.VideoNode, InputType: int
     vmNewDiff2 = core.std.Expr(
         [vmNewDiff1.rgvs.VerticalCleaner(mode=1), vmNewDiff1], expr=f'x {neutral} - y {neutral} - * 0 < {neutral} x {neutral} - abs y {neutral} - abs < x y ? ?'
     )
-    vmNewDiff3 = core.rgvs.Repair(vmNewDiff2, vmNewDiff2.rgvs.RemoveGrain(mode=2), mode=1)
+    RG = core.zsmooth.RemoveGrain if hasattr(core,'zsmooth') else core.rgvs.RemoveGrain
+    vmNewDiff3 = core.rgvs.Repair(vmNewDiff2, RG(vmNewDiff2, mode=2), mode=1)
 
     # Reweave final result
     return Weave(core.std.Interleave([srcFields, core.std.MakeDiff(newFields, vmNewDiff3)]).std.SelectEvery(cycle=4, offsets=[0, 1, 3, 2]), tff=TFF)
@@ -4499,7 +4501,8 @@ def STPresso(
         elif RGmode == 20:
             bzz = clp.std.Convolution(matrix=[1, 1, 1, 1, 1, 1, 1, 1, 1], planes=planes)
         else:
-            bzz = clp.rgvs.RemoveGrain(mode=RGmode)
+            RG = core.zsmooth.RemoveGrain if hasattr(core,'zsmooth') else core.rgvs.RemoveGrain
+            bzz = RG(clp, mode=RGmode)
 
     last = core.std.Expr([clp, bzz], expr=[expr if i in planes else '' for i in plane_range])
 
@@ -4513,7 +4516,9 @@ def STPresso(
         fc1 = core.mv.Compensate(bzz, mvSuper, fv1)
 
         interleave = core.std.Interleave([fc1, bzz, bc1])
-        smooth = interleave.flux.SmoothT(temporal_threshold=tthr, planes=planes)
+        #FX = core.zsmooth.FluxSmoothT if hasattr(core,'zsmooth') else core.flux.SmoothT
+        FX = core.flux.SmoothT
+        smooth = FX(interleave, temporal_threshold=tthr, planes=planes)
         smooth = smooth.std.SelectEvery(cycle=3, offsets=1)
 
         diff = core.std.MakeDiff(bzz, smooth, planes=planes)
@@ -5160,7 +5165,8 @@ def SmoothLevels(input, input_low=0, gamma=1.0, input_high=None, output_low=0, o
     elif RGmode == 20:
         RemoveGrain = partial(core.std.Convolution, matrix=[1, 1, 1, 1, 1, 1, 1, 1, 1])
     else:
-        RemoveGrain = partial(core.rgvs.RemoveGrain, mode=[RGmode])
+        RG = core.zsmooth.RemoveGrain if hasattr(core,'zsmooth') else core.rgvs.RemoveGrain
+        RemoveGrain = partial(RG, mode=[RGmode])
 
     ### EXPRESSION
     exprY = f'x {input_low} - {input_high - input_low + (input_high == input_low)} / {1 / gamma} pow {output_high - output_low} * {output_low} +'
@@ -5746,7 +5752,8 @@ def LSFmod(input, strength=None, Smode=None, Smethod=None, kernel=11, preblur=No
     elif kernel == 20:
         RemoveGrain = partial(core.std.Convolution, matrix=[1, 1, 1, 1, 1, 1, 1, 1, 1])
     else:
-        RemoveGrain = partial(core.rgvs.RemoveGrain, mode=[kernel])
+        RG = core.zsmooth.RemoveGrain if hasattr(core,'zsmooth') else core.rgvs.RemoveGrain
+        RemoveGrain = partial(RG, mode=[kernel])
 
     if soft == -1:
         soft = math.sqrt(((ss_x + ss_y) / 2 - 1) * 100) * 10
@@ -5776,7 +5783,7 @@ def LSFmod(input, strength=None, Smode=None, Smethod=None, kernel=11, preblur=No
         if cuda:
           try:
             dfttest2 = importlib.import_module('dfttest2')
-            pre = core.std.MaskedMerge(dfttest2.DFTTest(tmp, tbsize=1, slocation=[0.0,4.0, 0.2,9.0, 1.0,15.0]), tmp, tmp.std.Expr(expr=[expr]))
+            pre = core.std.MaskedMerge(dfttest2.DFTTest(tmp, tbsize=1, slocation=[0.0,4.0, 0.2,9.0, 1.0,15.0], backend=dfttest2.Backend.NVRTC), tmp, tmp.std.Expr(expr=[expr]))
           except ModuleNotFoundError:
             pre = core.std.MaskedMerge(tmp.dfttest.DFTTest(tbsize=1, slocation=[0.0,4.0, 0.2,9.0, 1.0,15.0]), tmp, tmp.std.Expr(expr=[expr]))
         else:
