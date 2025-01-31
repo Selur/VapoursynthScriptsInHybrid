@@ -65,9 +65,10 @@ def DeStripe(clip: vs.VideoNode, rad: int=2, offset: int=0, thr: int=256, vertic
 # author: VS_Fan, see: https://forum.doom9.org/showthread.php?p=1769570#post1769570
 ##
 def StabilizeIT(clip: vs.VideoNode, div: float=2.0, initZoom: float=1.0, zoomMax: float=1.0, rotMax: float=10.0, pixelAspect: float=1.0, thSCD1: int=800, thSCD2: int=150, stabMethod: int=1, cutOff: float=0.33, anaError: float=30.0, rgMode: int=4):
-  pf = core.rgvs.RemoveGrain(clip=clip, mode=rgMode)
+  zsmooth = hasattr(core,'zsmooth'):
+  pf = core.rgvs.RemoveGrain(clip=clip, mode=rgMode) if zsmooth else core.rgvs.RemoveGrain(clip=clip, mode=rgMode)
   pf = core.resize.Bilinear(clip=pf, width=int(pf.width/div), height=int(pf.height/div))
-  pf = core.rgvs.RemoveGrain(clip=pf, mode=rgMode)
+  pf = core.rgvs.RemoveGrain(clip=clip, mode=rgMode) if zsmooth else core.rgvs.RemoveGrain(clip=clip, mode=rgMode)
   pf = core.resize.Bilinear(clip=pf, width=pf.width*div, height=pf.height*div) 
   super = core.mv.Super(clip=pf) 
   vectors = core.mv.Analyse(super=super, isb=False)
@@ -403,7 +404,10 @@ def HaloBuster(input: vs.VideoNode, a: int = 32, h: float = 6.4, thr: float = 1.
     merge = core.std.MaskedMerge(gray, clean, mask)
     
     # Limit the merge differences
-    limit = core.rgvs.RemoveGrain(merge, mode=[20])
+    if hasattr(core,'zsmooth'):
+      limit = core.zsmooth.RemoveGrain(merge, mode=[20])
+    else:
+      limit = core.rgvs.RemoveGrain(merge, mode=[20])
     
     # Crop the added borders
     crop = core.std.CropRel(limit, left=a, top=a, right=a, bottom=a)

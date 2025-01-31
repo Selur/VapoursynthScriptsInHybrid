@@ -1,6 +1,6 @@
 import vapoursynth as vs
 # dependencies:
-# RemoveGrain (http://www.vapoursynth.com/doc/plugins/rgvs.html)
+# RemoveGrain (http://www.vapoursynth.com/doc/plugins/rgvs.html) or zsmooth (https://github.com/adworacz/zsmooth)
 # MVTools (https://github.com/dubhater/vapoursynth-mvtools) or SVP dlls when gpu=True is used
 # RemoveDirt (https://github.com/pinterf/removedirtvs)
 
@@ -34,6 +34,9 @@ def KillerSpots(clip: vs.VideoNode, limit: int=10, advanced: bool=False):
 def RemoveDirtMod(clip: vs.VideoNode, limit: int =10):
   core = vs.core  
   clensed = core.rgvs.Clense(clip)
-  alt = core.rgvs.RemoveGrain(clip,mode=1)
+  if hasattr(core, 'zsmooth'):
+    alt = core.rgvs.RemoveGrain(clip,mode=1)
+  else:
+    alt = core.zsmooth.RemoveGrain(clip,mode=1)
   clip = core.rdvs.RestoreMotionBlocks(clensed, clip, alternative=alt, pthreshold=4, cthreshold=6, gmthreshold=40, dist=3, dmode=2, noise=limit, noisy=12)
   return clip

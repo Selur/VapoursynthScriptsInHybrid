@@ -638,7 +638,9 @@ def LSFmod(clip, strength=100, Smode=None, Smethod=None, kernel=11, preblur=Fals
     elif kernel == 20:
         Filter = partial(core.std.Convolution, matrix=[1, 1, 1, 1, 1, 1, 1, 1, 1])
     else:
-        if isFLOAT:
+        if hasattr(core, 'zsmooth'):
+          Filter = partial(core.zsmooth.RemoveGrain, mode=[kernel])
+        elif isFLOAT:
             Filter = partial(core.rgsf.RemoveGrain, mode=[kernel])
         else:
             Filter = partial(core.rgvs.RemoveGrain, mode=[kernel])
@@ -935,8 +937,10 @@ def Sharpen2(clip, sstr, power, zp, ldmp, hdmp, rg, mode, diff):
     isFLOAT = clip.format.sample_type == vs.FLOAT
     bd = clip.format.bits_per_sample
     i = 0.00392 if isFLOAT else 1 << (bd - 8)
-    R = core.rgsf.RemoveGrain if isFLOAT else core.rgvs.RemoveGrain
-
+    if hasattr(core, 'zsmooth'):
+      R = core.zsmooth.RemoveGrain
+    else:
+      R = core.rgsf.RemoveGrain if isFLOAT else core.rgvs.RemoveGrain
     if not isinstance(clip, vs.VideoNode):
         raise TypeError("Sharpen2: This is not a clip!")
     
@@ -3154,7 +3158,10 @@ def SuperToon(clip, power=.69, mode=0, nthr=4, ncap=32, lthr=0, hthr=255, lcap=2
     isFLOAT = clip.format.sample_type == vs.FLOAT
     mid  = 1 << (bd - 1)
     peak = (1 << bd) - 1
-    R = core.rgvs.RemoveGrain
+    if hasattr(core, 'zsmooth'):
+      R = core.zsmooth.RemoveGrain
+    else:
+      R = core.rgvs.RemoveGrain
     lthr = scale(lthr, peak)
     hthr = scale(hthr, peak)
     minin = scale(128 + nthr, peak)
@@ -3288,7 +3295,10 @@ def JohnFPS(clip, num=None, den=None, pre=None, pel=None, sharp=2, blksize=16, o
     """
 
     isFLOAT = clip.format.sample_type == vs.FLOAT
-    RG = core.rgsf.RemoveGrain if isFLOAT else core.rgvs.RemoveGrain
+    if hasattr(core,'zsmooth'):
+      RG = core.zsmooth.RemoveGrain
+    else:
+      RG = core.rgsf.RemoveGrain if isFLOAT else core.rgvs.RemoveGrain
     A = core.mvsf.Analyse if isFLOAT else core.mv.Analyse
     S = core.mvsf.Super if isFLOAT else core.mv.Super
     R = core.mvsf.Recalculate if isFLOAT else core.mv.Recalculate

@@ -21,8 +21,9 @@ def CQTGMC(clip: vs.VideoNode, Sharpness: float=0.25, thSAD1: int=192, thSAD2: i
     # temporal deint
     bobbed = core.bwdif.Bwdif(clip=padded, field=X, edeint=spatial)
 
+    RG = core.zsmooth.RemoveGrain if hasattr(core,'zsmooth') else core.rgvs.RemoveGrain
     # denoise
-    denoised = core.rgvs.RemoveGrain(clip=bobbed, mode=12)
+    denoised = RG(clip=bobbed, mode=12)
     if boxed:
         denoised = core.std.BoxBlur(clip=denoised, planes=[0, 1, 2])
     else:
@@ -84,7 +85,7 @@ def CQTGMC(clip: vs.VideoNode, Sharpness: float=0.25, thSAD1: int=192, thSAD2: i
     tMin = core.std.Expr(clips=[tMin, fComp1], expr=['x y min'])
     
     degrained = core.mv.Degrain1(clip=weaved, super=csuper, mvbw=bVec1, mvfw=fVec1, thsad=thSAD1)
-    sharpen = core.std.MergeDiff(degrained, core.std.MakeDiff(degrained, degrained.rgvs.RemoveGrain(mode=20)))
+    sharpen = core.std.MergeDiff(degrained, core.std.MakeDiff(degrained, RG(degrained, mode=20)))
     sharpen = mt_clamp(sharpen, tMax, tMin, Sharpness, Sharpness, [0])
     
     csuper = core.mv.Super(sharpen, levels=1)
