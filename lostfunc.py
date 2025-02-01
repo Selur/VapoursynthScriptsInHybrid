@@ -103,7 +103,10 @@ def MfTurd(src, twidth=None, theight=None, ssw=4, ssh=4, xstren=255, xthresh=255
 
     def UnsharpMask(clip, strength = 64, radius = 3, threshold = 8):
         threshold = scale8(threshold, maxvalue)
-        blurclip = clip.std.BoxBlur(vradius=radius, hradius=radius, planes=0)
+        if hasattr(core,'vszip'):
+          blurclip = core.vszip.BoxBlur(clip, vradius=radius, hradius=radius, planes=0)
+        else:
+          blurclip = clip.std.BoxBlur(vradius=radius, hradius=radius, planes=0)
         return core.std.Expr([clip, blurclip], ["x y - abs {} > x y - {} * x + x ?".format(threshold, strength/128), ""])
 
     def CartoonEdges(clip, low=0, high=255):

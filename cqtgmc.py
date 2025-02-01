@@ -25,7 +25,10 @@ def CQTGMC(clip: vs.VideoNode, Sharpness: float=0.25, thSAD1: int=192, thSAD2: i
     # denoise
     denoised = RG(clip=bobbed, mode=12)
     if boxed:
-        denoised = core.std.BoxBlur(clip=denoised, planes=[0, 1, 2])
+        if hasattr(core,'vszip'):
+          denoised = core.vzip.BoxBlur(clip=denoised, planes=[0, 1, 2])
+        else:
+          denoised = core.std.BoxBlur(clip=denoised, planes=[0, 1, 2])
     else:
         denoised = core.fmtc.resample(clip=denoised, kernel="gauss", w=denoised.width, h=denoised.height+0.0001, scaleh=denoised.width+0.0001, interlaced=False)
         denoised = core.resize.Bicubic(clip=denoised, format=bobbed.format, dither_type="error_diffusion")

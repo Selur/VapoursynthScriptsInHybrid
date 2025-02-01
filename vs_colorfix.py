@@ -159,15 +159,16 @@ def average(clip, ref, radius=10, planes=None, fast=False):
         chroma_vradius = radius // (1 << clip.format.subsampling_h) if clip.format.subsampling_h else radius
         blurred_clip = clip
         blurred_ref = ref
+        BOX = core.vszip.BoxBlur if hasattr(core,'vszip') else core.std.BoxBlur
         if 0 in planes:
-            blurred_clip = core.std.BoxBlur(blurred_clip, hradius=radius, hpasses=4, vradius=radius, vpasses=4, planes=[0])
-            blurred_ref = core.std.BoxBlur(blurred_ref, hradius=radius, hpasses=4, vradius=radius, vpasses=4, planes=[0])
+            blurred_clip = BOX(blurred_clip, hradius=radius, hpasses=4, vradius=radius, vpasses=4, planes=[0])
+            blurred_ref = BOX(blurred_ref, hradius=radius, hpasses=4, vradius=radius, vpasses=4, planes=[0])
         if 1 in planes:
-            blurred_clip = core.std.BoxBlur(blurred_clip, hradius=chroma_hradius, hpasses=4, vradius=chroma_vradius, vpasses=4, planes=[1])
-            blurred_ref = core.std.BoxBlur(blurred_ref, hradius=chroma_hradius, hpasses=4, vradius=chroma_vradius, vpasses=4, planes=[1])
+            blurred_clip = BOX(blurred_clip, hradius=chroma_hradius, hpasses=4, vradius=chroma_vradius, vpasses=4, planes=[1])
+            blurred_ref = BOX(blurred_ref, hradius=chroma_hradius, hpasses=4, vradius=chroma_vradius, vpasses=4, planes=[1])
         if 2 in planes:
-            blurred_clip = core.std.BoxBlur(blurred_clip, hradius=chroma_hradius, hpasses=4, vradius=chroma_vradius, vpasses=4, planes=[2])
-            blurred_ref = core.std.BoxBlur(blurred_ref, hradius=chroma_hradius, hpasses=4, vradius=chroma_vradius, vpasses=4, planes=[2])
+            blurred_clip = BOX(blurred_clip, hradius=chroma_hradius, hpasses=4, vradius=chroma_vradius, vpasses=4, planes=[2])
+            blurred_ref = BOX(blurred_ref, hradius=chroma_hradius, hpasses=4, vradius=chroma_vradius, vpasses=4, planes=[2])
         diff_clip = core.std.MakeDiff(blurred_ref, blurred_clip, planes=planes)
 
     # add difference to the original

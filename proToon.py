@@ -30,6 +30,7 @@
 #   xsharpening threshold, 0-255. 
 # Dependencies:
 #  RemoveGrain: https://github.com/vapoursynth/vs-removegrain
+#  or zsmooth (https://github.com/adworacz/zsmooth)
 #
 ##
 
@@ -77,10 +78,16 @@ def proToon(input: vs.VideoNode,
     thn = thinning / 16.0  # line thinning amount, 0-255
 
     # Create the edgemask
-    edgemask = core.std.Expr(
-        [input, core.rgvs.RemoveGrain(input, 12)],
-        expr=[mf_str_level("x y - abs 128 +", 132, 145, 0, 255, bits)]
-    ).rgvs.RemoveGrain(12).std.Expr(expr=[mf_str_level("x", 0, 64, 0, 255, bits)])
+    if hasattr(core, 'zsmooth'):
+      edgemask = core.std.Expr(
+          [input, core.zsmooth.RemoveGrain(input, 12)],
+          expr=[mf_str_level("x y - abs 128 +", 132, 145, 0, 255, bits)]
+      ).zsmooth.RemoveGrain(12).std.Expr(expr=[mf_str_level("x", 0, 64, 0, 255, bits)])
+    else:
+      edgemask = core.std.Expr(
+          [input, core.rgvs.RemoveGrain(input, 12)],
+          expr=[mf_str_level("x y - abs 128 +", 132, 145, 0, 255, bits)]
+      ).rgvs.RemoveGrain(12).std.Expr(expr=[mf_str_level("x", 0, 64, 0, 255, bits)])
 
     exin = core.std.Maximum(input).std.Minimum()
     diff = core.std.Expr(

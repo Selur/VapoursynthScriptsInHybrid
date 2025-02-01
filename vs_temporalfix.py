@@ -10,8 +10,9 @@ core = vs.core
 
 def AverageColorFix(clip, ref, radius=4, passes=4):
     # modified from https://github.com/pifroggi/vs_colorfix
-    blurred_reference = core.std.BoxBlur(ref, hradius=radius, hpasses=passes, vradius=radius, vpasses=passes)
-    blurred_clip = core.std.BoxBlur(clip, hradius=radius, hpasses=passes, vradius=radius, vpasses=passes)
+    BOX = core.vszip.BoxBlur if hasattr(core,'vszip') else core.std.BoxBlur
+    blurred_reference = BOX(ref, hradius=radius, hpasses=passes, vradius=radius, vpasses=passes)
+    blurred_clip = BOX(clip, hradius=radius, hpasses=passes, vradius=radius, vpasses=passes)
     diff_clip = core.std.MakeDiff(blurred_reference, blurred_clip)
     return core.std.MergeDiff(clip, diff_clip)
 
@@ -204,7 +205,8 @@ def vs_temporalfix(clip, strength=400, tr=6, exclude=None, debug=False):
     motionmask = core.std.Expr([motionmask, m1, m2, m3, p1, p2], expr=["x y + z 0.75 * + a 0.5 * + b 0.75 * + c 0.5 * +"]) # fades the mask in/out over a few frames
     motionmask = core.std.Median(motionmask)
     motionmask = core.resize.Point(motionmask, width=pre_stabilize.width, height=pre_stabilize.height)
-    motionmask = core.std.BoxBlur(motionmask, hradius=4, vradius=4, hpasses=2, vpasses=2)
+    BOX = core.vszip.BoxBlur if hasattr(core,'vszip') else core.std.BoxBlur
+    motionmask = BOX(motionmask, hradius=4, vradius=4, hpasses=2, vpasses=2)
 
     ##### prefilter #####
 
