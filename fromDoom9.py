@@ -65,7 +65,7 @@ def DeStripe(clip: vs.VideoNode, rad: int=2, offset: int=0, thr: int=256, vertic
 # author: VS_Fan, see: https://forum.doom9.org/showthread.php?p=1769570#post1769570
 ##
 def StabilizeIT(clip: vs.VideoNode, div: float=2.0, initZoom: float=1.0, zoomMax: float=1.0, rotMax: float=10.0, pixelAspect: float=1.0, thSCD1: int=800, thSCD2: int=150, stabMethod: int=1, cutOff: float=0.33, anaError: float=30.0, rgMode: int=4):
-  zsmooth = hasattr(core,'zsmooth'):
+  zsmooth = hasattr(core,'zsmooth')
   pf = core.rgvs.RemoveGrain(clip=clip, mode=rgMode) if zsmooth else core.rgvs.RemoveGrain(clip=clip, mode=rgMode)
   pf = core.resize.Bilinear(clip=pf, width=int(pf.width/div), height=int(pf.height/div))
   pf = core.rgvs.RemoveGrain(clip=clip, mode=rgMode) if zsmooth else core.rgvs.RemoveGrain(clip=clip, mode=rgMode)
