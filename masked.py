@@ -1,4 +1,6 @@
 import vapoursynth as vs
+from typing import Union
+
 # collection of Mask filters.
 
 # Use retinex to greatly improve the accuracy of the edge detection in dark scenes.
@@ -120,3 +122,36 @@ def dehalo_mask(src: vs.VideoNode, expand: float = 0.5, iterations: int = 2, brz
     mask4 = mask4.std.Convolution(matrix=[1, 2, 1, 2, 4, 2, 1, 2, 1])
     mask = core.std.Expr([mask1, mask4], ['x y min'])
     return depth(mask, get_depth(src), range=1)
+
+
+def hue_mask(clip: vs.VideoNode, min_hue: Union[float, int], max_hue: Union[float, int]) -> vs.VideoNode:
+    """
+    Creates a mask based on a given hue range, supporting all RGB-based color spaces.
+    
+    Parameters:
+        clip (vs.VideoNode): Input clip in any RGB-based format.
+        min_hue (float | int): Minimum hue value (normalized, 0.0 to 1.0).
+        max_hue (float | int): Maximum hue value (normalized, 0.0 to 1.0).
+        
+    Returns:
+        vs.VideoNode: Mask clip with white (255) for pixels within the hue range, black (0) otherwise.
+    """
+    if clip.format.color_family != vs.RGB:
+        raise ValueError("Input clip must be in an RGB-based format.")
+    
+    # Ensure input is in a supported RGB format with consistent bit depth
+    if clip.format.bits_per_sample != 8:
+        clip = core.resize.Bicubic(clip, format=vs.RGB24)
+    
+    # Convert to HSL
+    hsl_clip = core.resize.Bicubic(clip, format=vs.YUV444P8, matrix_in_s="709")
+    hue = core.std.ShufflePlanes(hsl_clip, planes=0, colorfamily=vs.GRAY)
+    
+    # Build the mask
+    mask = core.std.Expr(
+        [hue],
+        expr=f"x {min_hue} >= x {max_hue} <= and 255 0 ?"
+    )
+    
+    # Ensure mask is 8-bit grayscale
+    return core.resize.Bicubic(mask, format=vs.GRAY8)
