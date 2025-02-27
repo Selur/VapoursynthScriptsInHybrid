@@ -1,29 +1,10 @@
-################################################################################################
-###                                                                                          ###
-###                           Simple MDegrain Mod - SMDegrain()                              ###
-###                                                                                          ###
-###                       Mod by Dogway - Original idea by Caroliano                         ###
-###                                                                                          ###
-###          Special Thanks: Sagekilla, Didée, cretindesalpes, Gavino and MVtools people     ###
-###                                                                                          ###
-###                       v3.1.2d (Dogway's mod) - 21 July 2015                              ###
-###                                                                                          ###
-################################################################################################
-###
-### General purpose simple degrain function. Pure temporal denoiser. Basically a wrapper(function)/frontend of mvtools2+mdegrain
-### with some added common related options. Goal is accessibility and quality but not targeted to any specific kind of source.
-### The reason behind is to keep it simple so aside masktools2 you will only need MVTools2.
-###
-### Check documentation for deep explanation on settings and defaults.
-### VideoHelp thread: (http://forum.videohelp.com/threads/369142)
-###
-################################################################################################
-
 import vapoursynth as vs
-core = vs.core
+from vapoursynth import core
 
-import havsfunc
-import mvsfunc as mvf
+import math
+
+from typing import Sequence, Union, Optional
+
 import nnedi3_resample
 
 ################################################################################################
@@ -104,11 +85,11 @@ def SMDegrain(input, tr=2, thSAD=300, thSADC=None, RefineMotion=False, contrasha
         hpad = blksize
     if vpad is None:
         vpad = blksize
-    limit = havsfunc.scale(limit, peak)
+    limit = scale(limit, peak)
     if limitc is None:
         limitc = limit
     else:
-        limitc = havsfunc.scale(limitc, peak)
+        limitc = scale(limitc, peak)
 
     # Error Report
     if not (ifC or isinstance(contrasharp, int)):
@@ -153,25 +134,24 @@ def SMDegrain(input, tr=2, thSAD=300, thSADC=None, RefineMotion=False, contrasha
         elif prefilter <= -1:
             pref = inputP
         elif prefilter == 3:
-            expr = 'x {i} < {peak} x {j} > 0 {peak} x {i} - {peak} {j} {i} - / * - ? ?'.format(i=havsfunc
-            .scale(16, peak), j=havsfunc.scale(75, peak), peak=peak)
+            expr = 'x {i} < {peak} x {j} > 0 {peak} x {i} - {peak} {j} {i} - / * - ? ?'.format(i=scale(16, peak), j=scale(75, peak), peak=peak)
             pref = core.std.MaskedMerge(inputP.dfttest.DFTTest(tbsize=1, slocation=[0.0,4.0, 0.2,9.0, 1.0,15.0], planes=planes),
                                         inputP,
-                                        mvf.GetPlane(inputP, 0).std.Expr(expr=[expr]),
+                                        GetPlane(inputP, 0).std.Expr(expr=[expr]),
                                         planes=planes)
         elif prefilter >= 4:
             if chroma:
-                pref = havsfunc.KNLMeansCL(inputP, d=1, a=1, h=7)
+                pref = KNLMeansCL(inputP, d=1, a=1, h=7)
             else:
                 pref = inputP.knlm.KNLMeansCL(d=1, a=1, h=7)
         else:
-            pref = havsfunc.MinBlur(inputP, r=prefilter, planes=planes)
+            pref = MinBlur(inputP, r=prefilter, planes=planes)
     else:
         pref = inputP
 
     # Default Auto-Prefilter - Luma expansion TV->PC (up to 16% more values for motion estimation)
     if not GlobalR:
-        pref = havsfunc.DitherLumaRebuild(pref, s0=Str, c=Amp, chroma=chroma)
+        pref = DitherLumaRebuild(pref, s0=Str, c=Amp, chroma=chroma)
 
     # Subpixel 3
     if pelclip:
@@ -268,16 +248,176 @@ def SMDegrain(input, tr=2, thSAD=300, thSADC=None, RefineMotion=False, contrasha
         if if0:
             if interlaced:
                 if ifC:
-                    return havsfunc.Weave(ContraSharpening(output, CClip, planes=planes), tff=tff)
+                    return Weave(ContraSharpening(output, CClip, planes=planes), tff=tff)
                 else:
-                    return havsfunc.Weave(LSFmod(output, strength=contrasharp, source=CClip, Lmode=0, soothe=False, defaults='slow'), tff=tff)
+                    return Weave(LSFmod(output, strength=contrasharp, source=CClip, Lmode=0, soothe=False, defaults='slow'), tff=tff)
             elif ifC:
-                return havsfunc.ContraSharpening(output, CClip, planes=planes)
+                return ContraSharpening(output, CClip, planes=planes)
             else:
-                return havsfunc.LSFmod(output, strength=contrasharp, source=CClip, Lmode=0, soothe=False, defaults='slow')
+                return LSFmod(output, strength=contrasharp, source=CClip, Lmode=0, soothe=False, defaults='slow')
         elif interlaced:
-            return havsfunc.Weave(output, tff=tff)
+            return Weave(output, tff=tff)
         else:
             return output
     else:
         return input
+
+# Helpers
+
+def cround(x: float) -> int:
+    return math.floor(x + 0.5) if x > 0 else math.ceil(x - 0.5)
+
+def scale(value, peak):
+    return cround(value * peak / 255) if peak != 1 else value / 255
+    
+    
+def MinBlur(clp: vs.VideoNode, r: int = 1, planes: Optional[Union[int, Sequence[int]]] = None) -> vs.VideoNode:
+    '''Nifty Gauss/Median combination'''
+    from mvsfunc import LimitFilter
+
+    if not isinstance(clp, vs.VideoNode):
+        raise vs.Error('MinBlur: this is not a clip')
+
+    plane_range = range(clp.format.num_planes)
+
+    if planes is None:
+        planes = list(plane_range)
+    elif isinstance(planes, int):
+        planes = [planes]
+
+    matrix1 = [1, 2, 1, 2, 4, 2, 1, 2, 1]
+    matrix2 = [1, 1, 1, 1, 1, 1, 1, 1, 1]
+
+    if r <= 0:
+        RG11 = sbr(clp, planes=planes)
+        RG4 = clp.std.Median(planes=planes)
+    elif r == 1:
+        RG11 = clp.std.Convolution(matrix=matrix1, planes=planes)
+        RG4 = clp.std.Median(planes=planes)
+    elif r == 2:
+        RG11 = clp.std.Convolution(matrix=matrix1, planes=planes).std.Convolution(matrix=matrix2, planes=planes)
+        RG4 = clp.ctmf.CTMF(radius=2, planes=planes)
+    else:
+        RG11 = clp.std.Convolution(matrix=matrix1, planes=planes).std.Convolution(matrix=matrix2, planes=planes).std.Convolution(matrix=matrix2, planes=planes)
+        if clp.format.bits_per_sample == 16:
+            s16 = clp
+            RG4 = depth(clp, 12, dither_type=Dither.NONE).ctmf.CTMF(radius=3, planes=planes)
+            RG4 = LimitFilter(s16, depth(RG4, 16), thr=0.0625, elast=2, planes=planes)
+        else:
+            RG4 = clp.ctmf.CTMF(radius=3, planes=planes)
+
+    return core.std.Expr([clp, RG11, RG4], expr=['x y - x z - * 0 < x x y - abs x z - abs < y z ? ?' if i in planes else '' for i in plane_range])
+    
+    
+def DitherLumaRebuild(src, s0=2., c=0.0625, chroma=True):
+    # Converts luma (and chroma) to PC levels, and optionally allows tweaking for pumping up the darks. (for the clip to be fed to motion search only)
+    # By courtesy of cretindesalpes. (https://forum.doom9.org/showthread.php?p=1548318)
+
+    if not isinstance(src, vs.VideoNode):
+        raise TypeError("DitherLumaRebuild: This is not a clip!")
+    
+    bd = src.format.bits_per_sample
+    isFLOAT = src.format.sample_type == vs.FLOAT
+    i = 0.00390625 if isFLOAT else 1 << (bd - 8)
+
+    x = 'x {} /'.format(i) if bd != 8 else 'x'
+    expr = 'x 128 * 112 /' if isFLOAT else '{} 128 - 128 * 112 / 128 + {} *'.format(x, i)
+    k = (s0 - 1) * c
+    t = '{} 16 - 219 / 0 max 1 min'.format(x)
+    c1 = 1 + c
+    c2 = c1 * c
+    e = '{} {} {} {} {} + / - * {} 1 {} - * + {} *'.format(k, c1, c2, t, c, t, k, 256*i)
+    
+    return core.std.Expr([src], [e] if src.format.num_planes == 1 else [e, expr if chroma else ''])
+    
+# Taken from muvsfunc
+def GetPlane(clip, plane=None):
+    # input clip
+    if not isinstance(clip, vs.VideoNode):
+        raise type_error('"clip" must be a clip!')
+
+    # Get properties of input clip
+    sFormat = clip.format
+    sNumPlanes = sFormat.num_planes
+
+    # Parameters
+    if plane is None:
+        plane = 0
+    elif not isinstance(plane, int):
+        raise type_error('"plane" must be an int!')
+    elif plane < 0 or plane > sNumPlanes:
+        raise value_error(f'valid range of "plane" is [0, {sNumPlanes})!')
+
+    # Process
+    return core.std.ShufflePlanes(clip, plane, vs.GRAY)
+    
+# Taken from havsfunc
+def KNLMeansCL(
+    clip: vs.VideoNode,
+    d: Optional[int] = None,
+    a: Optional[int] = None,
+    s: Optional[int] = None,
+    h: Optional[float] = None,
+    wmode: Optional[int] = None,
+    wref: Optional[float] = None,
+    device_type: Optional[str] = None,
+    device_id: Optional[int] = None,
+) -> vs.VideoNode:
+    if not isinstance(clip, vs.VideoNode):
+        raise vs.Error('KNLMeansCL: this is not a clip')
+
+    if clip.format.color_family != vs.YUV:
+        raise vs.Error('KNLMeansCL: this wrapper is intended to be used only for YUV format')
+
+    use_cuda = hasattr(core, 'nlm_cuda')
+    subsampled = clip.format.subsampling_w > 0 or clip.format.subsampling_h > 0
+
+    if use_cuda:
+        nlmeans = clip.nlm_cuda.NLMeans
+    else:
+        nlmeans = clip.knlm.KNLMeansCL
+
+    if subsampled:
+        return nlmeans(d=d, a=a, s=s, h=h, wmode=wmode, wref=wref, device_type=device_type, device_id=device_id).knlm.KNLMeansCL(
+            d=d, a=a, s=s, h=h, channels='UV', wmode=wmode, wref=wref, device_type=device_type, device_id=device_id
+        )
+    else:
+        return nlmeans(d=d, a=a, s=s, h=h, channels='YUV', wmode=wmode, wref=wref, device_type=device_type, device_id=device_id)
+        
+        
+def sbr(c: vs.VideoNode, r: int = 1, planes: Optional[Union[int, Sequence[int]]] = None) -> vs.VideoNode:
+    '''make a highpass on a blur's difference (well, kind of that)'''
+    if not isinstance(c, vs.VideoNode):
+        raise vs.Error('sbr: this is not a clip')
+
+    neutral = 1 << (c.format.bits_per_sample - 1) if c.format.sample_type == vs.INTEGER else 0.0
+
+    plane_range = range(c.format.num_planes)
+
+    if planes is None:
+        planes = list(plane_range)
+    elif isinstance(planes, int):
+        planes = [planes]
+
+    matrix1 = [1, 2, 1, 2, 4, 2, 1, 2, 1]
+    matrix2 = [1, 1, 1, 1, 1, 1, 1, 1, 1]
+
+    RG11 = c.std.Convolution(matrix=matrix1, planes=planes)
+    if r >= 2:
+        RG11 = RG11.std.Convolution(matrix=matrix2, planes=planes)
+    if r >= 3:
+        RG11 = RG11.std.Convolution(matrix=matrix2, planes=planes)
+
+    RG11D = core.std.MakeDiff(c, RG11, planes=planes)
+
+    RG11DS = RG11D.std.Convolution(matrix=matrix1, planes=planes)
+    if r >= 2:
+        RG11DS = RG11DS.std.Convolution(matrix=matrix2, planes=planes)
+    if r >= 3:
+        RG11DS = RG11DS.std.Convolution(matrix=matrix2, planes=planes)
+
+    RG11DD = core.std.Expr(
+        [RG11D, RG11DS],
+        expr=[f'x y - x {neutral} - * 0 < {neutral} x y - abs x {neutral} - abs < x y - {neutral} + x ? ?' if i in planes else '' for i in plane_range],
+    )
+    return core.std.MakeDiff(c, RG11DD, planes=planes)

@@ -103,16 +103,16 @@ class FillDuplicateFrames:
           return self.clip[n].text.Text(text="Input (scene change - 1)", alignment=9)
       elif self.debug:
         #current non dublicate selected
-        return self.clip[n].text.Text(text="Input (1)", alignment=9)
+        return self.clip[n].text.Text(text="Input (unique)", alignment=9)
       return self.clip[n]
 
     #dublicate frame, frame is interpolated
     for start in reversed(range(n+1)):
       if self.is_not_duplicate(start):
         break
-    else: #there are all black frames preceding n, return current n frame // will be executed then for-look does not end with a break
+    else: #there are all duplicate frames preceding n, return current n frame // will be executed then for-look does not end with a break
       if self.debug:
-        return self.clip[n].text.Text(text="Input (2)", alignment=9)
+        return self.clip[n].text.Text(text="Input(2)", alignment=9)
       return self.clip[n]
   
     for end in range(n, len(self.clip)):
