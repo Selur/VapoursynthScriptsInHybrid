@@ -30,9 +30,9 @@ def TFMBobQ(clip: vs.VideoNode,
             MI: int = 80,
             chroma: bool=False,
             openCL: bool = False):
-  import havsfunc
+  import qtgmc
   field = clip.get_frame(0).props['_FieldBased']
-  q = havsfunc.QTGMC(Input=clip, Preset="Fast", TFF=(field == 2), opencl=openCL) 
+  q = qtgmc.QTGMC(Input=clip, Preset="Fast", TFF=(field == 2), opencl=openCL) 
   if field == 1:
     field = 0
   else:

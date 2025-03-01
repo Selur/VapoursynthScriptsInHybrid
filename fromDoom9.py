@@ -329,21 +329,20 @@ def VHSClean(clip: vs.VideoNode, ths: int=100, blur_sharp=True) -> vs.VideoNode:
 # masked CAS port of MCAS by Atak_Snajpera https://forum.doom9.org/showthread.php?p=2003218#post2003218
 # requires:
 #  CAS: https://github.com/HomeOfVapourSynthEvolution/VapourSynth-CAS
-#  Overlay from hasfunc: https://github.com/Selur/VapoursynthScriptsInHybrid/blob/master/havsfunc.py
 #
 # clip: Clip to process. Any planar format with either integer sample type of 8-16 bit depth or float sample type of 32 bit depth is supported.
 # sharpness: Sharpening strength.
 def maskedCAS(clip: vs.VideoNode, strength: float=0.2):
   if (strength < 0) or (strength > 1):
     raise vs.Error('strength not valid (range: [0-1]')
-  import havsfunc
+  import misc
   iMask = core.std.Levels(clip=clip, min_in=0, gamma=2, max_in=2 << clip.format.bits_per_sample -1)
   if hasattr(vs.core, 'vszip'):
     eMask = core.std.Sobel(clip=iMask, planes=[0]).std.InvertMask().std.Levels(min_in=0, gamma=2, max_in=2 << clip.format.bits_per_sample -1).vszip.BoxBlur()  
   else:
     eMask = core.std.Sobel(clip=iMask, planes=[0]).std.InvertMask().std.Levels(min_in=0, gamma=2, max_in=2 << clip.format.bits_per_sample -1).std.BoxBlur()
   sharp = core.cas.CAS(clip=clip, sharpness=1)
-  return havsfunc.Overlay(base=clip, overlay=sharp, mask=eMask, opacity=strength)
+  return misc.Overlay(base=clip, overlay=sharp, mask=eMask, opacity=strength)
   
   
 # Vapoursynth port of ContrastMask from javlak

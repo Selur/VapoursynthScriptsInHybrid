@@ -533,6 +533,219 @@ def LSFmod(input, strength=None, Smode=None, Smethod=None, kernel=11, preblur=No
     else:
         return out
 
+
+def FineSharp(clip, mode=1, sstr=2.5, cstr=None, xstr=0, lstr=1.5, pstr=1.28, ldmp=None, hdmp=0.01, rep=12):
+    """
+    Original author: Didée (https://forum.doom9.org/showthread.php?t=166082)
+    Small and relatively fast realtime-sharpening function, for 1080p,
+    or after scaling 720p → 1080p during playback.
+    (to make 720p look more like being 1080p)
+    It's a generic sharpener. Only for good quality sources!
+    (If the source is crap, FineSharp will happily sharpen the crap) :)
+    Noise/grain will be enhanced, too. The method is GENERIC.
+
+    Modus operandi: A basic nonlinear sharpening method is performed,
+    then the *blurred* sharp-difference gets subtracted again.
+    
+    Args:
+        mode  (int)  - 1 to 3, weakest to strongest. When negative -1 to -3,
+                       a broader kernel for equalisation is used.
+        sstr (float) - strength of sharpening.
+        cstr (float) - strength of equalisation (recommended 0.5 to 1.25)
+        xstr (float) - strength of XSharpen-style final sharpening, 0.0 to 1.0.
+                       (but, better don't go beyond 0.25...)
+        lstr (float) - modifier for non-linear sharpening.
+        pstr (float) - exponent for non-linear sharpening.
+        ldmp (float) - "low damp", to not over-enhance very small differences.
+                       (noise coming out of flat areas)
+        hdmp (float) - "high damp", this damping term has a larger effect than ldmp
+                        when the sharp-difference is larger than 1, vice versa.
+        rep   (int)  - repair mode used in final sharpening, recommended modes are 1/12/13.
+    """
+
+    color = clip.format.color_family
+    bd = clip.format.bits_per_sample
+    isFLOAT = clip.format.sample_type == vs.FLOAT
+    mid = 0 if isFLOAT else 1 << (bd - 1)
+    i = 0.00392 if isFLOAT else 1 << (bd - 8)
+    xy = 'x y - {} /'.format(i) if bd != 8 else 'x y -'
+    R = core.rgsf.Repair if isFLOAT else core.rgvs.Repair
+    mat1 = [1, 2, 1, 2, 4, 2, 1, 2, 1]
+    mat2 = [1, 1, 1, 1, 1, 1, 1, 1, 1]
+    
+    if not isinstance(clip, vs.VideoNode):
+        raise TypeError("FineSharp: This is not a clip!")
+
+    if cstr is None:
+        cstr = spline(sstr, {0: 0, 0.5: 0.1, 1: 0.6, 2: 0.9, 2.5: 1, 3: 1.1, 3.5: 1.15, 4: 1.2, 8: 1.25, 255: 1.5})
+        cstr **= 0.8 if mode > 0 else cstr
+
+    if ldmp is None:
+        ldmp = sstr
+
+    sstr = max(sstr, 0)
+    cstr = max(cstr, 0)
+    xstr = min(max(xstr, 0), 1)
+    ldmp = max(ldmp, 0)
+    hdmp = max(hdmp, 0)
+
+    if sstr < 0.01 and cstr < 0.01 and xstr < 0.01:
+        return clip
+
+    tmp = core.std.ShufflePlanes(clip, [0], vs.GRAY) if color in [vs.YUV] else clip
+
+    if abs(mode) == 1:
+        c2 = core.std.Convolution(tmp, matrix=mat1).std.Median()
+    else:
+        c2 = core.std.Median(tmp).std.Convolution(matrix=mat1)
+    if abs(mode) == 3:
+        c2 = c2.std.Median()
+    
+    if sstr >= 0.01:
+        expr = 'x y = x dup {} dup dup dup abs {} / {} pow swap3 abs {} + / swap dup * dup {} + / * * {} * + ?'
+        shrp = core.std.Expr([tmp, c2], [expr.format(xy, lstr, 1/pstr, hdmp, ldmp, sstr*i)])
+
+        if cstr >= 0.01:
+            diff = core.std.MakeDiff(shrp, tmp)
+            if cstr != 1:
+                expr = 'x {} *'.format(cstr) if isFLOAT else 'x {} - {} * {} +'.format(mid, cstr, mid)
+                diff = core.std.Expr([diff], [expr])
+            diff = core.std.Convolution(diff, matrix=mat1) if mode > 0 else core.std.Convolution(diff, matrix=mat2)
+            shrp = core.std.MakeDiff(shrp, diff)
+
+    if xstr >= 0.01:
+        xyshrp = core.std.Expr([shrp, core.std.Convolution(shrp, matrix=mat2)], ['x dup y - 9.69 * +'])
+        rpshrp = R(xyshrp, shrp, [rep])
+        shrp = core.std.Merge(shrp, rpshrp, [xstr])
+
+    return core.std.ShufflePlanes([shrp, clip], [0, 1, 2], color) if color in [vs.YUV] else shrp
+
+def DetailSharpen(clip, z=4, sstr=1.5, power=4, ldmp=1, mode=1, med=False):
+    """
+    From: https://forum.doom9.org/showthread.php?t=163598
+    Didée: Wanna some sharpening that causes no haloing, without any edge masking?
+    
+    Args:
+        z     (float) - zero point.
+        sstr  (float) - strength of non-linear sharpening.
+        power (float) - exponent of non-linear sharpening.
+        ldmp  (float) - "low damp", to not over-enhance very small differences.
+        mode   (int)  - 0: gaussian kernel 1: box kernel
+        med   (bool)  - When True, median is used to achieve stronger sharpening.
+        
+    Examples:
+        DetailSharpen() # Original DetailSharpen by Didée.
+        DetailSharpen(power=1.5, mode=0, med=True) # Mini-SeeSaw...just without See, and without Saw.
+    """
+    
+    ldmp = max(ldmp, 0)
+    bd = clip.format.bits_per_sample
+    isFLOAT = clip.format.sample_type == vs.FLOAT
+    i = 0.00392 if isFLOAT else 1 << (bd - 8)
+    xy = 'x y - {} /'.format(i) if bd != 8 else 'x y -'
+    color = clip.format.color_family
+    
+    if not isinstance(clip, vs.VideoNode):
+        raise TypeError("DetailSharpen: This is not a clip!")
+
+    tmp = core.std.ShufflePlanes(clip, [0], vs.GRAY) if color in [vs.YUV] else clip
+
+    if mode == 1:
+        blur = core.std.Convolution(tmp, matrix=[1, 1, 1, 1, 1, 1, 1, 1, 1])
+    else:
+        blur = core.std.Convolution(tmp, matrix=[1, 2, 1, 2, 4, 2, 1, 2, 1])
+    if med:
+        blur = blur.std.Median()
+
+    expr = 'x y = x dup {} dup dup abs {} / {} pow swap2 abs {} + / * {} * + ?'
+    tmp = core.std.Expr([tmp, blur], [expr.format(xy, z, 1/power, ldmp, sstr*z*i)])
+
+    return core.std.ShufflePlanes([tmp, clip], [0, 1, 2], color) if color in [vs.YUV] else tmp
+
+def psharpen(clip, strength=25, threshold=75, ss_x=1.0, ss_y=1.0, dest_x=None, dest_y=None):
+    """From http://forum.doom9.org/showpost.php?p=683344&postcount=28
+
+    Sharpening function similar to LimitedSharpenFaster.
+
+    Args:
+        clip (clip): Input clip.
+        strength (int): Strength of the sharpening.
+        threshold (int): Controls "how much" to be sharpened.
+        ss_x (float): Supersampling factor (reduce aliasing on edges).
+        ss_y (float): Supersampling factor (reduce aliasing on edges).
+        dest_x (int): Output resolution after sharpening.
+        dest_y (int): Output resolution after sharpening.
+    """
+
+    src = clip
+
+    if dest_x is None:
+        dest_x = src.width
+    if dest_y is None:
+        dest_y = src.height
+
+    strength = clamp(0, strength, 100) / 100.0
+    threshold = clamp(0, threshold, 100) / 100.0
+
+    if ss_x < 1.0:
+        ss_x = 1.0
+    if ss_y < 1.0:
+        ss_y = 1.0
+
+    if ss_x != 1.0 or ss_y != 1.0:
+        clip = core.resize.Lanczos(clip, width=m4(src.width * ss_x), height=m4(src.height * ss_y))
+
+    resz = clip
+
+    if src.format.num_planes != 1:
+        clip = core.std.ShufflePlanes(clips=clip, planes=[0], colorfamily=vs.GRAY)
+
+    max_ = core.std.Maximum(clip)
+    min_ = core.std.Minimum(clip)
+
+    nmax = core.std.Expr([max_, min_], ["x y -"])
+    nval = core.std.Expr([clip, min_], ["x y -"])
+
+    expr0 = threshold * (1.0 - strength) / (1.0 - (1.0 - threshold) * (1.0 - strength))
+    epsilon = 0.000000000000001
+    scl = (1 << clip.format.bits_per_sample) // 256
+    x = f"x {scl} /" if scl != 1 else "x"
+    y = f"y {scl} /" if scl != 1 else "y"
+
+    expr = (
+        f"{x} {y} {epsilon} + / 2 * 1 - abs {expr0} < {strength} 1 = {x} {y} 2 / = 0 {y} 2 / ? "
+        f"{x} {y} {epsilon} + / 2 * 1 - abs 1 {strength} - / ? {x} {y} {epsilon} + / 2 * 1 - abs 1 {threshold} - "
+        f"* {threshold} + ? {x} {y} 2 / > 1 -1 ? * 1 + {y} * 2 / {scl} *"
+    )
+
+    nval = core.std.Expr([nval, nmax], [expr])
+
+    clip = core.std.Expr([nval, min_], ["x y +"])
+
+    if src.format.num_planes != 1:
+        clip = core.std.ShufflePlanes(
+            clips=[clip, resz], planes=[0, 1, 2], colorfamily=src.format.color_family
+        )
+
+    if ss_x != 1.0 or ss_y != 1.0 or dest_x != src.width or dest_y != src.height:
+        clip = core.resize.Lanczos(clip, width=dest_x, height=dest_y)
+
+    return clip
+
+
+
+########################### HELPER
+
+
+def clamp(minimum, value, maximum):
+    return int(max(minimum, min(round(value), maximum)))
+
+
+def m4(value, mult=4.0):
+    return 16 if value < 16 else int(round(value / mult) * mult)
+
+
+
 def cround(x: float) -> int:
     return math.floor(x + 0.5) if x > 0 else math.ceil(x - 0.5)
     
@@ -654,3 +867,48 @@ def mt_clamp(
         planes = [planes]
 
     return core.std.Expr([clip, bright_limit, dark_limit], expr=[f'x y {overshoot} + min z {undershoot} - max' if i in planes else '' for i in plane_range])
+
+def spline(x, coordinates):
+    def get_matrix(px, py, l):
+        matrix = []
+        matrix.append([(i == 0) * 1.0 for i in range(l + 1)])
+        for i in range(1, l - 1):
+            p = [0 for t in range(l + 1)]
+            p[i - 1] = px[i] - px[i - 1]
+            p[i] = 2 * (px[i + 1] - px[i - 1])
+            p[i + 1] = px[i + 1] - px[i]
+            p[l] = 6 * (((py[i + 1] - py[i]) / p[i + 1]) - (py[i] - py[i - 1]) / p[i - 1])
+            matrix.append(p)
+        matrix.append([(i == l - 1) * 1.0 for i in range(l + 1)])
+        return matrix
+    def equation(matrix, dim):
+        for i in range(dim):
+            num = matrix[i][i]
+            for j in range(dim + 1):
+                matrix[i][j] /= num
+            for j in range(dim):
+                if i != j:
+                    a = matrix[j][i]
+                    for k in range(i, dim + 1):
+                        matrix[j][k] -= a * matrix[i][k]
+    if not isinstance(coordinates, dict):
+        raise TypeError("coordinates must be a dict")
+    length = len(coordinates)
+    if length < 3:
+        raise ValueError("coordinates require at least three pairs")
+    px = [key for key in coordinates.keys()]
+    py = [val for val in coordinates.values()]
+    matrix = get_matrix(px, py, length)
+    equation(matrix, length)
+    for i in range(length + 1):
+        if x >= px[i] and x <= px[i + 1]:
+            break
+    j = i + 1
+    h = px[j] - px[i]
+    s = matrix[j][length] * (x - px[i]) ** 3
+    s -= matrix[i][length] * (x - px[j]) ** 3
+    s /= 6 * h
+    s += (py[j] / h - h * matrix[j][length] / 6) * (x - px[i])
+    s -= (py[i] / h - h * matrix[i][length] / 6) * (x - px[j])
+    
+    return s

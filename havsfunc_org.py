@@ -97,10 +97,9 @@ def daa(
     if opencl:
         nnedi3 = partial(core.nnedi3cl.NNEDI3CL, nsize=nsize, nns=nns, qual=qual, pscrn=pscrn, device=device)
     else:
-        if hasattr(core,'znedi3'):
-          nnedi3 = partial(core.znedi3.nnedi3, nsize=nsize, nns=nns, qual=qual, pscrn=pscrn, int16_prescreener=int16_prescreener, int16_predictor=int16_predictor, exp=exp)
-        else:
-          nnedi3 = partial(core.nnedi3.nnedi3, nsize=nsize, nns=nns, qual=qual, pscrn=pscrn, int16_prescreener=int16_prescreener, int16_predictor=int16_predictor, exp=exp)
+        nnedi3 = partial(
+            core.znedi3.nnedi3, nsize=nsize, nns=nns, qual=qual, pscrn=pscrn, int16_prescreener=int16_prescreener, int16_predictor=int16_predictor, exp=exp
+        )
 
     nn = nnedi3(c, field=3)
     dbl = core.std.Merge(nn[::2], nn[1::2])
@@ -146,7 +145,7 @@ def mcdaa3(
 
     if hasattr(core, 'neo_fft3d'):
       sup = input.hqdn3d.Hqdn3d().neo_fft3d.FFT3D().mv.Super(sharp=1)
-    else:     
+    else:              
       sup = input.hqdn3d.Hqdn3d().fft3dfilter.FFT3DFilter().mv.Super(sharp=1)
     fv1 = sup.mv.Analyse(isb=False, delta=1, truemotion=False, dct=2)
     fv2 = sup.mv.Analyse(isb=True, delta=1, truemotion=True, dct=2)
@@ -202,20 +201,12 @@ def santiag(
     def santiag_stronger(c: vs.VideoNode, strength: int, type: str) -> vs.VideoNode:
         if opencl:
             nnedi3 = partial(core.nnedi3cl.NNEDI3CL, nsize=nsize, nns=nns, qual=qual, pscrn=pscrn, device=device)
-            if hasattr(core, 'EEDI3CL'):
-              eedi3 = partial(core.eedi3m.EEDI3CL, alpha=alpha, beta=beta, gamma=gamma, nrad=nrad, mdis=mdis, vcheck=vcheck, device=device)
-            else:
-              eedi3 = partial(core.eedi3m.EEDI3, alpha=alpha, beta=beta, gamma=gamma, nrad=nrad, mdis=mdis, vcheck=vcheck)
+            eedi3 = partial(core.eedi3m.EEDI3CL, alpha=alpha, beta=beta, gamma=gamma, nrad=nrad, mdis=mdis, vcheck=vcheck, device=device)
         else:
-            if hasattr(core, 'znedi3'):
-              nnedi3 = partial(core.znedi3.nnedi3, nsize=nsize, nns=nns, qual=qual, pscrn=pscrn, int16_prescreener=int16_prescreener, int16_predictor=int16_predictor, exp=exp)
-            else:
-              nnedi3 = partial(core.nnedi3.nnedi3, nsize=nsize, nns=nns, qual=qual, pscrn=pscrn, int16_prescreener=int16_prescreener, int16_predictor=int16_predictor, exp=exp)
-            
-            if hasattr(core, 'EEDI3CL'):
-              eedi3 = partial(core.eedi3m.EEDI3CL, alpha=alpha, beta=beta, gamma=gamma, nrad=nrad, mdis=mdis, vcheck=vcheck, device=device)
-            else:
-              eedi3 = partial(core.eedi3m.EEDI3, alpha=alpha, beta=beta, gamma=gamma, nrad=nrad, mdis=mdis, vcheck=vcheck)
+            nnedi3 = partial(
+                core.znedi3.nnedi3, nsize=nsize, nns=nns, qual=qual, pscrn=pscrn, int16_prescreener=int16_prescreener, int16_predictor=int16_predictor, exp=exp
+            )
+            eedi3 = partial(core.eedi3m.EEDI3, alpha=alpha, beta=beta, gamma=gamma, nrad=nrad, mdis=mdis, vcheck=vcheck)
 
         strength = max(strength, 0)
         field = strength % 2
@@ -573,10 +564,9 @@ def EdgeCleaner(c: vs.VideoNode, strength: int = 10, rep: bool = True, rmode: in
     if hot:
         final = core.rgvs.Repair(final, c, mode=2)
     if smode > 0:
-        RG = core.zsmooth.RemoveGrain if hasattr(core,'zsmooth') else core.rgvs.RemoveGrain
-        clean = RG(c, mode=17)
+        clean = c.rgvs.RemoveGrain(mode=17)
         diff = core.std.MakeDiff(c, clean)
-        mask = AvsPrewitt(diff.std.Levels(min_in=scale_value(40, 8, bits), max_in=scale_value(168, 8, bits), gamma=0.35).RG(mode=7)).std.Expr(
+        mask = AvsPrewitt(diff.std.Levels(min_in=scale_value(40, 8, bits), max_in=scale_value(168, 8, bits), gamma=0.35).rgvs.RemoveGrain(mode=7)).std.Expr(
             expr=f'x {scale_value(4, 8, bits)} < 0 x {scale_value(16, 8, bits)} > {peak} x ? ?'
         )
         final = core.std.MaskedMerge(final, c, mask)
@@ -918,7 +908,7 @@ def HQDeringmod(
     darkthr: Optional[float] = None,
     planes: Union[int, Sequence[int]] = 0,
     show: bool = False,
-    cuda: bool = False,                   
+    cuda: bool = False,
 ) -> vs.VideoNode:
     '''
     HQDering mod v1.8
@@ -966,7 +956,8 @@ def HQDeringmod(
         planes: Specifies which planes will be processed. Any unprocessed planes will be simply copied.
 
         show: Whether to output mask clip instead of filtered clip.
-        cuda: Whether to enable CUDA functionality (for dfttest2).                                                          
+
+        cuda: Whether to enable CUDA functionality (for dfttest2).
     '''
     from mvsfunc import LimitFilter
 
@@ -1009,19 +1000,25 @@ def HQDeringmod(
     # Kernel: Smoothing
     if smoothed is None:
         if nrmode <= 0:
-          if cuda and sbsize == 16:
             try:
-              dfttest2 = importlib.import_module('dfttest2')
+                dfttest2 = importlib.import_module('dfttest2')
             except ModuleNotFoundError:
-              dfttest2 = None
-          else:
-            dfttest2 = None
-            
-          if dfttest2:
-              # NVRTC is faster than cuFFT but only supports `sbsize == 16`
-              smoothed = dfttest2.DFTTest(input, sbsize=sbsize, sosize=sosize, tbsize=1, slocation=[0.0, sigma2, 0.05, sigma, 0.5, sigma, 0.75, sigma2, 1.0, 0.0], planes=planes, backend=dfttest2.Backend.NVRTC)
-          else:                      
-            smoothed = input.dfttest.DFTTest(sbsize=sbsize, sosize=sosize, tbsize=1, slocation=[0.0, sigma2, 0.05, sigma, 0.5, sigma, 0.75, sigma2, 1.0, 0.0], planes=planes)
+                dfttest2 = None
+            # Currently the CPU backend only supports `sbsize == 16`
+            use_dfttest2 = dfttest2 and (cuda or sbsize == 16)
+            if use_dfttest2:
+                if sbsize == 16:
+                    # NVRTC is faster than cuFFT but only supports `sbsize == 16`
+                    backend = dfttest2.Backend.NVRTC if cuda else dfttest2.Backend.CPU
+                else:
+                    backend = dfttest2.Backend.cuFFT
+                smoothed = dfttest2.DFTTest(
+                    input, sbsize=sbsize, sosize=sosize, tbsize=1, slocation=[0.0, sigma2, 0.05, sigma, 0.5, sigma, 0.75, sigma2, 1.0, 0.0], planes=planes, backend=backend
+                )
+            else:
+                smoothed = input.dfttest.DFTTest(
+                    sbsize=sbsize, sosize=sosize, tbsize=1, slocation=[0.0, sigma2, 0.05, sigma, 0.5, sigma, 0.75, sigma2, 1.0, 0.0], planes=planes
+                )
         else:
             smoothed = MinBlur(input, nrmode, planes)
 
@@ -1884,24 +1881,14 @@ def QTGMC(
         if Denoiser == 'bm3d':
             dnWindow = mvf.BM3D(noiseWindow, radius1=NoiseTR, sigma=[Sigma if plane in CNplanes else 0 for plane in range(3)])
         elif Denoiser == 'dfttest':
-          if opencl:
-            try:
-               dfttest2 = importlib.import_module('dfttest2')
-               dnWindow = dfttest2.DFTTest(noiseWindow, sigma=Sigma * 4, tbsize=noiseTD, planes=CNplanes, backend=dfttest2.Backend.NVRTC)
-            except ModuleNotFoundError:
-               dnWindow = noiseWindow.dfttest.DFTTest(sigma=Sigma * 4, tbsize=noiseTD, planes=CNplanes)
-          else:
             dnWindow = noiseWindow.dfttest.DFTTest(sigma=Sigma * 4, tbsize=noiseTD, planes=CNplanes)
-        elif Denoiser in ['knlm', 'knlmeanscl', 'nlm_cuda']:
+        elif Denoiser in ['knlm', 'knlmeanscl']:
             if ChromaNoise and not is_gray:
                 dnWindow = KNLMeansCL(noiseWindow, d=NoiseTR, h=Sigma)
             else:
-                nlmeans_func = noiseWindow.nlm_cuda.NLMeans if hasattr(core, 'nlm_cuda') else noiseWindow.knlm.KNLMeansCL
-                dnWindow = nlmeans_func(d=NoiseTR, h=Sigma)
+                dnWindow = noiseWindow.knlm.KNLMeansCL(d=NoiseTR, h=Sigma)
         else:
-            fft3d_func = noiseWindow.neo_fft3d.FFT3D if hasattr(core, 'neo_fft3d') else noiseWindow.fft3dfilter.FFT3DFilter
-            dnWindow = fft3d_func(sigma=Sigma, planes=CNplanes, bt=noiseTD, ncpu=FftThreads)
-
+            dnWindow = noiseWindow.fft3dfilter.FFT3DFilter(sigma=Sigma, planes=CNplanes, bt=noiseTD, ncpu=FftThreads)
 
         # Rework denoised clip to match source format - various code paths here: discard the motion compensation window, discard doubled lines (from point resize)
         # Also reweave to get interlaced noise if source was interlaced (could keep the full frame of noise, but it will be poor quality from the point resize)
@@ -2277,23 +2264,12 @@ def QTGMC_Interpolate(
 
     field = 3 if TFF else 2
 
-    
     if opencl:
         nnedi3 = partial(core.nnedi3cl.NNEDI3CL, field=field, device=device, **nnedi3_args)
-        if hasattr(core, 'EEDI3CL'):
-          eedi3 = partial(core.eedi3m.EEDI3CL, field=field, planes=planes, mdis=EdiMaxD, device=device, **eedi3_args)
-        else:
-          eedi3 = partial(core.eedi3m.EEDI3, field=field, planes=planes, mdis=EdiMaxD, **eedi3_args)
+        eedi3 = partial(core.eedi3m.EEDI3CL, field=field, planes=planes, mdis=EdiMaxD, device=device, **eedi3_args)
     else:
-       if hasattr(core, 'znedi3'):
-         nnedi3 = partial(core.znedi3.nnedi3, field=field, **nnedi3_args)
-       else:
-         nnedi3 = partial(core.nnedi3.nnedi3, field=field, **nnedi3_args)
-  
-       if hasattr(core, 'EEDI3CL'):
-          eedi3 = partial(core.eedi3m.EEDI3CL, field=field, planes=planes, mdis=EdiMaxD, device=device, **eedi3_args)
-       else:
-          eedi3 = partial(core.eedi3m.EEDI3, field=field, planes=planes, mdis=EdiMaxD, **eedi3_args)
+        nnedi3 = partial(core.znedi3.nnedi3, field=field, **nnedi3_args)
+        eedi3 = partial(core.eedi3m.EEDI3, field=field, planes=planes, mdis=EdiMaxD, **eedi3_args)
 
     if InputType == 1:
         return Input
@@ -2448,8 +2424,7 @@ def QTGMC_MakeLossless(Input: vs.VideoNode, Source: vs.VideoNode, InputType: int
     vmNewDiff2 = core.std.Expr(
         [vmNewDiff1.rgvs.VerticalCleaner(mode=1), vmNewDiff1], expr=f'x {neutral} - y {neutral} - * 0 < {neutral} x {neutral} - abs y {neutral} - abs < x y ? ?'
     )
-    RG = core.zsmooth.RemoveGrain if hasattr(core,'zsmooth') else core.rgvs.RemoveGrain
-    vmNewDiff3 = core.rgvs.Repair(vmNewDiff2, RG(vmNewDiff2, mode=2), mode=1)
+    vmNewDiff3 = core.rgvs.Repair(vmNewDiff2, vmNewDiff2.rgvs.RemoveGrain(mode=2), mode=1)
 
     # Reweave final result
     return Weave(core.std.Interleave([srcFields, core.std.MakeDiff(newFields, vmNewDiff3)]).std.SelectEvery(cycle=4, offsets=[0, 1, 3, 2]), tff=TFF)
@@ -3206,30 +3181,25 @@ def logoNR(dlg, src, chroma=True, l=0, t=0, r=0, b=0, d=1, a=2, s=2, h=3):
     else:
         dlg_orig = None
 
-    if l or t or r or b:
+    b_crop = (l != 0) or (t != 0) or (r != 0) or (b != 0)
+    if b_crop:
         src = src.std.Crop(left=l, right=r, top=t, bottom=b)
         last = dlg.std.Crop(left=l, right=r, top=t, bottom=b)
     else:
         last = dlg
 
-    nlmeans_func = core.nlm_cuda.NLMeans if hasattr(core, 'nlm_cuda') else core.knlm.KNLMeansCL
-
-    clp_nr = nlmeans_func(last, d=d, a=a, s=s, h=h)
-
-    if not chroma:
-        clp_nr = mvf.GetPlane(clp_nr, 0)
-
+    if chroma:
+        clp_nr = KNLMeansCL(last, d=d, a=a, s=s, h=h)
+    else:
+        clp_nr = last.knlm.KNLMeansCL(d=d, a=a, s=s, h=h)
     logoM = mt_expand_multi(core.std.Expr([last, src], expr=['x y - abs 16 *']), mode='losange', sw=3, sh=3).std.Convolution(matrix=[1, 1, 1, 1, 0, 1, 1, 1, 1]).std.Deflate()
     clp_nr = core.std.MaskedMerge(last, clp_nr, logoM)
-
-    if l or t or r or b:
+    if b_crop:
         clp_nr = Overlay(dlg, clp_nr, x=l, y=t)
 
     if dlg_orig is not None:
         clp_nr = core.std.ShufflePlanes([clp_nr, dlg_orig], planes=[0, 1, 2], colorfamily=dlg_orig.format.color_family)
-
     return clp_nr
-
 
 
 # Vinverse: a small, but effective function against (residual) combing, by Didée
@@ -3461,7 +3431,7 @@ def LUTDeRainbow(input, cthresh=10, ythresh=10, y=True, linkUV=True, mask=False)
 
     # Since LUT2 can't handle clips with more than 10 bits, we default to using
     # Expr and MaskedMerge to handle the same logic for higher bit depths.
-    useExpr = input.format.bits_per_sample > 10                                    
+    useExpr = input.format.bits_per_sample > 10
 
     shift = input.format.bits_per_sample - 8
     peak = (1 << input.format.bits_per_sample) - 1
@@ -3487,18 +3457,19 @@ def LUTDeRainbow(input, cthresh=10, ythresh=10, y=True, linkUV=True, mask=False)
 
     umask = average_u.std.Binarize(threshold=21 << shift)
     vmask = average_v.std.Binarize(threshold=21 << shift)
+
     if useExpr:
-        themask = core.std.Expr([umask, vmask], expr=[f'x y + {peak + 1} < 0 {peak} ?'])
+        themask = core.std.Expr([umask, vmask], expr=[f'x y +'])
         if y:
             umask = core.std.MaskedMerge(core.std.BlankClip(average_y), average_y, umask)
             vmask = core.std.MaskedMerge(core.std.BlankClip(average_y), average_y, vmask)
             themask = core.std.MaskedMerge(core.std.BlankClip(average_y), average_y, themask)
-    else:                    
-      themask = core.std.Lut2(umask, vmask, function=lambda x, y: x & y)
-      if y:
-          umask = core.std.Lut2(umask, average_y, function=lambda x, y: x & y)
-          vmask = core.std.Lut2(vmask, average_y, function=lambda x, y: x & y)
-          themask = core.std.Lut2(themask, average_y, function=lambda x, y: x & y)
+    else:
+        themask = core.std.Lut2(umask, vmask, function=lambda x, y: x & y)
+        if y:
+            umask = core.std.Lut2(umask, average_y, function=lambda x, y: x & y)
+            vmask = core.std.Lut2(vmask, average_y, function=lambda x, y: x & y)
+            themask = core.std.Lut2(themask, average_y, function=lambda x, y: x & y)
 
     fixed_u = core.std.Merge(average_u, input_u)
     fixed_v = core.std.Merge(average_v, input_v)
@@ -3837,7 +3808,7 @@ def GSMC(input, p=None, Lmask=None, nrmode=None, radius=1, adapt=-1, rep=13, pla
 def MCTemporalDenoise(i, radius=None, pfMode=3, sigma=None, twopass=None, useTTmpSm=False, limit=None, limit2=None, post=0, chroma=None, refine=False, deblock=False, useQED=None, quant1=None,
                       quant2=None, edgeclean=False, ECrad=None, ECthr=None, stabilize=None, maxr=None, TTstr=None, bwbh=None, owoh=None, blksize=None, overlap=None, bt=None, ncpu=1, thSAD=None,
                       thSADC=None, thSAD2=None, thSADC2=None, thSCD1=None, thSCD2=None, truemotion=False, MVglobal=True, pel=None, pelsearch=None, search=4, searchparam=2, MVsharp=None, DCT=0, p=None,
-                      settings='low', cuda=False):
+                      settings='low'):
     if not isinstance(i, vs.VideoNode):
         raise vs.Error('MCTemporalDenoise: this is not a clip')
 
@@ -3925,23 +3896,13 @@ def MCTemporalDenoise(i, radius=None, pfMode=3, sigma=None, twopass=None, useTTm
     mod = bwbh if bwbh >= blksize else blksize
     xi = i.width
     xf = math.ceil(xi / mod) * mod - xi + mod
-    xf = xf + xf%4
     xn = int(xi + xf)
     yi = i.height
     yf = math.ceil(yi / mod) * mod - yi + mod
-    yf = yf + yf%4
     yn = int(yi + yf)
 
     pointresize_args = dict(width=xn, height=yn, src_left=-xf / 2, src_top=-yf / 2, src_width=xn, src_height=yn)
     i = i.resize.Point(**pointresize_args)
-
-    if cuda:
-      try:
-         dfttest2 = importlib.import_module('dfttest2')
-      except ModuleNotFoundError:
-        dfttest2 = None
-    else:
-      dfttest2 = None
 
     ### PREFILTERING
     fft3d_args = dict(planes=planes, bw=bwbh, bh=bwbh, bt=bt, ow=owoh, oh=owoh, ncpu=ncpu)
@@ -3950,15 +3911,9 @@ def MCTemporalDenoise(i, radius=None, pfMode=3, sigma=None, twopass=None, useTTm
     elif pfMode <= -1:
         p = i
     elif pfMode == 0:
-        if hasattr(core, 'neo_fft3d'):
-            p = i.neo_fft3d.FFT3D(sigma=sigma * 0.8, sigma2=sigma * 0.6, sigma3=sigma * 0.4, sigma4=sigma * 0.2, **fft3d_args)
-        else:                              
-            p = i.fft3dfilter.FFT3DFilter(sigma=sigma * 0.8, sigma2=sigma * 0.6, sigma3=sigma * 0.4, sigma4=sigma * 0.2, **fft3d_args)
+        p = i.fft3dfilter.FFT3DFilter(sigma=sigma * 0.8, sigma2=sigma * 0.6, sigma3=sigma * 0.4, sigma4=sigma * 0.2, **fft3d_args)
     elif pfMode >= 3:
-        if dfttest2:
-          p = dfttest2.DFTTest(i, tbsize=1, slocation=[0.0,4.0, 0.2,9.0, 1.0,15.0], planes=planes, backend=dfttest2.Backend.NVRTC)
-        else:
-          p = i.dfttest.DFTTest(tbsize=1, slocation=[0.0,4.0, 0.2,9.0, 1.0,15.0], planes=planes)
+        p = i.dfttest.DFTTest(tbsize=1, slocation=[0.0,4.0, 0.2,9.0, 1.0,15.0], planes=planes)
     else:
         p = MinBlur(i, r=pfMode, planes=planes)
 
@@ -3967,7 +3922,6 @@ def MCTemporalDenoise(i, radius=None, pfMode=3, sigma=None, twopass=None, useTTm
 
     ### DEBLOCKING
     crop_args = dict(left=xf // 2, right=xf // 2, top=yf // 2, bottom=yf // 2)
-    
     if not deblock:
         d = i
     elif useQED:
@@ -4136,20 +4090,15 @@ def MCTemporalDenoise(i, radius=None, pfMode=3, sigma=None, twopass=None, useTTm
     if post <= 0:
         smP = smL
     else:
-        if hasattr(core, 'neo_fft3d'):
-            smP = smL.neo_fft3d.FFT3D(sigma=post * 0.8, sigma2=post * 0.6, sigma3=post * 0.4, sigma4=post * 0.2, **fft3d_args)
-        else:                              
-            smP = smL.fft3dfilter.FFT3DFilter(sigma=post * 0.8, sigma2=post * 0.6, sigma3=post * 0.4, sigma4=post * 0.2, **fft3d_args)
+        smP = smL.fft3dfilter.FFT3DFilter(sigma=post * 0.8, sigma2=post * 0.6, sigma3=post * 0.4, sigma4=post * 0.2, **fft3d_args)
 
     ### EDGECLEANING
     if edgeclean:
         mP = AvsPrewitt(mvf.GetPlane(smP, 0))
         mS = mt_expand_multi(mP, sw=ECrad, sh=ECrad).std.Inflate()
         mD = core.std.Expr([mS, mP.std.Inflate()], expr=[f'x y - {ECthr} <= 0 x y - ?']).std.Inflate().std.Convolution(matrix=[1, 1, 1, 1, 1, 1, 1, 1, 1])
-        if dfttest2:
-          smP = core.std.MaskedMerge(smP, DeHalo_alpha(dfttest2.DFTTest(smP, tbsize=1, planes=planes), darkstr=0), mD, planes=planes, backend=dfttest2.Backend.NVRTC)
-        else:
-          smP = core.std.MaskedMerge(smP, DeHalo_alpha(smP.dfttest.DFTTest(tbsize=1, planes=planes), darkstr=0), mD, planes=planes)
+        smP = core.std.MaskedMerge(smP, DeHalo_alpha(smP.dfttest.DFTTest(tbsize=1, planes=planes), darkstr=0), mD, planes=planes)
+
     ### STABILIZING
     if stabilize:
         # mM = core.std.Merge(mvf.GetPlane(SAD_f1m, 0), mvf.GetPlane(SAD_b1m, 0)).std.Lut(function=lambda x: min(cround(x ** 1.6), peak))
@@ -4188,7 +4137,7 @@ def MCTemporalDenoise(i, radius=None, pfMode=3, sigma=None, twopass=None, useTTm
 bv6 = bv4 = bv3 = bv2 = bv1 = fv1 = fv2 = fv3 = fv4 = fv6 = None
 
 def SMDegrain(input, tr=2, thSAD=300, thSADC=None, RefineMotion=False, contrasharp=None, CClip=None, interlaced=False, tff=None, plane=4, Globals=0, pel=None, subpixel=2, prefilter=-1, mfilter=None,
-              blksize=None, overlap=None, search=4, truemotion=None, MVglobal=None, dct=0, limit=255, limitc=None, thSCD1=400, thSCD2=130, chroma=True, hpad=None, vpad=None, Str=1.0, Amp=0.0625, opencl=False, device=None):
+              blksize=None, overlap=None, search=4, truemotion=None, MVglobal=None, dct=0, limit=255, limitc=None, thSCD1=400, thSCD2=130, chroma=True, hpad=None, vpad=None, Str=1.0, Amp=0.0625):
     if not isinstance(input, vs.VideoNode):
         raise vs.Error('SMDegrain: this is not a clip')
 
@@ -4290,25 +4239,15 @@ def SMDegrain(input, tr=2, thSAD=300, thSADC=None, RefineMotion=False, contrasha
             pref = inputP
         elif prefilter == 3:
             expr = 'x {i} < {peak} x {j} > 0 {peak} x {i} - {peak} {j} {i} - / * - ? ?'.format(i=scale(16, peak), j=scale(75, peak), peak=peak)
-            dfttest2 = None
-            if opencl:
-              try:
-                dfttest2 = importlib.import_module('dfttest2')
-              except ModuleNotFoundError:
-                dfttest2 = None
-            if dfttest2:
-              pref = core.std.MaskedMerge(inputP.dfttest2.DFTTest(tbsize=1, slocation=[0.0,4.0, 0.2,9.0, 1.0,15.0], planes=planes, backend=dfttest2.Backend.NVRTC),
-                                        inputP,
-                                        mvf.GetPlane(inputP, 0).std.Expr(expr=[expr]),
-                                        planes=planes)
-            else:
-              pref = core.std.MaskedMerge(inputP.dfttest.DFTTest(tbsize=1, slocation=[0.0,4.0, 0.2,9.0, 1.0,15.0], planes=planes),
+            pref = core.std.MaskedMerge(inputP.dfttest.DFTTest(tbsize=1, slocation=[0.0,4.0, 0.2,9.0, 1.0,15.0], planes=planes),
                                         inputP,
                                         mvf.GetPlane(inputP, 0).std.Expr(expr=[expr]),
                                         planes=planes)
         elif prefilter >= 4:
-            nlmeans_func = core.nlm_cuda.NLMeans if hasattr(core, 'nlm_cuda') else core.knlm.KNLMeansCL
-            pref = nlmeans_func(inputP, d=1, a=1, h=7)
+            if chroma:
+                pref = KNLMeansCL(inputP, d=1, a=1, h=7)
+            else:
+                pref = inputP.knlm.KNLMeansCL(d=1, a=1, h=7)
         else:
             pref = MinBlur(inputP, r=prefilter, planes=planes)
     else:
@@ -4322,9 +4261,9 @@ def SMDegrain(input, tr=2, thSAD=300, thSADC=None, RefineMotion=False, contrasha
     if pelclip:
         import nnedi3_resample as nnrs
         cshift = 0.25 if pel == 2 else 0.375
-        pclip = nnrs.nnedi3_resample(pref, w * pel, h * pel, src_left=cshift, src_top=cshift, nns=4, opencl=opencl, device=device)
+        pclip = nnrs.nnedi3_resample(pref, w * pel, h * pel, src_left=cshift, src_top=cshift, nns=4, mode='znedi3')
         if not GlobalR:
-            pclip2 = nnrs.nnedi3_resample(inputP, w * pel, h * pel, src_left=cshift, src_top=cshift, nns=4, opencl=opencl, device=device)
+            pclip2 = nnrs.nnedi3_resample(inputP, w * pel, h * pel, src_left=cshift, src_top=cshift, nns=4, mode='znedi3')
 
     # Motion vectors search
     global bv6, bv4, bv3, bv2, bv1, fv1, fv2, fv3, fv4, fv6
@@ -4501,8 +4440,7 @@ def STPresso(
         elif RGmode == 20:
             bzz = clp.std.Convolution(matrix=[1, 1, 1, 1, 1, 1, 1, 1, 1], planes=planes)
         else:
-            RG = core.zsmooth.RemoveGrain if hasattr(core,'zsmooth') else core.rgvs.RemoveGrain
-            bzz = RG(clp, mode=RGmode)
+            bzz = clp.rgvs.RemoveGrain(mode=RGmode)
 
     last = core.std.Expr([clp, bzz], expr=[expr if i in planes else '' for i in plane_range])
 
@@ -4516,9 +4454,7 @@ def STPresso(
         fc1 = core.mv.Compensate(bzz, mvSuper, fv1)
 
         interleave = core.std.Interleave([fc1, bzz, bc1])
-        #FX = core.zsmooth.FluxSmoothT if hasattr(core,'zsmooth') else core.flux.SmoothT
-        FX = core.flux.SmoothT
-        smooth = FX(interleave, temporal_threshold=tthr, planes=planes)
+        smooth = interleave.flux.SmoothT(temporal_threshold=tthr, planes=planes)
         smooth = smooth.std.SelectEvery(cycle=3, offsets=1)
 
         diff = core.std.MakeDiff(bzz, smooth, planes=planes)
@@ -5165,8 +5101,7 @@ def SmoothLevels(input, input_low=0, gamma=1.0, input_high=None, output_low=0, o
     elif RGmode == 20:
         RemoveGrain = partial(core.std.Convolution, matrix=[1, 1, 1, 1, 1, 1, 1, 1, 1])
     else:
-        RG = core.zsmooth.RemoveGrain if hasattr(core,'zsmooth') else core.rgvs.RemoveGrain
-        RemoveGrain = partial(RG, mode=[RGmode])
+        RemoveGrain = partial(core.rgvs.RemoveGrain, mode=[RGmode])
 
     ### EXPRESSION
     exprY = f'x {input_low} - {input_high - input_low + (input_high == input_low)} / {1 / gamma} pow {output_high - output_low} * {output_low} +'
@@ -5218,10 +5153,7 @@ def SmoothLevels(input, input_low=0, gamma=1.0, input_high=None, output_low=0, o
     diff = core.std.Expr([limitI, level], expr=[f'x y - {Mfactor} * {neutral[1]} +'])
     process = RemoveGrain(diff)
     if useDB:
-        if hasattr(core, 'neo_f3kdb'):
-          process = process.std.Expr(expr=[f'x {neutral[1]} - {Mfactor} / {neutral[1]} +']).neo_f3kdb.Deband(grainy=0, grainc=0, output_depth=input.format.bits_per_sample)
-        else:
-          process = process.std.Expr(expr=[f'x {neutral[1]} - {Mfactor} / {neutral[1]} +']).f3kdb.Deband(grainy=0, grainc=0, output_depth=input.format.bits_per_sample)
+        process = process.std.Expr(expr=[f'x {neutral[1]} - {Mfactor} / {neutral[1]} +']).f3kdb.Deband(grainy=0, grainc=0, output_depth=input.format.bits_per_sample)
         smth = core.std.MakeDiff(limitI, process)
     else:
         smth = core.std.Expr([limitI, process], expr=[f'x y {neutral[1]} - {Mfactor} / -'])
@@ -5230,10 +5162,7 @@ def SmoothLevels(input, input_low=0, gamma=1.0, input_high=None, output_low=0, o
     diff2 = core.std.Expr([level2, level], expr=[f'x y - {Mfactor} * {neutral[1]} +'])
     process2 = RemoveGrain(diff2)
     if useDB:
-        if hasattr(core, 'neo_f3kdb'):
-          process2 = process2.std.Expr(expr=[f'x {neutral[1]} - {Mfactor} / {neutral[1]} +']).neo_f3kdb.Deband(grainy=0, grainc=0, output_depth=input.format.bits_per_sample)
-        else:
-          process2 = process2.std.Expr(expr=[f'x {neutral[1]} - {Mfactor} / {neutral[1]} +']).f3kdb.Deband(grainy=0, grainc=0, output_depth=input.format.bits_per_sample) 
+        process2 = process2.std.Expr(expr=[f'x {neutral[1]} - {Mfactor} / {neutral[1]} +']).f3kdb.Deband(grainy=0, grainc=0, output_depth=input.format.bits_per_sample)
         smth2 = core.std.MakeDiff(smth, process2)
     else:
         smth2 = core.std.Expr([smth, process2], expr=[f'x y {neutral[1]} - {Mfactor} / -'])
@@ -5669,7 +5598,7 @@ def Toon(input, str=1.0, l_thr=2, u_thr=12, blur=2, depth=32):
 ###
 ################################################################################################
 def LSFmod(input, strength=None, Smode=None, Smethod=None, kernel=11, preblur=None, secure=None, source=None, Szrp=16, Spwr=None, SdmpLo=None, SdmpHi=None, Lmode=None, overshoot=None, undershoot=None,
-           overshoot2=None, undershoot2=None, soft=None, soothe=None, keep=None, edgemode=0, edgemaskHQ=None, ss_x=None, ss_y=None, dest_x=None, dest_y=None, defaults='fast', cuda=False):
+           overshoot2=None, undershoot2=None, soft=None, soothe=None, keep=None, edgemode=0, edgemaskHQ=None, ss_x=None, ss_y=None, dest_x=None, dest_y=None, defaults='fast'):
     if not isinstance(input, vs.VideoNode):
         raise vs.Error('LSFmod: this is not a clip')
 
@@ -5752,8 +5681,7 @@ def LSFmod(input, strength=None, Smode=None, Smethod=None, kernel=11, preblur=No
     elif kernel == 20:
         RemoveGrain = partial(core.std.Convolution, matrix=[1, 1, 1, 1, 1, 1, 1, 1, 1])
     else:
-        RG = core.zsmooth.RemoveGrain if hasattr(core,'zsmooth') else core.rgvs.RemoveGrain
-        RemoveGrain = partial(RG, mode=[kernel])
+        RemoveGrain = partial(core.rgvs.RemoveGrain, mode=[kernel])
 
     if soft == -1:
         soft = math.sqrt(((ss_x + ss_y) / 2 - 1) * 100) * 10
@@ -5780,14 +5708,7 @@ def LSFmod(input, strength=None, Smode=None, Smethod=None, kernel=11, preblur=No
         pre = tmp
     elif preblur >= 3:
         expr = 'x {i} < {peak} x {j} > 0 {peak} x {i} - {peak} {j} {i} - / * - ? ?'.format(i=scale(16, peak), j=scale(75, peak), peak=peak)
-        if cuda:
-          try:
-            dfttest2 = importlib.import_module('dfttest2')
-            pre = core.std.MaskedMerge(dfttest2.DFTTest(tmp, tbsize=1, slocation=[0.0,4.0, 0.2,9.0, 1.0,15.0], backend=dfttest2.Backend.NVRTC), tmp, tmp.std.Expr(expr=[expr]))
-          except ModuleNotFoundError:
-            pre = core.std.MaskedMerge(tmp.dfttest.DFTTest(tbsize=1, slocation=[0.0,4.0, 0.2,9.0, 1.0,15.0]), tmp, tmp.std.Expr(expr=[expr]))
-        else:
-          pre = core.std.MaskedMerge(tmp.dfttest.DFTTest(tbsize=1, slocation=[0.0,4.0, 0.2,9.0, 1.0,15.0]), tmp, tmp.std.Expr(expr=[expr]))
+        pre = core.std.MaskedMerge(tmp.dfttest.DFTTest(tbsize=1, slocation=[0.0,4.0, 0.2,9.0, 1.0,15.0]), tmp, tmp.std.Expr(expr=[expr]))
     else:
         pre = MinBlur(tmp, r=preblur)
 
@@ -6031,20 +5952,12 @@ def KNLMeansCL(
     if clip.format.color_family != vs.YUV:
         raise vs.Error('KNLMeansCL: this wrapper is intended to be used only for YUV format')
 
-    use_cuda = hasattr(core, 'nlm_cuda')
-    subsampled = clip.format.subsampling_w > 0 or clip.format.subsampling_h > 0
-
-    if use_cuda:
-        nlmeans = clip.nlm_cuda.NLMeans
-    else:
-        nlmeans = clip.knlm.KNLMeansCL
-
-    if subsampled:
-        return nlmeans(d=d, a=a, s=s, h=h, wmode=wmode, wref=wref, device_type=device_type, device_id=device_id).knlm.KNLMeansCL(
+    if clip.format.subsampling_w > 0 or clip.format.subsampling_h > 0:
+        return clip.knlm.KNLMeansCL(d=d, a=a, s=s, h=h, wmode=wmode, wref=wref, device_type=device_type, device_id=device_id).knlm.KNLMeansCL(
             d=d, a=a, s=s, h=h, channels='UV', wmode=wmode, wref=wref, device_type=device_type, device_id=device_id
         )
     else:
-        return nlmeans(d=d, a=a, s=s, h=h, channels='YUV', wmode=wmode, wref=wref, device_type=device_type, device_id=device_id)
+        return clip.knlm.KNLMeansCL(d=d, a=a, s=s, h=h, channels='YUV', wmode=wmode, wref=wref, device_type=device_type, device_id=device_id)
 
 
 def Overlay(
