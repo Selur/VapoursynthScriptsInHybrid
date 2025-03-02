@@ -80,8 +80,16 @@ def SpotLess(clip: vs.VideoNode,
       raise ValueError("Spotless: pel must be 1, 2 or 4")
     
     # Add mirrored frames if specified
-    clip = core.std.Reverse(core.std.Trim(clip, 1, radT)) + clip if mStart else clip
-    clip = core.std.Reverse(core.std.Trim(clip, clip.num_frames - radT - 1, clip.num_frames - 2)) + clip if mEnd else clip
+    if mStart or mEnd:
+      head = core.std.Reverse(core.std.Trim(clip, 0, radT - 1)) if mStart else None
+      tail = core.std.Reverse(core.std.Trim(clip, clip.num_frames - radT, clip.num_frames - 1)) if mEnd else None
+      
+      if head and tail:
+          clip = head + clip + tail
+      elif head:
+          clip = head + clip
+      elif tail:
+          clip = clip + tail
     
     thsad2 = thsad2 or thsad
     thsad2 = (thsad + thsad2)/2 if radT>=3 else thsad2
