@@ -25,7 +25,8 @@ def tm(clip="",source_peak="",desat=50,lin=True,show_satmask=False,show_clipped=
     tm = core.std.Expr(c, expr="x  {exposure_bias} * 0.15 x  {exposure_bias} * * 0.05 + * 0.004 + x  {exposure_bias} * 0.15 x  {exposure_bias} * * 0.50 + * 0.06 + / 0.02 0.30 / -  ".format(exposure_bias=exposure_bias),format=vs.RGBS)
     w=((exposure_bias*(0.15*exposure_bias+0.10*0.50)+0.20*0.02)/(exposure_bias*(0.15*exposure_bias+0.50)+0.20*0.30))-0.02/0.30
     tm = core.std.Expr(clips=[tm,c], expr="x  1 {w}  / * ".format(exposure_bias=exposure_bias,w=w),format=vs.RGBS)
-    tm = core.std.Limiter(tm, 0, 1)
+    vszip = hasattr(core,'vszip')
+    tm = core.vszip.Limiter(tm, [0,0,0], [1,1,1]) if vszip else core.std.Limiter(tm, 0, 1)
 
     if lin == True :
         #linearize the tonemapper curve under 100nits
@@ -41,7 +42,7 @@ def tm(clip="",source_peak="",desat=50,lin=True,show_satmask=False,show_clipped=
 
     #value under 100nits after the tone mapping(tm_ldr_value) becomes 0, even tm_ldr_value becomes 0 and then scale all in the 0-1 range fo the mask 
     mask=core.std.Expr(clips=[l], expr="x {ldr_value_mult} * {tm_ldr_value}  - {ldr_value_mult} /".format(ldr_value_mult=ldr_value_mult,tm_ldr_value=tm_ldr_value))
-    mask = core.std.Limiter(mask, 0, 1)
+    mask = core.vszip.Limiter(mask, 0, 1) if vszip else core.std.Limiter(mask, 0, 1)
 
 
     #reduce the saturation blending with grayscale
@@ -65,7 +66,7 @@ def tm(clip="",source_peak="",desat=50,lin=True,show_satmask=False,show_clipped=
     b1=core.std.Expr(clips=[b,scale], expr="x  y *")
 
     c=core.std.ShufflePlanes(clips=[r1,g1,b1], planes=[0,0,0], colorfamily=vs.RGB)
-    c = core.std.Limiter(c, 0, 1)
+    c = core.vszip.Limiter(c, [0,0,0], [1,1,1]) if vszip else core.std.Limiter(c, 0, 1)
 
     if show_satmask == True :
         #show mask

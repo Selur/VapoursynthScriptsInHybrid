@@ -60,7 +60,7 @@ def DeHalo_alpha(
         expr=f'y x - y 0.000001 + / {scale_value(255, 8, bits)} * {scale_value(lowsens, 8, bits)} - y {scale_value(256, 8, bits)} + {scale_value(512, 8, bits)} / {highsens / 100} + *',
     )
     if clp.format.sample_type == vs.FLOAT:
-        so = so.std.Limiter()
+        so = so.vszip.Limiter() if hasattr(core,'vszip') so.std.Limiter()
     lets = core.std.MaskedMerge(halos, clp, so)
     if ss <= 1:
         remove = core.rgvs.Repair(clp, lets, mode=1)
@@ -235,10 +235,11 @@ def FineDehalo(
     # Basic edge detection, thresholding will be applied later
     edges = fallback(mask, AvsPrewitt(src))
 
+    vszip = hasattr(core,'vszip')
     # Keeps only the sharpest edges (line edges)
     strong = edges.std.Expr(expr=f'x {scale_value(thmi, 8, bits)} - {thma - thmi} / 255 *')
     if is_float:
-        strong = strong.std.Limiter()
+        strong = strong.vszip.Limiter() if vszip else strong.std.Limiter()
 
     # Extends them to include the potential halos
     large = mt_expand_multi(strong, sw=rx_i, sh=ry_i)
@@ -252,7 +253,7 @@ def FineDehalo(
     # Includes more edges than previously, but ignores simple details
     light = edges.std.Expr(expr=f'x {scale_value(thlimi, 8, bits)} - {thlima - thlimi} / 255 *')
     if is_float:
-        light = light.std.Limiter()
+        light = light.vszip.Limiter() if vszip else light.std.Limiter()
 
     # To build the exclusion zone, we make grow the edge mask, then shrink it to its original shape.
     # During the growing stage, close adjacent edge masks will join and merge, forming a solid area, which will remain solid even after the shrinking stage.
@@ -264,7 +265,7 @@ def FineDehalo(
     # To avoid this, we amplify and saturate the mask here (actually we could even binarize it).
     shrink = shrink.std.Expr(expr='x 4 *')
     if is_float:
-        shrink = shrink.std.Limiter()
+        shrink = shrink.vszip.Limiter() if vszip else shrink.std.Limiter()
 
     # Mask shrinking
     shrink = mt_inpand_multi(shrink, mode='ellipse', sw=rx_i, sh=ry_i)
@@ -284,18 +285,18 @@ def FineDehalo(
     # Subtracts masks and amplifies the difference to be sure we get 255 on the areas to be processed
     outside = core.std.Expr([large, shr_med], expr='x y - 2 *')
     if is_float:
-        outside = outside.std.Limiter()
+        outside = outside.vszip.Limiter() if vszip else outside.std.Limiter()
 
     # If edge processing is required, adds the edgemask
     if edgeproc > 0:
         outside = core.std.Expr([outside, strong], expr=f'x y {edgeproc * 0.66} * +')
         if is_float:
-            outside = outside.std.Limiter()
+            outside = outside.vszip.Limiter() if vszip else outside.std.Limiter()
 
     # Smooth again and amplify to grow the mask a bit, otherwise the halo parts sticking to the edges could be missed
     outside = outside.std.Convolution(matrix=[1, 1, 1, 1, 1, 1, 1, 1, 1]).std.Expr(expr='x 2 *')
     if is_float:
-        outside = outside.std.Limiter()
+        outside = outside.vszip.Limiter() if vszip else outside.std.Limiter()
 
     # Masking #
 

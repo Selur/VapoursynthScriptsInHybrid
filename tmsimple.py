@@ -22,7 +22,8 @@ def tm(clip="",source_peak="" ) :
     tm = core.std.Expr(c, expr="x  {exposure_bias} * 0.15 x  {exposure_bias} * * 0.05 + * 0.004 + x  {exposure_bias} * 0.15 x  {exposure_bias} * * 0.50 + * 0.06 + / 0.02 0.30 / -  ".format(exposure_bias=exposure_bias),format=vs.RGBS)
     w=((exposure_bias*(0.15*exposure_bias+0.10*0.50)+0.20*0.02)/(exposure_bias*(0.15*exposure_bias+0.50)+0.20*0.30))-0.02/0.30
     tm = core.std.Expr(clips=[tm,c], expr="x  1 {w}  / * ".format(exposure_bias=exposure_bias,w=w),format=vs.RGBS)
-    tm = core.std.Limiter(tm, 0, 1)
+    vszip = hasattr(core,'vszip')
+    tm = core.vszip.Limiter(tm, [0,0,0], [1,1,1]) if vszip else core.std.Limiter(tm, 0, 1)
 
     r=core.std.ShufflePlanes(clips=[a], planes=[0], colorfamily=vs.GRAY)
     g=core.std.ShufflePlanes(clips=[a], planes=[1], colorfamily=vs.GRAY)
@@ -47,14 +48,14 @@ def tm(clip="",source_peak="" ) :
     g2=core.std.Expr(clips=[g,l,l2], expr="x  y /   z * ")
     b2=core.std.Expr(clips=[b,l,l2], expr="x  y /  z *  ")
     mask=l2
-    mask = core.std.Limiter(mask, 0, 1)
+    mask = core.vszip.Limiter(mask, 0, 1) if vszip else core.std.Limiter(mask, 0, 1)
 
     csat=core.std.ShufflePlanes(clips=[r1,g1,b1], planes=[0,0,0], colorfamily=vs.RGB)
 
     c=core.std.ShufflePlanes(clips=[r2,g2,b2], planes=[0,0,0], colorfamily=vs.RGB)
     c2=core.std.MaskedMerge(c, csat, mask)
     c=core.std.Merge(c, c2, 0.5)
-    c = core.std.Limiter(c, 0, 1)
+    c = core.vszip.Limiter(c, [0,0,0], [1,1,1]) if vszip else core.std.Limiter(c, 0, 1)
 
     return c 
 
