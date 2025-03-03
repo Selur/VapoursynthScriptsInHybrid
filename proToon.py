@@ -124,8 +124,12 @@ def proToon(input: vs.VideoNode,
 
     # Apply scaling limit based on pcScale
     if not pcScale:
-        output = core.std.Limiter(output, min=16 * scale // 255, max=235 * scale // 255)
-
+        minV = 16 * scale // 255
+        maxV = max=235 * scale // 255 
+        if (hasattr(core,'vszip')):
+          output = core.vszip.Limiter(output, min=[minV,minV,minV], max=[maxV,maxV,maxV])
+        else:
+          output = core.std.Limiter(output, min=minV, max=maxV)
     return output
 
 
