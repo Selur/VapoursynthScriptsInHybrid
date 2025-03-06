@@ -336,6 +336,7 @@ def MCTemporalDenoise(i, radius=None, pfMode=3, sigma=None, twopass=None, useTTm
 
     if cuda:
       try:
+         import importlib
          dfttest2 = importlib.import_module('dfttest2')
       except ModuleNotFoundError:
         dfttest2 = None
