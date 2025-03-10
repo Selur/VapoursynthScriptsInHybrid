@@ -249,11 +249,11 @@ def SMDegrain(input, tr=2, thSAD=300, thSADC=None, RefineMotion=False, contrasha
         if if0:
             if interlaced:
                 if ifC:
-                    return Weave(ContraSharpening(output, CClip, planes=planes), tff=tff)
+                    return Weave(sharpen.ContraSharpening(output, CClip, planes=planes), tff=tff)
                 else:
                     return Weave(sharpen.LSFmod(output, strength=contrasharp, source=CClip, Lmode=0, soothe=False, defaults='slow'), tff=tff)
             elif ifC:
-                return ContraSharpening(output, CClip, planes=planes)
+                return sharpen.ContraSharpening(output, CClip, planes=planes)
             else:
                 return sharpen.LSFmod(output, strength=contrasharp, source=CClip, Lmode=0, soothe=False, defaults='slow')
         elif interlaced:
