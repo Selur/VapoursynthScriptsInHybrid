@@ -6,6 +6,7 @@ import math
 from typing import Sequence, Union, Optional
 
 import nnedi3_resample
+import sharpen
 
 ################################################################################################
 ###                                                                                          ###
@@ -250,11 +251,11 @@ def SMDegrain(input, tr=2, thSAD=300, thSADC=None, RefineMotion=False, contrasha
                 if ifC:
                     return Weave(ContraSharpening(output, CClip, planes=planes), tff=tff)
                 else:
-                    return Weave(LSFmod(output, strength=contrasharp, source=CClip, Lmode=0, soothe=False, defaults='slow'), tff=tff)
+                    return Weave(sharpen.LSFmod(output, strength=contrasharp, source=CClip, Lmode=0, soothe=False, defaults='slow'), tff=tff)
             elif ifC:
                 return ContraSharpening(output, CClip, planes=planes)
             else:
-                return LSFmod(output, strength=contrasharp, source=CClip, Lmode=0, soothe=False, defaults='slow')
+                return sharpen.LSFmod(output, strength=contrasharp, source=CClip, Lmode=0, soothe=False, defaults='slow')
         elif interlaced:
             return Weave(output, tff=tff)
         else:

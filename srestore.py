@@ -9,6 +9,7 @@ import vapoursynth as vs
 from vsutil import Dither, depth, fallback, get_depth, get_y, join, plane, scale_value
 
 import functools
+import ChangeFPS
 
 core = vs.core
 
@@ -345,7 +346,7 @@ def sRestore(source, frate=None, omode=6, speed=None, mode=2, thresh=16, dclip=N
     last = core.std.Convolution(last, matrix=[1, 1, 1, 1, 1, 1, 1, 1, 1], divisor=9)
 
     ###### final decimation ######
-    return ChangeFPS(last, source.fps_num * numr, source.fps_den * denm)
+    return ChangeFPS.ChangeFPS(last, source.fps_num * numr, source.fps_den * denm)
 
 def sRestoreMUVs(
     source: vs.VideoNode,
@@ -894,7 +895,7 @@ def sRestoreMUVs(
     last = core.std.Splice(last_frames)
 
     ###### final decimation ######
-    return ChangeFPS(last, source.fps_num * numr, source.fps_den * denm)
+    return ChangeFPS.ChangeFPS(last, source.fps_num * numr, source.fps_den * denm)
 
 
 def GetPlane(clip, plane=None):
@@ -920,21 +921,7 @@ def GetPlane(clip, plane=None):
     
 def cround(x: float) -> int:
     return math.floor(x + 0.5) if x > 0 else math.ceil(x - 0.5)
-    
-def ChangeFPS(clip: vs.VideoNode, fpsnum: int, fpsden: int = 1) -> vs.VideoNode:
-    if not isinstance(clip, vs.VideoNode):
-        raise vs.Error('ChangeFPS: this is not a clip')
-
-    factor = (fpsnum / fpsden) * (clip.fps_den / clip.fps_num)
-
-    def frame_adjuster(n: int) -> vs.VideoNode:
-        real_n = math.floor(n / factor)
-        one_frame_clip = clip[real_n] * (len(clip) + 100)
-        return one_frame_clip
-
-    attribute_clip = clip.std.BlankClip(length=math.floor(len(clip) * factor), fpsnum=fpsnum, fpsden=fpsden)
-    return attribute_clip.std.FrameEval(eval=frame_adjuster)
-    
+        
 def cround(x: float) -> int:
     return math.floor(x + 0.5) if x > 0 else math.ceil(x - 0.5)
     
