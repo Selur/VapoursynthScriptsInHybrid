@@ -60,7 +60,7 @@ def DeHalo_alpha(
         expr=f'y x - y 0.000001 + / {scale_value(255, 8, bits)} * {scale_value(lowsens, 8, bits)} - y {scale_value(256, 8, bits)} + {scale_value(512, 8, bits)} / {highsens / 100} + *',
     )
     if clp.format.sample_type == vs.FLOAT:
-        so = so.vszip.Limiter() if hasattr(core,'vszip') so.std.Limiter()
+        so = so.vszip.Limiter() if hasattr(core,'vszip') else so.std.Limiter()
     lets = core.std.MaskedMerge(halos, clp, so)
     if ss <= 1:
         remove = core.rgvs.Repair(clp, lets, mode=1)
