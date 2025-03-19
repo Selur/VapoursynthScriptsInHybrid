@@ -1627,3 +1627,41 @@ def mt_clamp(
         planes = [planes]
 
     return core.std.Expr([clip, bright_limit, dark_limit], expr=[f'x y {overshoot} + min z {undershoot} - max' if i in planes else '' for i in plane_range])
+    
+    
+# Taken from havsfunc
+def KNLMeansCL(
+    clip: vs.VideoNode,
+    d: Optional[int] = None,
+    a: Optional[int] = None,
+    s: Optional[int] = None,
+    h: Optional[float] = None,
+    wmode: Optional[int] = None,
+    wref: Optional[float] = None,
+    device_type: Optional[str] = None,
+    device_id: Optional[int] = None,
+) -> vs.VideoNode:
+    if not isinstance(clip, vs.VideoNode):
+        raise vs.Error('KNLMeansCL: this is not a clip')
+
+    if clip.format.color_family != vs.YUV:
+        raise vs.Error('KNLMeansCL: this wrapper is intended to be used only for YUV format')
+
+    use_cuda = hasattr(core, 'nlm_cuda')
+    subsampled = clip.format.subsampling_w > 0 or clip.format.subsampling_h > 0
+
+    if use_cuda:
+        nlmeans = clip.nlm_cuda.NLMeans
+        if subsampled:
+          clip = nlmeans(d=d, a=a, s=s, h=h, channels='Y', wmode=wmode, wref=wref, device_id=device_id)
+          return nlmeans(d=d, a=a, s=s, h=h, channels='UV', wmode=wmode, wref=wref, device_id=device_id)
+        else:
+          return nlmeans(d=d, a=a, s=s, h=h, channels='YUV', wmode=wmode, wref=wref, device_type=device_type, device_id=device_id)
+    else:
+      nlmeans = clip.knlm.KNLMeansCL
+      if subsampled:
+          clip = nlmeans(d=d, a=a, s=s, h=h, channels='Y', wmode=wmode, wref=wref, device_type=device_type, device_id=device_id)
+          return nlmeans(d=d, a=a, s=s, h=h, channels='UV', wmode=wmode, wref=wref, device_type=device_type, device_id=device_id)
+      else:
+          return nlmeans(d=d, a=a, s=s, h=h, channels='YUV', wmode=wmode, wref=wref, device_type=device_type, device_id=device_id)
+        

@@ -779,7 +779,15 @@ def TemporalDegrain2(clip, degrainTR=1, degrainPlane=4, grainLevel=2, grainLevel
     if postFFT == 3:
         dnWindow = core.dfttest.DFTTest(noiseWindow, sigma=postSigma*4, tbsize=postTD, planes=fPlane, sbsize=postBlkSize, sosize=postBlkSize*9/12)
     elif postFFT == 4:
-        dnWindow = haf.KNLMeansCL(noiseWindow, d=postTR, a=2, h=postSigma/2, device_id=knlDevId) if ChromaNoise else noiseWindow.knlm.KNLMeansCL(d=postTR, a=2, h=postSigma/2, device_id=knlDevId)
+      if ChromaNoise:
+        dnWindow = KNLMeansCL(noiseWindow, d=postTR, a=2, h=postSigma/2, device_id=knlDevId)
+      else:
+        use_cuda = hasattr(core, 'nlm_cuda')
+        if use_cuda:
+          nlmeans = clip.nlm_cuda.NLMeans
+        else:
+          nlmeans = clip.knlm.KNLMeansCL
+        dnWindow = nlmeans(noiseWindow, d=postTR, a=2, h=postSigma/2, device_id=knlDevId)
     elif postFFT > 0:
         if postFFT == 1 and hasattr(core, 'neo_fft3d'):
           dnWindow = core.neo_fft3d.FFT3D(noiseWindow, sigma=postSigma, planes=fPlane, bt=postTD, ncpu=fftThreads, bw=postBlkSize, bh=postBlkSize)
@@ -1113,3 +1121,39 @@ def MinBlur(clp, r=1, planes=None):
     return core.std.Expr([clp, RG11, RG4], expr=[expr if i in planes else '' for i in range(clp.format.num_planes)])
 
 
+# Taken from havsfunc
+def KNLMeansCL(
+    clip: vs.VideoNode,
+    d: Optional[int] = None,
+    a: Optional[int] = None,
+    s: Optional[int] = None,
+    h: Optional[float] = None,
+    wmode: Optional[int] = None,
+    wref: Optional[float] = None,
+    device_type: Optional[str] = None,
+    device_id: Optional[int] = None,
+) -> vs.VideoNode:
+    if not isinstance(clip, vs.VideoNode):
+        raise vs.Error('KNLMeansCL: this is not a clip')
+
+    if clip.format.color_family != vs.YUV:
+        raise vs.Error('KNLMeansCL: this wrapper is intended to be used only for YUV format')
+
+    use_cuda = hasattr(core, 'nlm_cuda')
+    subsampled = clip.format.subsampling_w > 0 or clip.format.subsampling_h > 0
+
+    if use_cuda:
+        nlmeans = clip.nlm_cuda.NLMeans
+        if subsampled:
+          clip = nlmeans(d=d, a=a, s=s, h=h, channels='Y', wmode=wmode, wref=wref, device_id=device_id)
+          return nlmeans(d=d, a=a, s=s, h=h, channels='UV', wmode=wmode, wref=wref, device_id=device_id)
+        else:
+          return nlmeans(d=d, a=a, s=s, h=h, channels='YUV', wmode=wmode, wref=wref, device_type=device_type, device_id=device_id)
+    else:
+      nlmeans = clip.knlm.KNLMeansCL
+      if subsampled:
+          clip = nlmeans(d=d, a=a, s=s, h=h, channels='Y', wmode=wmode, wref=wref, device_type=device_type, device_id=device_id)
+          return nlmeans(d=d, a=a, s=s, h=h, channels='UV', wmode=wmode, wref=wref, device_type=device_type, device_id=device_id)
+      else:
+          return nlmeans(d=d, a=a, s=s, h=h, channels='YUV', wmode=wmode, wref=wref, device_type=device_type, device_id=device_id)
+        
