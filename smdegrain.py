@@ -275,6 +275,18 @@ def SMDegrain(input, tr=2, thSAD=300, thSADC=None, RefineMotion=False, contrasha
 
 # Helpers
 
+def Padding(clip: vs.VideoNode, left: int = 0, right: int = 0, top: int = 0, bottom: int = 0) -> vs.VideoNode:
+    if not isinstance(clip, vs.VideoNode):
+        raise vs.Error('Padding: this is not a clip')
+
+    if left < 0 or right < 0 or top < 0 or bottom < 0:
+        raise vs.Error('Padding: border size to pad must not be negative')
+
+    width = clip.width + left + right
+    height = clip.height + top + bottom
+
+    return clip.resize.Point(width, height, src_left=-left, src_top=-top, src_width=width, src_height=height)
+
 def ContraSharpening(
     denoised: vs.VideoNode, original: vs.VideoNode, radius: int = 1, rep: int = 1, planes: Optional[Union[int, Sequence[int]]] = None
 ) -> vs.VideoNode:
@@ -299,7 +311,7 @@ def ContraSharpening(
     if denoised.format.id != original.format.id:
         raise vs.Error('ContraSharpening: clips must have the same format')
 
-    neutral = 1 << (get_depth(denoised) - 1)
+    neutral = (1 << denoised.format.bits_per_sample) - 1
 
     plane_range = range(denoised.format.num_planes)
 
