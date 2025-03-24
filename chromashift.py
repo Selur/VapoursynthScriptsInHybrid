@@ -60,6 +60,50 @@ def ChromaShiftSP (clip, X=0.0, Y=0.0, shiftU=True, shiftV=True, jeh=True):
     merge = core.std.ShufflePlanes(clips=[Yplane, Uplane, shift], planes=[0, 0, 2], colorfamily=vs.YUV)
   return merge
 
+def ChromaShiftF(clip: vs.VideoNode, interlaced: int = 0, frame_shift: int = 0) -> vs.VideoNode:
+    """
+    ChromaShiftF - Shift chroma frames in an interlaced or progressive video.
 
+    Parameters:
+        clip (vs.VideoNode): Input clip.
+        interlaced (int): 
+            0  = Progressive (default, no field separation).
+            1  = Interlaced (Top Field First).
+            -1 = Interlaced (Bottom Field First).
+        frame_shift (int): Number of frames to shift chroma (-3 to 3, default: 0).
 
+    Returns:
+        vs.VideoNode: Processed clip with adjusted chroma alignment.
+    """
 
+    if not (-3 <= frame_shift <= 3):
+        raise ValueError("frame_shift must be between -3 and 3.")
+
+    # Get subsampling information
+    is_yuv422_or_yuv444 = clip.format.subsampling_h == 0  # True for 4:2:2 or 4:4:4
+
+    # Separate fields only if interlaced and necessary for chroma format
+    if interlaced and is_yuv422_or_yuv444:
+        clip = core.std.SeparateFields(clip, tff=(interlaced > 0))
+
+    # Split Y, U, and V planes
+    clip_y, clip_u, clip_v = clip.std.SplitPlanes()
+
+    # Shift chroma frames forward or backward
+    if frame_shift > 0:
+        clip_u_shifted = clip_u.std.Trim(frame_shift, clip_u.num_frames - 1) + clip_u[-frame_shift]
+        clip_v_shifted = clip_v.std.Trim(frame_shift, clip_v.num_frames - 1) + clip_v[-frame_shift]
+    elif frame_shift < 0:
+        clip_u_shifted = clip_u[0] * abs(frame_shift) + clip_u.std.Trim(0, clip_u.num_frames + frame_shift - 1)
+        clip_v_shifted = clip_v[0] * abs(frame_shift) + clip_v.std.Trim(0, clip_v.num_frames + frame_shift - 1)
+    else:
+        clip_u_shifted, clip_v_shifted = clip_u, clip_v
+
+    # Merge back Y, shifted U, and shifted V
+    shifted_clip = core.std.ShufflePlanes([clip_y, clip_u_shifted, clip_v_shifted], planes=[0, 0, 0], colorfamily=vs.YUV)
+
+    # Re-weave fields if interlaced and fields were separated
+    if interlaced and is_yuv422_or_yuv444:
+        shifted_clip = core.std.DoubleWeave(shifted_clip, tff=(interlaced > 0)).std.SelectEvery(2, 0)
+
+    return shifted_clip
