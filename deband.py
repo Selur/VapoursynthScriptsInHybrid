@@ -154,8 +154,10 @@ def GradFun3(src, thr=None, radius=None, elast=None, mask=None, mode=None, ampo=
         r2 = max(radius * 2 / 3, 3.0)
         r1 = max(radius * 1 / 3, 2.0)
         last = src
-        last = core.bilateral.Bilateral(last, ref=ref, sigmaS=r4 / 2, sigmaR=thr_1 / 255,
-                                        planes=planes, algorithm=0)
+        if hasattr(core,'vszip'):
+          last = core.vszip.Bilateral(last, ref=ref, sigmaS=r4 / 2, sigmaR=thr_1 / 255, planes=planes, algorithm=0)
+        else:
+          last = core.bilateral.Bilateral(last, ref=ref, sigmaS=r4 / 2, sigmaR=thr_1 / 255, planes=planes, algorithm=0)
         # NOTE: I get much better results if I just call Bilateral once
         #last = core.bilateral.Bilateral(last, ref=ref, sigmaS=r2 / 2, sigmaR=thr_2 / 255,
         #                                planes=planes, algorithm=0)
@@ -370,7 +372,7 @@ def GradFun3(src, thr=None, radius=None, elast=None, mask=None, mode=None, ampo=
 ##     de-ringing
 ##     de-noising
 ##     sharpening
-##     combining high precision source with low precision filtering: mvf.LimitFilter(src, flt, thr=1.0, elast=2.0)
+##     combining high precision source with low precision filtering: LimitFilter(src, flt, thr=1.0, elast=2.0)
 ################################################################################################################################
 ## There are 2 implementations, default one with std.Expr, the other with std.Lut.
 ## The Expr version supports all mode, while the Lut version doesn't support float input and ref clip.
@@ -764,7 +766,7 @@ def _GF3_smoothgrad_multistage_3(src: vs.VideoNode, radius: int, thr: float,
     ref = SmoothGrad(src, radius=radius // 3, thr=thr * 0.8, elast=elast)
     last = BoxFilter(src, radius=radius, planes=planes)
     last = BoxFilter(last, radius=radius, planes=planes)
-    last = mvf.LimitFilter(last, src, thr=thr * 0.6, elast=elast, ref=ref, planes=planes)
+    last = LimitFilter(last, src, thr=thr * 0.6, elast=elast, ref=ref, planes=planes)
     return last
 
 
@@ -774,7 +776,7 @@ def _GF3_dfttest(src: vs.VideoNode, ref: vs.VideoNode, radius: int,
     hrad = max(radius * 3 // 4, 1)
     last = core.dfttest.DFTTest(src, sigma=hrad * thr * thr * 32, sbsize=hrad * 4,
                                 sosize=hrad * 3, tbsize=1, planes=planes)
-    last = mvf.LimitFilter(last, ref, thr=thr, elast=elast, planes=planes)
+    last = LimitFilter(last, ref, thr=thr, elast=elast, planes=planes)
 
     return last
 
@@ -784,7 +786,7 @@ def _GF3_bilateral_multistage(src: vs.VideoNode, ref: vs.VideoNode, radius: int,
                               ) -> vs.VideoNode:
     last = core.bilateral.Bilateral(src, ref=ref, sigmaS=radius / 2, sigmaR=thr / 255, planes=planes, algorithm=0)
 
-    last = mvf.LimitFilter(last, src, thr=thr, elast=elast, planes=planes)
+    last = LimitFilter(last, src, thr=thr, elast=elast, planes=planes)
 
     return last
 
