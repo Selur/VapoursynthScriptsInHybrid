@@ -1,6 +1,6 @@
 # ===============================================================================
 # ===============================================================================
-#            CPreview 2024-10-04
+#            CPreview 2025-03-25
 # ===============================================================================
 # ===============================================================================
 
@@ -13,37 +13,36 @@ core = vs.core
 
 def CPreview(Source, CL, CR, CT, CB, Frame=False, Time=False, Type=1):
 
-    if not isinstance(Source, vs.VideoNode): raise vs.Error('CPreview: Source must be a video')
+    CPE = "\nCPreview:\n"
+    if not isinstance(Source, vs.VideoNode): raise vs.Error(f'{CPE}Source must be a video')
+    if (Source.format is None): raise vs.Error(f'{CPE}Only video with a constant format is supported')
 
     Source_Width = Source.width
     Source_Height = Source.height
-    F_Source_Width = float(Source_Width)
-    F_Source_Height = float(Source_Height)
     Source_Bits = Source.format.bits_per_sample
-    Scale = 2 ** (Source_Bits - 8)
+    Source_ID = Source.format.id
+    IsSubPlugin = hasattr(core, "sub")
     CropLine = P_Line(Source_Width, Source_Height) if (1 <= Type <= 3) else Q_Line(Source_Width, Source_Height)
     IsHalfFloat = Source.format.name.endswith("H")
-    IsFloat = Source.format.name.endswith("S")
+    IsFullFloat = Source.format.name.endswith("S")
+    Scale = 1 if (Source_Bits == 8) else 2 ** (Source_Bits - 8) if not (IsFullFloat or IsHalfFloat) else 1 / 256
     IsRGBSource = (Source.format.color_family == vs.RGB)
     IsGraySource = (Source.format.color_family == vs.GRAY)
     IsChromaSS = \
       not ((Source.format.subsampling_w == 0 == Source.format.subsampling_h) or IsRGBSource or IsGraySource)
 
     if (Source_Width == 0) or (Source_Height == 0):
-        raise vs.Error('CPreview: Only video with a constant width and height is supported')
+        raise vs.Error(f'{CPE}Only video with a constant width and height is supported')
     if not ((isinstance(CL, bool) is False) and isinstance(CL, int) and (CL >= 0)):
-        raise vs.Error(f'CPreview: Left cropping must be zero or a positive integer')
+        raise vs.Error(f'{CPE}Left cropping must be zero or a positive integer')
     if not ((isinstance(CR, bool) is False) and isinstance(CR, int) and (CR >= 0)):
-        raise vs.Error(f'CPreview: Right cropping must be zero or a positive integer')
+        raise vs.Error(f'{CPE}Right cropping must be zero or a positive integer')
     if not ((isinstance(CT, bool) is False) and isinstance(CT, int) and (CT >= 0)):
-        raise vs.Error(f'CPreview: Top cropping must be zero or a positive integer')
+        raise vs.Error(f'{CPE}Top cropping must be zero or a positive integer')
     if not ((isinstance(CB, bool) is False) and isinstance(CB, int) and (CB >= 0)):
-        raise vs.Error(f'CPreview: Bottom cropping must be zero or a positive integer')
+        raise vs.Error(f'{CPE}Bottom cropping must be zero or a positive integer')
     if not ((isinstance(CropLine, bool) is False) and isinstance(CropLine, int) and (CropLine >= 1)):
-        raise vs.Error('CPreview: The LineThickness functions must return an integer greater than or equal to 1')
-    if (1 <= Type <= 3) and IsHalfFloat:
-        raise vs.Error('CPreview: The cropping previews beginning with "p" cannot be used with ' + \
-          f'{Source.format.name} as half float formats are not supported by the VapourSynth Text function')
+        raise vs.Error(f'{CPE}The LineThickness functions must return an integer greater than or equal to 1')
 
     PropNum = Source.get_frame(0).props.get('_SARNum', 0)
     PropDen = Source.get_frame(0).props.get('_SARDen', 0)
@@ -63,65 +62,80 @@ def CPreview(Source, CL, CR, CT, CB, Frame=False, Time=False, Type=1):
     Source444 = Source if not (IsChromaSS or IsHalfFloat) else \
       core.resize.Bicubic(Source, format=vs.RGBS) if IsRGBSource and IsHalfFloat else \
       core.resize.Bicubic(Source, format=vs.GRAYS) if IsGraySource and IsHalfFloat else \
-      core.resize.Bicubic(Source, format=vs.YUV444PS) if IsHalfFloat or (IsFloat and IsChromaSS) else \
+      core.resize.Bicubic(Source, format=vs.YUV444PS) if IsHalfFloat or IsFullFloat else \
       eval("core.resize.Bicubic(Source, format=vs.YUV444P" + str(Source_Bits) + ")")
 
     Cropped444 = core.std.Crop(Source444, CL, CR, CT, CB)
 
 # -------------------------------------------------------------------------------
 
-    SubText = "" if (4 <= Type <= 6) else f'Source Resolution\n{Source_Width} x {Source_Height}' + \
-      CR_PicMod(Source_Width, Source_Height) + \
-      '\n\nCropping\nLeft ' + str(CL) + ', Right ' + str(CR) + ', Top ' + str(CT) + ', Bottom ' + str(CB) + \
-      '\n\nCropped Resolution\n' + f'{Cropped444.width} x {Cropped444.height}' + \
+    DLB = ('\n \n' if IsSubPlugin else '\n\n')
+    LB = ('' if not (Frame or Time) or not IsSubPlugin else ' \n' * 5 if Frame and Time else ' \n' * 3)
+
+    SubText = '' if not (1 <= Type <= 3) else f'{LB}Source Resolution\n{Source_Width} x {Source_Height}' + \
+      CR_PicMod(Source_Width, Source_Height) + f'{DLB}Crop ({CL},  {CR},  {CT},  {CB})' + \
+      f'{DLB}Cropped Resolution\n{Cropped444.width} x {Cropped444.height}' + \
       CR_PicMod(Cropped_Width, Cropped_Height) + \
-      '\n\nFrame Properties SAR  ' + (f'{PropNum}:{PropDen}' if (PropNum > 0 < PropDen) else 'None')
+      f'{DLB}Frame Properties SAR   ' + (f'{PropNum}:{PropDen}' if (PropNum > 0 < PropDen) else 'None')
+
+    if IsSubPlugin:
+
+        Size = 0 if not (1 <= Type <= 3) else min(Source_Width * 0.0215, Source_Height * \
+          (0.0345 if (Source_Height < 300) else 0.036 if (Source_Height < 400) else \
+          0.0335 if (Source_Height < 500) else 0.0342 if (Source_Height < 600) else \
+          0.0335 if (Source_Height < 1100) else 0.033 if (Source_Height < 1600) else \
+          0.032 if (Source_Height < 1800) else 0.031 if (Source_Height < 2180) else 0.03))
+
+        Style = "" if not (1 <= Type <= 3) else "Arial," + str(Size) + \
+          ",&H00E0FFFF" + ",&H00E0FFFF" + ",&H00000000,&H00000000,1,0,0,0,100,100,0,0,0,1,0,5,0,0,0,1"
 
 # -------------------------------------------------------------------------------
 
     Black = RGBColor(Source444)
-    BClip = core.std.BlankClip(Cropped444, color=Black)
+    BlnkClip = core.std.BlankClip(Cropped444, color=Black)
 
     if (Type == 1) or (Type == 4):
 
-        OClip = BClip.std.AddBorders(CLineL, CLineR, CLineT, CLineB, color=RGBColor(Source444,'FFFF00'))
-        OClip = OClip.std.AddBorders(CL-CLineL, CR-CLineR, CT-CLineT, CB-CLineB, color=Black)
-        MClip = BClip.std.AddBorders(CLineL, CLineR, CLineT, CLineB, color=RGBColor(Source444,'E4E4E4'))
-        MClip = MClip.std.AddBorders(CL-CLineL, CR-CLineR, CT-CLineT, CB-CLineB, color=Black)
+        OlayClip = BlnkClip.std.AddBorders(CLineL, CLineR, CLineT, CLineB, color=RGBColor(Source444,'FFFF00'))
+        OlayClip = OlayClip.std.AddBorders(CL-CLineL, CR-CLineR, CT-CLineT, CB-CLineB, color=Black)
+        MaskClip = BlnkClip.std.AddBorders(CLineL, CLineR, CLineT, CLineB, color=RGBColor(Source444,'E4E4E4'))
+        MaskClip = MaskClip.std.AddBorders(CL-CLineL, CR-CLineR, CT-CLineT, CB-CLineB, color=Black)
 
     elif (Type == 2) or (Type == 5):
 
-        OClip = BClip.std.AddBorders(CL, CR, CT, CB, color=RGBColor(Source444,'FFFF00'))
-        MClip = BClip.std.AddBorders(CL, CR, CT, CB, color=RGBColor(Source444,'4B4B4B'))
+        OlayClip = BlnkClip.std.AddBorders(CL, CR, CT, CB, color=RGBColor(Source444,'FFFF00'))
+        MaskClip = BlnkClip.std.AddBorders(CL, CR, CT, CB, color=RGBColor(Source444,'4B4B4B'))
 
     else:
 
-        OClip = Cropped444.std.AddBorders(CL, CR, CT, CB, color=Black)
-        MClip = core.std.BlankClip(Cropped444, color=RGBColor(Source444,'FFFFFF'))
-        MClip = MClip.std.AddBorders(CL, CR, CT, CB, color=Black)
+        OlayClip = Cropped444.std.AddBorders(CL, CR, CT, CB, color=Black)
+        MaskClip = core.std.BlankClip(Cropped444, color=RGBColor(Source444,'FFFFFF'))
+        MaskClip = MaskClip.std.AddBorders(CL, CR, CT, CB, color=Black)
 
     Planes = [0, 1, 2] if IsRGBSource else 0
-    FirstPlane = False if IsRGBSource else True
+    FirstPlane = not IsRGBSource
 
-    MClip = MClip if (PropRange == 0) or ((PropRange == -1) and IsRGBSource) or IsFloat or IsHalfFloat else \
-      MClip.std.Levels(min_in=16*Scale, max_in=235*Scale, min_out=0, max_out=255*Scale, planes=Planes)
+    MaskClip = MaskClip \
+      if (PropRange == 0) or ((PropRange == -1) and (IsRGBSource or IsFullFloat or IsHalfFloat)) else \
+      MaskClip.std.Levels(min_in=16*Scale, max_in=235*Scale, min_out=0, max_out=255*Scale, planes=Planes)
+
+    CPreviewVideo = core.std.MaskedMerge(Source444, OlayClip, mask=MaskClip, first_plane=FirstPlane) \
+      if (1 <= Type <= 2) or (4 <= Type <= 5) else \
+      core.std.MaskedMerge(core.std.Invert(Source444), OlayClip, mask=MaskClip, first_plane=FirstPlane)
 
 # -------------------------------------------------------------------------------
 
-    CPreviewVideo = core.std.MaskedMerge(Source444, OClip, mask=MClip, first_plane=FirstPlane) \
-      if (1 <= Type <= 2) or (4 <= Type <= 5) else \
-      core.std.MaskedMerge(core.std.Invert(Source444), OClip, mask=MClip, first_plane=FirstPlane)
-
-    CPreviewVideo = CPreviewVideo if ((Type == 1) or (Type == 4) or not IsChromaSS) and not IsHalfFloat else \
-      core.resize.Bicubic(CPreviewVideo, format=vs.RGBH) if IsRGBSource else \
-      core.resize.Bicubic(CPreviewVideo, format=vs.GRAYH) if IsGraySource else \
-      core.resize.Bicubic(CPreviewVideo, format=vs.YUV444PH) if (Type == 1) or (Type == 4) else \
-      core.resize.Bicubic(CPreviewVideo, format=Source.format.id, chromaloc=PropChroma)
-
-    CPreviewVideo = CPreviewVideo if (Frame or Time) or (4 <= Type <= 6) else \
+    CPreviewVideo = (CPreviewVideo if not (1 <= Type <= 3) else \
+      core.sub.Subtitle(CPreviewVideo, SubText, style=Style, linespacing=3)) if IsSubPlugin else \
+      CPreviewVideo if (Frame or Time) or not (1 <= Type <= 3) else \
       core.text.Text(CPreviewVideo, SubText, alignment=5)
 
-    return CPreviewVideo if not (Frame or Time) else CP_Position(CPreviewVideo, Frame, Time, SubText)
+    CPreviewVideo = CPreviewVideo if not (Frame or Time) else \
+      CP_Position(CPreviewVideo, Frame, Time, Type, SubText)
+
+    return (CPreviewVideo if not IsHalfFloat else core.resize.Bicubic(CPreviewVideo, format=vs.YUV444PH)) \
+      if (Type == 1) or (Type == 4) or not IsChromaSS else \
+      core.resize.Bicubic(CPreviewVideo, format=Source_ID, chromaloc=PropChroma)
 
 # ===============================================================================
 # ===============================================================================
@@ -207,7 +221,8 @@ def Crop(Source, CL, CR, CT, CB): return core.std.Crop(Source, CL, CR, CT, CB)
 
 def RGBColor(clip, color=None, matrix=None, range=None):
 
-    if not isinstance(clip, vs.VideoNode): raise vs.Error('CPreview (RGBColor): clip must be a video')
+    CPE = "\nCPreview (RGBColor):\n"
+    if not isinstance(clip, vs.VideoNode): raise vs.Error(f'{CPE}clip must be a video')
 
     PropMatrix = clip.get_frame(0).props.get("_Matrix", -1)
     PropRange = clip.get_frame(0).props.get("_ColorRange", -1)
@@ -215,25 +230,22 @@ def RGBColor(clip, color=None, matrix=None, range=None):
 # -------------------------------------------------------------------------------
 
     if not ((-1 <= PropMatrix <= 2) or (4 <= PropMatrix <= 10)):
-        raise vs.Error('CPreview (RGBColor): Video has an unsupported value ' + \
-          f'({PropMatrix}) for "_Matrix" in frame properties')
+        raise vs.Error(f'{CPE}Video has an unsupported value ({PropMatrix}) for "_Matrix" in frame properties')
     if not (-1 <= PropRange <= 1):
-        raise vs.Error('CPreview (RGBColor): Video has an unsupported value ' + \
+        raise vs.Error(f'{CPE}Video has an unsupported value ' + \
           f'({PropRange}) for "_ColorRange" in frame properties')
-    if (clip.format.name).endswith("H"):
-        raise vs.Error(f'CPreview (RGBColor): {clip.format.name} is not supported')
+    if (clip.format.name).endswith("H"): raise vs.Error(f'{CPE}{clip.format.name} is not supported')
     if not ((color is None) or isinstance(color, str)):
-        raise vs.Error('CPreview (RGBColor): "color" must be a string, for example "darkblue" or "00008B"')
+        raise vs.Error(f'{CPE}color must be a string, for example "darkblue" or "00008B"')
     if not ((matrix is None) or isinstance(matrix, str) or \
       (isinstance(matrix, int) and (isinstance(matrix, bool) is False))):
-        raise vs.Error('CPreview (RGBColor): matrix must be an integer or string')
+        raise vs.Error(f'{CPE}matrix must be an integer or string')
     if (matrix is not None) and (clip.format.color_family == vs.RGB):
-        raise vs.Error('CPreview (RGBColor): A matrix cannot be specified for an RGB source')
+        raise vs.Error(f'{CPE}A matrix cannot be specified for an RGB source')
     if not ((range is None) or (isinstance(range, str) and \
       ((range.lower().strip() == 'full') or (range.lower().strip() == 'limited') or \
       (range.lower().strip() == 'f') or (range.lower().strip() == 'l')))):
-        raise vs.Error('CPreview (RGBColor): ' + \
-          'range must be "full" or "f", or "limited" or "l" (not case sensitive)')
+        raise vs.Error(f'{CPE}range must be "full" or "f", or "limited" or "l" (not case sensitive)')
 
 # -------------------------------------------------------------------------------
 #            Color
@@ -408,7 +420,7 @@ def RGBColor(clip, color=None, matrix=None, range=None):
               'grey90'               : 'E4E4E4'}
 
     if (Colors.get(color) is None) and (color.upper() not in Colors.values()):
-        raise vs.Error('CPreview (RGBColor): Invalid color string specified')
+        raise vs.Error(f'{CPE}Invalid color string specified')
 
     if (Colors.get(color) is not None):
         v0, v1, v2 = tuple(int(Colors.get(color)[i : i + 2], 16) for i in (0, 2, 4))
@@ -433,13 +445,12 @@ def RGBColor(clip, color=None, matrix=None, range=None):
           7 if (matrix == '240m') else 8 if (matrix == 'ycgco') else \
           9 if (matrix == '2020ncl') else 10 if (matrix == '2020cl') else -1
 
-        if (matrix is not None) and (MatrixNum == -1):
-            raise vs.Error('CPreview (RGBColor): Unsupported matrix specified')
+        if (matrix is not None) and (MatrixNum == -1): raise vs.Error(f'{CPE}Unsupported matrix specified')
 
         PropMatrix = None if (PropMatrix == -1) or (PropMatrix == 2) else PropMatrix
 
         if (matrix is not None) and (PropMatrix is not None) and (MatrixNum != PropMatrix):
-            raise vs.Error(f'CPreview (RGBColor): The value for "_Matrix" ({PropMatrix}) ' + \
+            raise vs.Error(f'{CPE}The value for "_Matrix" ({PropMatrix}) ' + \
               'in frame properties doesn\'t match the specified matrix')
 
         MatrixNum = matrix if (matrix is not None) else \
@@ -460,7 +471,7 @@ def RGBColor(clip, color=None, matrix=None, range=None):
     PropRangeStr = "limited" if (PropRange == 1) else "full" if (PropRange == 0) else None
 
     if (range is not None) and (PropRangeStr is not None) and (range != PropRangeStr):
-        raise vs.Error(f'CPreview (RGBColor): The value for "_ColorRange" ({PropRange}) ' + \
+        raise vs.Error(f'{CPE}The value for "_ColorRange" ({PropRange}) ' + \
           'in frame properties doesn\'t match the specified range')
 
     range = PropRangeStr if (PropRangeStr is not None) else range
@@ -496,22 +507,49 @@ def CR_PicMod(W, H):
 # ===============================================================================
 # ===============================================================================
 
-def CP_Position(Source, Frame, Time, SubText=""):
+def CP_Position(Source, Frame, Time, Type=4, SubText=""):
 
-    if (Frame or Time) and Source.format.name.endswith("H"):
-        raise vs.Error('CPreview: The Cropf, Cropt & Cropp functions cannot be used with ' + \
-          f'{Source.format.name} as half float formats are not supported by the VapourSynth Text function')
-
-    return core.std.FrameEval(Source, \
-      partial(CP_Pos, Source=Source, Frame=Frame, Time=Time, SubText=SubText))
-
-# ---------------------------------------
-
-def CP_Pos(n, Source, Frame, Time, SubText):
-
+    Source_Width = Source.width
+    Source_Height = Source.height
+    Source_ID = Source.format.id
     FRateNum = Source.fps.numerator
     FRateDen = Source.fps.denominator
-    Time = Time if (FRateNum > 0 < FRateDen) else False
+    IsHalfFloat = Source.format.name.endswith("H")
+    Time = Time and (FRateNum > 0 < FRateDen)
+    IsSubPlugin = hasattr(core, "sub")
+
+    Float32 = None if not IsHalfFloat else \
+      core.query_video_format(Source.format.color_family, 1, 32, \
+      Source.format.subsampling_w, Source.format.subsampling_h) \
+      if (vs.__api_version__.api_major >= 4) else \
+      core.register_format(Source.format.color_family, 1, 32, \
+      Source.format.subsampling_w, Source.format.subsampling_h)
+
+    Source = Source if not IsHalfFloat else core.resize.Bicubic(Source, format=Float32)
+
+    Size = 0 if not IsSubPlugin else min(Source_Width * 0.0215, Source_Height * \
+      (0.0345 if (Source_Height < 300) else 0.036 if (Source_Height < 400) else \
+      0.0335 if (Source_Height < 500) else 0.0342 if (Source_Height < 600) else \
+      0.0335 if (Source_Height < 1100) else 0.033 if (Source_Height < 1600) else \
+      0.032 if (Source_Height < 1800) else 0.031 if (Source_Height < 2180) else 0.03))
+
+    Size = Size if (1 <= Type <= 3) and IsSubPlugin else max(14, Size)
+
+    Style = "" if not IsSubPlugin else "Arial," + str(Size) + \
+      ",&H00FFFFF0" + ",&H00FFFFF0" + ",&H00000000,&H00000000,1,0,0,0,100,100,0,0,0,1,0,5,0,0,0,1"
+
+    SubText = SubText if IsSubPlugin or not (1 <= Type <= 3) else \
+      ('\n' * (2 if Source_Height < 300 else 3)) + SubText
+
+    Position = core.std.FrameEval(Source, partial(CP_Pos, Source=Source, \
+      FRateNum=FRateDen, FRateDen=FRateDen, Frame=Frame, Time=Time, Type=Type, \
+      SubText=SubText, Style=Style, IsSubPlugin=IsSubPlugin))
+
+    return Position if not IsHalfFloat else core.resize.Bicubic(Position, format=Source_ID)
+
+# -------------------------------------------------------------------------------
+
+def CP_Pos(n, Source, FRateNum, FRateDen, Frame, Time, Type, SubText, Style, IsSubPlugin):
 
     if Time:
 
@@ -520,15 +558,18 @@ def CP_Pos(n, Source, Frame, Time, SubText):
         MM = m.floor(F_Position / 60) % 60
         SS = m.floor(F_Position) % 60
         MS = m.floor((F_Position - m.floor(F_Position)) * 1000)
-        Pos = "{:02.0f}:{:02.0f}:{:02.0f}.{:03.0f}".format(HH, MM, SS, MS) + "\n\n"
+        Pos = '{:02.0f}:{:02.0f}:{:02.0f}.{:03.0f}'.format(HH, MM, SS, MS)
 
-    PosText = str(n) + "\n" + Pos if Frame and Time else str(n) + "\n\n" if Frame else Pos if Time else ""
+    PosText = (str(n) + '\n' + (' \n' if IsSubPlugin else '\n') + Pos if Frame and Time else \
+      str(n) if Frame else Pos) + \
+      ('\n' + (' \n' * 11) if (1 <= Type <= 3) and IsSubPlugin else '')
 
-    return core.text.Text(Source, PosText + SubText, alignment=5)
+    return core.sub.Subtitle(Source, PosText, style=Style, linespacing=3) \
+      if IsSubPlugin else core.text.Text(Source, PosText + SubText, alignment=5)
 
 # ===============================================================================
 # ===============================================================================
-#            Line Thickness For pCrop & qCrop
+#             pCrop & qCrop Line Thickness
 # ===============================================================================
 # ===============================================================================
 #
