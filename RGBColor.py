@@ -1,6 +1,6 @@
 # ===============================================================================
 # ===============================================================================
-#            RGBColor 2024-10-02
+#            RGBColor 2025-03-25
 # ===============================================================================
 # ===============================================================================
 
@@ -11,7 +11,8 @@ core = vs.core
 
 def RGBColor(clip, color=None, matrix=None, range=None):
 
-    if not isinstance(clip, vs.VideoNode): raise vs.Error('RGBColor: clip must be a video')
+    RCE = "\nRGBColor:\n"
+    if not isinstance(clip, vs.VideoNode): raise vs.Error(f'{RCE}clip must be a video')
 
     PropMatrix = clip.get_frame(0).props.get("_Matrix", -1)
     PropRange = clip.get_frame(0).props.get("_ColorRange", -1)
@@ -19,23 +20,22 @@ def RGBColor(clip, color=None, matrix=None, range=None):
 # -------------------------------------------------------------------------------
 
     if not ((-1 <= PropMatrix <= 2) or (4 <= PropMatrix <= 10)):
-        raise vs.Error('RGBColor: Video has an unsupported value ' + \
-          f'({PropMatrix}) for "_Matrix" in frame properties')
+        raise vs.Error(f'{RCE}Video has an unsupported value ({PropMatrix}) for "_Matrix" in frame properties')
     if not (-1 <= PropRange <= 1):
-        raise vs.Error('RGBColor: Video has an unsupported value ' + \
+        raise vs.Error(f'{RCE}Video has an unsupported value ' + \
           f'({PropRange}) for "_ColorRange" in frame properties')
-    if (clip.format.name).endswith("H"): raise vs.Error(f'RGBColor: {clip.format.name} is not supported')
+    if (clip.format.name).endswith("H"): raise vs.Error(f'{RCE}{clip.format.name} is not supported')
     if not ((color is None) or isinstance(color, str)):
-        raise vs.Error('RGBColor: "color" must be a string, for example "darkblue" or "00008B"')
+        raise vs.Error(f'{RCE}color must be a string, for example "darkblue" or "00008B"')
     if not ((matrix is None) or isinstance(matrix, str) or \
       (isinstance(matrix, int) and (isinstance(matrix, bool) is False))):
-        raise vs.Error('RGBColor: matrix must be an integer or string')
+        raise vs.Error(f'{RCE}matrix must be an integer or string')
     if (matrix is not None) and (clip.format.color_family == vs.RGB):
-        raise vs.Error('RGBColor: A matrix cannot be specified for an RGB source')
+        raise vs.Error(f'{RCE}A matrix cannot be specified for an RGB source')
     if not ((range is None) or (isinstance(range, str) and \
       ((range.lower().strip() == 'full') or (range.lower().strip() == 'limited') or \
       (range.lower().strip() == 'f') or (range.lower().strip() == 'l')))):
-        raise vs.Error('RGBColor: range must be "full" or "f", or "limited" or "l" (not case sensitive)')
+        raise vs.Error(f'{RCE}range must be "full" or "f", or "limited" or "l" (not case sensitive)')
 
 # -------------------------------------------------------------------------------
 #            Color
@@ -210,7 +210,7 @@ def RGBColor(clip, color=None, matrix=None, range=None):
               'grey90'               : 'E4E4E4'}
 
     if (Colors.get(color) is None) and (color.upper() not in Colors.values()):
-        raise vs.Error('RGBColor: Invalid color string specified')
+        raise vs.Error(f'{RCE}Invalid color string specified')
 
     if (Colors.get(color) is not None):
         v0, v1, v2 = tuple(int(Colors.get(color)[i : i + 2], 16) for i in (0, 2, 4))
@@ -235,12 +235,12 @@ def RGBColor(clip, color=None, matrix=None, range=None):
           7 if (matrix == '240m') else 8 if (matrix == 'ycgco') else \
           9 if (matrix == '2020ncl') else 10 if (matrix == '2020cl') else -1
 
-        if (matrix is not None) and (MatrixNum == -1): raise vs.Error('RGBColor: Unsupported matrix specified')
+        if (matrix is not None) and (MatrixNum == -1): raise vs.Error(f'{RCE}Unsupported matrix specified')
 
         PropMatrix = None if (PropMatrix == -1) or (PropMatrix == 2) else PropMatrix
 
         if (matrix is not None) and (PropMatrix is not None) and (MatrixNum != PropMatrix):
-            raise vs.Error(f'RGBColor: The value for "_Matrix" ({PropMatrix}) ' + \
+            raise vs.Error(f'{RCE}The value for "_Matrix" ({PropMatrix}) ' + \
               'in frame properties doesn\'t match the specified matrix')
 
         MatrixNum = matrix if (matrix is not None) else \
@@ -261,7 +261,7 @@ def RGBColor(clip, color=None, matrix=None, range=None):
     PropRangeStr = "limited" if (PropRange == 1) else "full" if (PropRange == 0) else None
 
     if (range is not None) and (PropRangeStr is not None) and (range != PropRangeStr):
-        raise vs.Error(f'RGBColor: The value for "_ColorRange" ({PropRange}) ' + \
+        raise vs.Error(f'{RCE}The value for "_ColorRange" ({PropRange}) ' + \
           'in frame properties doesn\'t match the specified range')
 
     range = PropRangeStr if (PropRangeStr is not None) else range
