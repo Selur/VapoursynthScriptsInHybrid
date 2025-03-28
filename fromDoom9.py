@@ -118,7 +118,7 @@ def EZdenoise(clip: vs.VideoNode, thSAD: int=150, thSADC: int=-1, tr: int=3, blk
 # By default it is disabled (only for presets 2 and 3)
 # - Repair is an option for certain sources or anime/cartoon content, where ghosting may be evident
 # By default it is disabled (maybe for preset = 1 it is not necessary to activate it)
-def Small_Deflicker(clip: vs.VideoNode, width: int=0, height: int=0, preset: int=2, cnr: bool=False,rep: bool=True):
+def Small_Deflicker(clip: vs.VideoNode, width: int=0, height: int=0, preset: int=2, cnr: bool=False,rep: bool=True, zsmooth: bool=False):
   clip = core.misc.SCDetect(clip)
   if width == 0:
     width = toMod(clip.width/4,16)
@@ -133,13 +133,13 @@ def Small_Deflicker(clip: vs.VideoNode, width: int=0, height: int=0, preset: int
     raise vs.Error('preset not valid (1, 2 or 3)')
 
   small = core.resize.Bicubic(clip, width,height) # can be altered, but ~25% of original resolution seems reasonable
-  
+  zsmooth = zsmooth and hasattr(core,'zsmooth')
   if preset == 1:
-    smallModified = deflickerPreset1(small)
+    smallModified = deflickerPreset1(small, zsmooth=zsmooth)
   elif preset == 2:
-    smallModified = deflickerPreset2(small, cnr)
+    smallModified = deflickerPreset2(small, cnr, zsmooth=zsmooth)
   else :
-    smallModified = deflickerPreset3(small, cnr)
+    smallModified = deflickerPreset3(small, cnr, zsmooth=zsmooth)
    
   clip2 = core.std.MakeDiff(small,smallModified,planes=[0, 1, 2])
   clip2 = core.resize.Bicubic(clip2, clip.width,clip.height)
@@ -154,36 +154,51 @@ def toMod(value: int, factor: int=16):
   return adjust
 
 # Deflicker Presets
-def deflickerPreset1(sm: vs.VideoNode):
-  smm = core.focus2.TemporalSoften2(clip=sm,radius=1,luma_threshold=6,chroma_threshold=9,scenechange=10,mode=2)
+def deflickerPreset1(sm: vs.VideoNode, zsmooth: bool=False):
+  if zsmooth:
+    smm = core.zsmooth.TemporalSoften(clip=sm,radius=1, threshold=[6,9,9],scenechange=10,scalep=True)
+  else:
+    smm = core.focus2.TemporalSoften2(clip=sm,radius=1,luma_threshold=6,chroma_threshold=9,scenechange=10,mode=2)
   smm = core.msmoosh.MSmooth(clip=smm,threshold=0.8,strength=25.0,planes=[1,2])
   smm = core.std.Merge(smm, sm, 0.25)
   smm = core.std.Merge(smm, sm, 0.25)
-  
-  smm = core.focus2.TemporalSoften2(clip=sm,radius=2,luma_threshold=3,chroma_threshold=5,scenechange=6,mode=2)
+  if zsmooth:
+    smm = core.zsmooth.TemporalSoften(clip=sm,radius=2, threshold=[3,5,5],scenechange=6,scalep=True)
+  else:
+    smm = core.focus2.TemporalSoften2(clip=sm,radius=2,luma_threshold=3,chroma_threshold=5,scenechange=6,mode=2)
   smm = core.msmoosh.MSmooth(clip=smm,threshold=2.0,strength=1.0,planes=[1,2])
   return smm
 
-def deflickerPreset2(sm: vs.VideoNode, chroma: bool):
-  smm = core.focus2.TemporalSoften2(clip=sm,radius=1,luma_threshold=12,chroma_threshold=255,scenechange=24,mode=2)
+def deflickerPreset2(sm: vs.VideoNode, chroma: bool, zsmooth: bool=False):
+  if zsmooth:
+    smm = core.zsmooth.TemporalSoften(clip=sm,radius=1, threshold=[12,255,255],scenechange=24,scalep=True)
+  else:
+    smm = core.focus2.TemporalSoften2(clip=sm,radius=1,luma_threshold=12,chroma_threshold=255,scenechange=24,mode=2)
   smm = core.msmoosh.MSmooth(clip=smm,threshold=0.8,strength=25.0,planes=[1,2])
   smm = core.std.Merge(smm, sm, 0.25)
   smm = core.std.Merge(smm, sm, 0.25)
-  
-  smm = core.focus2.TemporalSoften2(clip=sm,radius=2,luma_threshold=7,chroma_threshold=255,scenechange=20,mode=2)
+  if zsmooth:
+    smm = core.zsmooth.TemporalSoften(clip=sm,radius=2, threshold=[7,255,255],scenechange=20,scalep=True)
+  else:
+    smm = core.focus2.TemporalSoften2(clip=sm,radius=2,luma_threshold=7,chroma_threshold=255,scenechange=20,mode=2)
   smm = core.msmoosh.MSmooth(clip=smm,threshold=2.0,strength=1.0,planes=[1,2])
 
   if chroma:
     return core.cnr2.Cnr2(smm, mode="ooo", ln=5, un=40, vn=40, scdthr=2.0)
   return smm
 
-def deflickerPreset3(sm: vs.VideoNode, chroma: bool):
-  smm = core.focus2.TemporalSoften2(clip=sm,radius=1,luma_threshold=32,chroma_threshold=255,scenechange=24,mode=2)
+def deflickerPreset3(sm: vs.VideoNode, chroma: bool, zsmooth: bool=False):
+  if zsmooth:
+    smm = core.zsmooth.TemporalSoften(clip=sm,radius=1, threshold=[32,255,255],scenechange=24,scalep=True)
+  else:
+    smm = core.focus2.TemporalSoften2(clip=sm,radius=1,luma_threshold=32,chroma_threshold=255,scenechange=24,mode=2)
   smm = core.msmoosh.MSmooth(clip=smm,threshold=0.8,strength=25.0,planes=[1,2])
   smm = core.std.Merge(smm, sm, 0.25)
   smm = core.std.Merge(smm, sm, 0.25)
-  
-  smm = core.focus2.TemporalSoften2(clip=sm,radius=2,luma_threshold=12,chroma_threshold=255,scenechange=20,mode=2)
+  if zsmooth:
+    smm = core.zsmooth.TemporalSoften(clip=sm,radius=1, threshold=[12,255,255],scenechange=20,scalep=True)
+  else:
+    smm = core.focus2.TemporalSoften2(clip=sm,radius=2,luma_threshold=12,chroma_threshold=255,scenechange=20,mode=2)
   smm = core.msmoosh.MSmooth(clip=smm,threshold=2.0,strength=1.0,planes=[1,2])
 
   if chroma:
