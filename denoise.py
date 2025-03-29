@@ -338,15 +338,11 @@ def MCTemporalDenoise(i, radius=None, pfMode=3, sigma=None, twopass=None, useTTm
     pointresize_args = dict(width=xn, height=yn, src_left=-xf / 2, src_top=-yf / 2, src_width=xn, src_height=yn)
     i = i.resize.Point(**pointresize_args)
 
-    if cuda:
-      try:
-         import importlib
-         dfttest2 = importlib.import_module('dfttest2')
-      except ModuleNotFoundError:
-        dfttest2 = None
-    else:
-      dfttest2 = None
-
+    dfttest2 = None
+    if cuda and hasattr(core,'dfttest2_nvrtc'):
+       import importlib
+       dfttest2 = importlib.import_module('dfttest2')
+    
     ### PREFILTERING
     fft3d_args = dict(planes=planes, bw=bwbh, bh=bwbh, bt=bt, ow=owoh, oh=owoh, ncpu=ncpu)
     if p is not None:
