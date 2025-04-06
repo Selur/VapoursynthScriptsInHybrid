@@ -696,7 +696,7 @@ def mClean(clip, thSAD=400, chroma=True, sharp=10, rn=14, deband=0, depth=0, str
         c = c.fmtc.bitdepth(bits=outbits, dmode=1)
         cy = cy.fmtc.bitdepth(bits=outbits, dmode=1)
         clean = clean.fmtc.bitdepth(bits=outbits, dmode=1)
-    TM = core.zsmooth.TemporalMedian if zsmooth else tmedian.TemporalMedian
+    TM = core.zsmooth.TemporalMedian if zsmooth else core.tmedian.TemporalMedian
     uv = core.std.MergeDiff(clean, TM(core.std.MakeDiff(c, clean, [1, 2]), 1, [1, 2]), [1, 2]) if chroma else c
     clean = core.std.ShufflePlanes(clean, [0], vs.GRAY) if clean.format.num_planes != 1 else clean
 
