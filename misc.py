@@ -103,6 +103,8 @@ def Overlay(
         pass
     elif mode == 'addition':
         expr = f'x y +'
+    elif mode == "linearadd":
+        expr = f'x 2 pow y 2 pow + sqrt' # same as Gimp's 2.10 subtract blending mode    
     elif mode == 'average':
         expr = f'x y + 2 /'
     elif mode == 'burn':
@@ -155,6 +157,8 @@ def Overlay(
         expr = f'x {neutral} > y {peak} y - x {neutral} - * {neutral} / 0.5 y {neutral} - abs {peak} / - * + y y {neutral} x - {neutral} / * 0.5 y {neutral} - abs {peak} / - * - ?'
     elif mode == 'subtract':
         expr = f'x y -'
+    elif mode == "linearsubtract":
+        expr = f'x 2 pow y 2 pow - sqrt' # same as Gimp's 2.10 subtract blending mode
     elif mode == 'vividlight':
         expr = f'x {neutral} < x 0 <= 2 x * {peak} {peak} y - {factor} * 2 x * / - ? 2 x {neutral} - * {peak} >= 2 x {neutral} - * y {factor} * {peak} 2 x {neutral} - * - / ? ?'
     else:

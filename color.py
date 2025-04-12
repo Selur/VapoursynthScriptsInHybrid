@@ -322,3 +322,69 @@ def SmoothLevels(input, input_low=0, gamma=1.0, input_high=None, output_low=0, o
     if input_orig is not None:
         limitO = core.std.ShufflePlanes([limitO, input_orig], planes=[0, 1, 2], colorfamily=input_orig.format.color_family)
     return limitO
+
+####### HighBitDepthHistogram
+#
+# This function wraps VapourSynth's core.hist.<Method> filters to support high bit-depth clips.
+# The histogram filters only support 8-bit input, so this function:
+# 1. Clones the original clip.
+# 2. Converts the clone to 8-bit while preserving the original chroma subsampling.
+# 3. Applies the specified histogram method (Classic, Levels, Color, Color2, or Luma).
+# 4. Crops the histogram overlay from the extended image.
+# 5. Converts the histogram overlay back to the original format.
+# 6. Stacks the original clip with the histogram (vertically for Classic, horizontally otherwise).
+def HighBitDepthHistogram(clip: vs.VideoNode, method: str = "Classic") -> vs.VideoNode:
+    method = method.capitalize()
+
+    if method not in {"Classic", "Levels", "Color", "Color2", "Luma"}:
+        raise ValueError(f"Unsupported histogram method: {method}")
+
+    original_format = clip.format
+
+    # Determine 8-bit format matching the input
+    target_format_map = {
+        (vs.GRAY, 0): vs.GRAY8,
+        (vs.YUV, 444): vs.YUV444P8,
+        (vs.YUV, 422): vs.YUV422P8,
+        (vs.YUV, 420): vs.YUV420P8,
+        (vs.RGB, 0): vs.RGB24
+    }
+
+    subsampling_w = clip.format.subsampling_w
+    subsampling_h = clip.format.subsampling_h
+    chroma = 444 if (subsampling_w == 0 and subsampling_h == 0) else 422 if subsampling_w == 1 else 420
+
+    target_key = (clip.format.color_family, chroma if clip.format.color_family == vs.YUV else 0)
+    if target_key not in target_format_map:
+        raise ValueError(f"No 8-bit format mapping found for {target_key}")
+
+    target_format = target_format_map[target_key]
+
+    # Step 1: Clone clip
+    histClip = clip
+
+    # Step 2: Convert histClip to 8-bit
+    histClip = core.resize.Bicubic(histClip, format=target_format)
+
+    # Step 3: Apply histogram
+    try:
+        histClip = getattr(core.hist, method)(clip=histClip)
+    except AttributeError:
+        raise ValueError(f"Histogram method '{method}' is not available in core.hist.")
+
+    # Step 4: Crop to get just the histogram overlay
+    if method == "Classic":
+        histClip = core.std.Crop(histClip, bottom=clip.height)
+    else:
+        histClip = core.std.Crop(histClip, left=clip.width)
+
+    # Step 5: Convert histogram back to original format
+    histClip = core.resize.Bicubic(histClip, format=original_format.id)
+
+    # Step 6: Stack original + histogram
+    if method == "Classic":
+        stacked = core.std.StackVertical([histClip, clip])
+    else:
+        stacked = core.std.StackHorizontal([clip, histClip])
+
+    return stacked
