@@ -986,3 +986,47 @@ def Padding(clip: vs.VideoNode, left: int = 0, right: int = 0, top: int = 0, bot
     height = clip.height + top + bottom
 
     return clip.resize.Point(width, height, src_left=-left, src_top=-top, src_width=width, src_height=height)
+    
+    
+def UnsharpMask(clip: vs.VideoNode, strength: int = 64, radius: int = 3, threshold: int = 8) -> vs.VideoNode:
+    """
+    Ported by Myrsloik
+    
+    Applies an unsharp mask filter to a given clip, which sharpens the image by enhancing edges.
+    
+    The function works by subtracting a blurred version of the clip from the original, then amplifying 
+    the difference based on the given strength. The threshold parameter determines the minimum difference
+    required for sharpening to take place, and the radius controls the size of the blur applied to the image.
+    
+    Args:
+        clip (vs.VideoNode): The input video clip to which the unsharp mask will be applied.
+        strength (Optional[int], default=64): The strength of the sharpening effect (higher values mean stronger sharpening).
+        radius (Optional[int], default=3): The radius of the blur filter to use for the unsharp mask.
+        threshold (Optional[int], default=8): The threshold for the difference between the original and blurred clip
+                                               that will be sharpened. Values between 0 and 255, with 8 being a typical starting point.
+
+    Returns:
+        vs.VideoNode: The sharpened video clip after applying the unsharp mask.
+    """
+    
+    # Calculate the maximum pixel value based on the bit depth of the clip
+    maxvalue = (1 << clip.format.bits_per_sample) - 1
+    
+    # Adjust the threshold to match the clip's color depth
+    threshold = threshold * maxvalue // 255
+    
+    # Apply convolution to blur the image horizontally and vertically
+    blurclip = clip.std.Convolution(matrix=[1] * (radius * 2 + 1), planes=0, mode='v')
+    blurclip = blurclip.std.Convolution(matrix=[1] * (radius * 2 + 1), planes=0, mode='h')
+    
+    # Create the expression to calculate the sharpened result
+    expressions = [
+        'x y - abs {} > x y - {} * x + x ?'.format(threshold, strength / 128)
+    ]
+    
+    # If the clip is not grayscale, append an empty expression (to handle color clips)
+    if clip.format.color_family != vs.GRAY:
+        expressions.append("")
+    
+    # Apply the expression to blend the original clip and the blurred clip
+    return core.std.Expr(clips=[clip, blurclip], expr=expressions)
