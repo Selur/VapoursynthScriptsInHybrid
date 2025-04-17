@@ -639,10 +639,11 @@ def mClean(clip, thSAD=400, chroma=True, sharp=10, rn=14, deband=0, depth=0, str
     if deband or depth:
         outbits = min(outbits, 16)
 
-    RE = core.rgsf.Repair if outbits == 32 else core.rgvs.Repair
     if zsmooth:
+      RE = core.zsmooth.Repair
       RG = core.zsmooth.RemoveGrain
     else:
+      RE = core.rgsf.Repair if outbits == 32 else core.rgvs.Repair
       RG = core.rgsf.RemoveGrain if outbits == 32 else core.rgvs.RemoveGrain
     
     sc = 8 if defH > 2880 else 4 if defH > 1440 else 2 if defH > 720 else 1

@@ -445,7 +445,10 @@ def ContraSharpening(clip, src, radius=None, rep=24, planes=[0, 1, 2]):
     bd = clip.format.bits_per_sample
     mid = 1 << (bd - 1)
     num = clip.format.num_planes
-    R = core.rgvs.Repair
+    if hasattr(core,'zsmooth'):
+      R = core.zsmooth.Repair
+    else:
+      R = core.rgvs.Repair
 
     s = MinBlur(clip, planes)  # damp down remaining spots of the denoised clip
     RG11 = core.std.Convolution(s, matrix=mat1, planes=planes).std.Convolution(matrix=mat2, planes=planes)

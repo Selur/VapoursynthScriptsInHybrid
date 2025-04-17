@@ -7,17 +7,23 @@ from vapoursynth import core
 # RemoveDirt (https://github.com/pinterf/removedirtvs, https://github.com/Rational-Encoding-Thaumaturgy/vapoursynth-removedirt)
 # ChangeFPS (https://github.com/Selur/VapoursynthScriptsInHybrid/blob/master/ChangeFPS.py)
 def RemoveDirt(input: vs.VideoNode, repmode: int=16, remgrainmode: int=17, limit: int=10) -> vs.VideoNode:
-  cleansed = core.rgvs.Clense(input)
-  sbegin = core.rgvs.ForwardClense(input)
-  send = core.rgvs.BackwardClense(input)
+  
+  zsmooth = hasattr(core, 'zsmooth')
+  cleansed = core.zsmooth.Clense(input) if zsmooth else core.rgvs.Clense(input)
+  sbegin = core.zsmooth.ForwardClense(input) if zsmooth else core.rgvs.ForwardClense(input)
+  send =  core.zsmooth.BackwardClense(input) if zsmooth else core.rgvs.BackwardClense(input)
   if hasattr(core, 'removedirt') and hasattr(core.removedirt, 'SCSelect'):
     # Use removedirt.SCSelect if available
     scenechange = core.removedirt.SCSelect(input, sbegin, send, cleansed)
   else:
     # Fallback to rdvs.SCSelect
     scenechange = core.rdvs.SCSelect(input, sbegin, send, cleansed)
-  alt = core.rgvs.Repair(scenechange, input, mode=[repmode,repmode,1])
-  restore = core.rgvs.Repair(cleansed, input, mode=[repmode,repmode,1])
+  if zsmooth:
+    alt = core.zsmooth.Repair(scenechange, input, mode=[repmode,repmode,1])
+    restore = core.zsmooth.Repair(cleansed, input, mode=[repmode,repmode,1])
+  else:
+    alt = core.rgvs.Repair(scenechange, input, mode=[repmode,repmode,1])
+    restore = core.rgvs.Repair(cleansed, input, mode=[repmode,repmode,1])
   
   if hasattr(core, 'removedirt') and hasattr(core.removedirt, 'SCSelect'):
     # Use removedirt.RestoreMotionBlocks if available
@@ -25,7 +31,7 @@ def RemoveDirt(input: vs.VideoNode, repmode: int=16, remgrainmode: int=17, limit
   else:
     # Fallback to rdvs.RestoreMotionBlocks
     corrected = core.rdvs.RestoreMotionBlocks(cleansed, restore, neighbour=input, alternative=alt, gmthreshold=70, dist=1, dmode=2, noise=limit, noisy=12)
-  if hasattr(core, 'zsmooth'):
+  if zsmooth:
     return core.zsmooth.RemoveGrain(corrected, mode=[remgrainmode,remgrainmode,1])
   else:
     return core.rgvs.RemoveGrain(corrected, mode=[remgrainmode,remgrainmode,1])

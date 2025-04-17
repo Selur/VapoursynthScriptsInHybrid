@@ -989,9 +989,13 @@ def QTGMC(
 
     # Slightly thin down 1-pixel high horizontal edges that have been widened into neighboring field lines by the interpolator
     SVThinSc = SVThin * 6.0
+    zsmooth = hasattr(core,'zsmooth')
     if SVThin > 0:
         expr = f'y x - {SVThinSc} * {neutral} +'
-        vertMedD = core.std.Expr([lossed1, lossed1.rgvs.VerticalCleaner(mode=1 if is_gray else [1, 0])], expr=expr if is_gray else [expr, ''])
+        if zsmooth:
+          vertMedD = core.std.Expr([lossed1, lossed1.zsmooth.VerticalCleaner(mode=1 if is_gray else [1, 0])], expr=expr if is_gray else [expr, ''])
+        else:
+          vertMedD = core.std.Expr([lossed1, lossed1.rgvs.VerticalCleaner(mode=1 if is_gray else [1, 0])], expr=expr if is_gray else [expr, ''])
         vertMedD = vertMedD.std.Convolution(matrix=[1, 2, 1], planes=0, mode='h')
         expr = f'y {neutral} - abs x {neutral} - abs > y {neutral} ?'
         neighborD = core.std.Expr([vertMedD, vertMedD.std.Convolution(matrix=matrix, planes=0)], expr=expr if is_gray else [expr, ''])
@@ -1009,9 +1013,9 @@ def QTGMC(
     # Occurs here (before final temporal smooth) if SLMode == 1,2. This location will restrict sharpness more, but any artefacts introduced will be smoothed
     if SLMode == 1:
         if SLRad <= 1:
-            sharpLimit1 = core.rgvs.Repair(backBlend1, edi, mode=1)
+            sharpLimit1 = core.zsmooth.Repair(backBlend1, edi, mode=1) if zsmooth else core.rgvs.Repair(backBlend1, edi, mode=1)
         else:
-            sharpLimit1 = core.rgvs.Repair(backBlend1, core.rgvs.Repair(backBlend1, edi, mode=12), mode=1)
+            sharpLimit1 = core.zsmooth.Repair(backBlend1, core.zsmooth.Repair(backBlend1, edi, mode=12), mode=1) if zsmooth else core.rgvs.Repair(backBlend1, core.rgvs.Repair(backBlend1, edi, mode=12), mode=1)
     elif SLMode == 2:
         sharpLimit1 = mt_clamp(backBlend1, tMax, tMin, SOvs, SOvs)
     else:
@@ -1055,9 +1059,9 @@ def QTGMC(
     # Occurs here (after final temporal smooth) if SLMode == 3,4. Allows more sharpening here, but more prone to introducing minor artefacts
     if SLMode == 3:
         if SLRad <= 1:
-            sharpLimit2 = core.rgvs.Repair(repair2, edi, mode=1)
+            sharpLimit2 = core.zsmooth.Repair(repair2, edi, mode=1) if zsmooth else core.rgvs.Repair(repair2, edi, mode=1)
         else:
-            sharpLimit2 = core.rgvs.Repair(repair2, core.rgvs.Repair(repair2, edi, mode=12), mode=1)
+            sharpLimit2 = core.zsmooth.Repair(repair2, core.zsmooth.Repair(repair2, edi, mode=12), mode=1) if zsmooth else core.rgvs.Repair(repair2, core.rgvs.Repair(repair2, edi, mode=12), mode=1)
     elif SLMode >= 4:
         sharpLimit2 = mt_clamp(repair2, tMax, tMin, SOvs, SOvs)
     else:
@@ -1354,14 +1358,20 @@ def QTGMC_MakeLossless(Input: vs.VideoNode, Source: vs.VideoNode, InputType: int
     processed = Weave(core.std.Interleave([srcFields, newFields]).std.SelectEvery(cycle=4, offsets=[0, 1, 3, 2]), tff=TFF)
 
     # Clean some of the artefacts caused by the above - creating a second version of the "new" fields
-    vertMedian = processed.rgvs.VerticalCleaner(mode=1)
+    zsmooth = hasattr(core,'zsmooth')
+    vertMedian = processed.zsmooth.VerticalCleaner(mode=1) if zsmooth else processed.rgvs.VerticalCleaner(mode=1)
     vertMedDiff = core.std.MakeDiff(processed, vertMedian)
     vmNewDiff1 = vertMedDiff.std.SeparateFields(tff=TFF).std.SelectEvery(cycle=4, offsets=[1, 2])
-    vmNewDiff2 = core.std.Expr(
+    if zsmooth:
+      vmNewDiff2 = core.std.Expr(
+        [vmNewDiff1.zsmooth.VerticalCleaner(mode=1), vmNewDiff1], expr=f'x {neutral} - y {neutral} - * 0 < {neutral} x {neutral} - abs y {neutral} - abs < x y ? ?'
+      )
+    else:
+      vmNewDiff2 = core.std.Expr(
         [vmNewDiff1.rgvs.VerticalCleaner(mode=1), vmNewDiff1], expr=f'x {neutral} - y {neutral} - * 0 < {neutral} x {neutral} - abs y {neutral} - abs < x y ? ?'
-    )
-    RG = core.zsmooth.RemoveGrain if hasattr(core,'zsmooth') else core.rgvs.RemoveGrain
-    vmNewDiff3 = core.rgvs.Repair(vmNewDiff2, RG(vmNewDiff2, mode=2), mode=1)
+      )
+    RG = core.zsmooth.RemoveGrain if zsmooth else core.rgvs.RemoveGrain
+    vmNewDiff3 = core.zsmooth.Repair(vmNewDiff2, RG(vmNewDiff2, mode=2), mode=1) if zsmooth else core.rgvs.Repair(vmNewDiff2, RG(vmNewDiff2, mode=2), mode=1)
 
     # Reweave final result
     return Weave(core.std.Interleave([srcFields, core.std.MakeDiff(newFields, vmNewDiff3)]).std.SelectEvery(cycle=4, offsets=[0, 1, 3, 2]), tff=TFF)

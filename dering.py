@@ -146,7 +146,10 @@ def HQDeringmod(
             )
         sharpdiff = core.std.MakeDiff(pre, method, planes=planes)
         allD = core.std.MakeDiff(input, smoothed, planes=planes)
-        ssDD = core.rgvs.Repair(sharpdiff, allD, mode=[1 if i in planes else 0 for i in plane_range])
+        if hasattr(core,'zsmooth'):
+          ssDD = core.zsmooth.Repair(sharpdiff, allD, mode=[1 if i in planes else 0 for i in plane_range])
+        else:
+          ssDD = core.rgvs.Repair(sharpdiff, allD, mode=[1 if i in planes else 0 for i in plane_range])
         ssDD = core.std.Expr(
             [ssDD, sharpdiff], expr=[f'x {neutral} - abs y {neutral} - abs <= x y ?' if i in planes else '' for i in plane_range]
         )
@@ -156,6 +159,9 @@ def HQDeringmod(
     if drrep <= 0:
         repclp = sclp
     else:
+      if hasattr(core,'zsmooth'):
+        repclp = core.zsmooth.Repair(input, sclp, mode=[drrep if i in planes else 0 for i in plane_range])
+      else:
         repclp = core.rgvs.Repair(input, sclp, mode=[drrep if i in planes else 0 for i in plane_range])
 
     # Post-Process: Limiting

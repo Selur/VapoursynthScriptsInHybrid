@@ -532,7 +532,9 @@ def TemporalDegrain2(clip, degrainTR=1, degrainPlane=4, grainLevel=2, grainLevel
       D2 = core.mv.Degrain2
       D3 = core.mv.Degrain3
     
-    if hasattr(core, 'rgsf') and isFLOAT:  
+    if hasattr(core, 'zsmooth'):
+      RG = core.zsmooth.RemoveGrain
+    elif hasattr(core, 'rgsf') and isFLOAT:  
       RG = core.rgsf.RemoveGrain
     else:
       RG = core.rgvs.RemoveGrain
@@ -877,7 +879,10 @@ def ContraSharpening(denoised, original, radius=None, rep=13, planes=None):
 
     ssD = core.std.MakeDiff(s, RG11, planes=planes)                                                                  # the difference of a simple kernel blur
     allD = core.std.MakeDiff(original, denoised, planes=planes)                                                      # the difference achieved by the denoising
-    ssDD = core.rgvs.Repair(ssD, allD, mode=[rep if i in planes else 0 for i in range(denoised.format.num_planes)])  # limit the difference to the max of what the denoising removed locally
+    if hasattr(core, 'zsmooth'):
+      ssDD = core.zsmooth.Repair(ssD, allD, mode=[rep if i in planes else 0 for i in range(denoised.format.num_planes)])  # limit the difference to the max of what the denoising removed locally
+    else:
+      ssDD = core.rgvs.Repair(ssD, allD, mode=[rep if i in planes else 0 for i in range(denoised.format.num_planes)])  # limit the difference to the max of what the denoising removed locally
     expr = f'x {neutral} - abs y {neutral} - abs < x y ?'
     ssDD = core.std.Expr([ssDD, ssD], expr=[expr if i in planes else '' for i in range(denoised.format.num_planes)]) # abs(diff) after limiting may not be bigger than before
     return core.std.MergeDiff(denoised, ssDD, planes=planes)

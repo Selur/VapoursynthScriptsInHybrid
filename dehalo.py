@@ -63,6 +63,9 @@ def DeHalo_alpha(
         so = so.vszip.Limiter() if hasattr(core,'vszip') else so.std.Limiter()
     lets = core.std.MaskedMerge(halos, clp, so)
     if ss <= 1:
+      if hasattr(core, 'zsmooth'):
+        remove = core.zsmooth.Repair(clp, lets, mode=1)
+      else:
         remove = core.rgvs.Repair(clp, lets, mode=1)
     else:
         remove = core.std.Expr(
@@ -125,8 +128,10 @@ def EdgeCleaner(c: vs.VideoNode, strength: int = 10, rep: bool = True, rmode: in
 
     main = Padding(c, 6, 6, 6, 6).warp.AWarpSharp2(blur=1, depth=cround(strength / 2)).std.Crop(6, 6, 6, 6)
     if rep:
+      if hasattr(core, 'zsmooth'):
+        main = core.zsmooth.Repair(main, c, mode=rmode)
+      else:
         main = core.rgvs.Repair(main, c, mode=rmode)
-
     mask = (
         AvsPrewitt(c)
         .std.Expr(expr=f'x {scale_value(4, 8, bits)} < 0 x {scale_value(32, 8, bits)} > {peak} x ? ?')
@@ -136,6 +141,9 @@ def EdgeCleaner(c: vs.VideoNode, strength: int = 10, rep: bool = True, rmode: in
 
     final = core.std.MaskedMerge(c, main, mask)
     if hot:
+      if hasattr(core, 'zsmooth'):
+        final = core.zsmooth.Repair(final, c, mode=2)
+      else:
         final = core.rgvs.Repair(final, c, mode=2)
     if smode > 0:
         RG = core.zsmooth.RemoveGrain if hasattr(core,'zsmooth') else core.rgvs.RemoveGrain
@@ -347,7 +355,10 @@ def FineDehalo_contrasharp(dehaloed: vs.VideoNode, src: vs.VideoNode, level: flo
         dehaloed_orig = None
 
     bb = dehaloed.std.Convolution(matrix=[1, 2, 1, 2, 4, 2, 1, 2, 1])
-    bb2 = core.rgvs.Repair(bb, core.rgvs.Repair(bb, bb.ctmf.CTMF(radius=2), mode=1), mode=1)
+    if hasattr(core, 'zsmooth'):
+      bb2 = core.zsmooth.Repair(bb, core.zsmooth.Repair(bb, bb.ctmf.CTMF(radius=2), mode=1), mode=1)
+    else:
+      bb2 = core.rgvs.Repair(bb, core.rgvs.Repair(bb, bb.ctmf.CTMF(radius=2), mode=1), mode=1)
     xd = core.std.MakeDiff(bb, bb2)
     xd = xd.std.Expr(expr=f'x {neutral} - 2.49 * {level} * {neutral} +')
     xdd = core.std.Expr(
@@ -387,7 +398,10 @@ def YAHR(clp: vs.VideoNode, blur: int = 2, depth: int = 32) -> vs.VideoNode:
     w1 = Padding(clp, 6, 6, 6, 6).warp.AWarpSharp2(blur=blur, depth=depth).std.Crop(6, 6, 6, 6)
     w1b1 = MinBlur(w1, 2).std.Convolution(matrix=[1, 2, 1, 2, 4, 2, 1, 2, 1])
     w1b1D = core.std.MakeDiff(w1, w1b1)
-    DD = core.rgvs.Repair(b1D, w1b1D, mode=13)
+    if hasattr(core, 'zsmooth'):
+      DD = core.zsmooth.Repair(b1D, w1b1D, mode=13)
+    else:
+      DD = core.rgvs.Repair(b1D, w1b1D, mode=13)
     DD2 = core.std.MakeDiff(b1D, DD)
     last = core.std.MakeDiff(clp, DD2)
 

@@ -24,7 +24,7 @@ def SpotLess(
     truemotion: bool = True,
     rfilter: int = None,
     blur: bool = False,
-    smoother: str = 'hybrid',
+    smoother: str = 'tmedian',
     ref: vs.VideoNode = None,
     mStart: bool = False,
     mEnd: bool = False,

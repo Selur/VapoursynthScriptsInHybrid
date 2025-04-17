@@ -26,7 +26,10 @@ def KillerSpots(clip: vs.VideoNode, limit: int=10, advanced: bool=False):
   if advanced:
     clip = RemoveDirtMod(clip, limit)
   else:
-    clip = core.rgvs.Clense(clip)
+    if hasattr(core,'zsmooth'):
+      clip = core.zsmooth.Clense(clip)
+    else:
+      clip = core.rgvs.Clense(clip)
   clip = core.std.SelectEvery(clip=clip, cycle=3, offsets=1)
   return clip;
 
@@ -35,8 +38,8 @@ def RemoveDirtMod(clip: vs.VideoNode, limit: int =10):
   core = vs.core  
   clensed = core.rgvs.Clense(clip)
   if hasattr(core, 'zsmooth'):
-    alt = core.rgvs.RemoveGrain(clip,mode=1)
-  else:
     alt = core.zsmooth.RemoveGrain(clip,mode=1)
+  else:
+    alt = core.rgvs.RemoveGrain(clip,mode=1)
   clip = core.rdvs.RestoreMotionBlocks(clensed, clip, alternative=alt, pthreshold=4, cthreshold=6, gmthreshold=40, dist=3, dmode=2, noise=limit, noisy=12)
   return clip

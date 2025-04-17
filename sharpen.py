@@ -467,6 +467,9 @@ def LSFmod(input, strength=None, Smode=None, Smethod=None, kernel=11, preblur=No
     edge = edge.std.Expr(expr=[f'x {1 / factor if isInteger else factor} * {128 if edgemaskHQ else 32} / 0.86 pow 255 * {factor if isInteger else 1 / factor} *'])
 
     if Lmode < 0:
+      if hasattr(core,'zsmooth'):
+        limit1 = core.zsmooth.Repair(normsharp, tmp, mode=[abs(Lmode)])
+      else:
         limit1 = core.rgvs.Repair(normsharp, tmp, mode=[abs(Lmode)])
     elif Lmode == 0:
         limit1 = normsharp
@@ -529,7 +532,10 @@ def LSFmod(input, strength=None, Smode=None, Smethod=None, kernel=11, preblur=No
 
         shrpD = core.std.MakeDiff(In, out, planes=[0])
         expr = f'x {neutral} - abs y {neutral} - abs < x y ?'
-        shrpL = core.std.Expr([core.rgvs.Repair(shrpD, core.std.MakeDiff(In, src, planes=[0]), mode=[1] if isGray else [1, 0]), shrpD], expr=[expr] if isGray else [expr, ''])
+        if hasattr(core,'zsmooth'):
+          shrpL = core.std.Expr([core.zsmooth.Repair(shrpD, core.std.MakeDiff(In, src, planes=[0]), mode=[1] if isGray else [1, 0]), shrpD], expr=[expr] if isGray else [expr, ''])
+        else:
+          shrpL = core.std.Expr([core.rgvs.Repair(shrpD, core.std.MakeDiff(In, src, planes=[0]), mode=[1] if isGray else [1, 0]), shrpD], expr=[expr] if isGray else [expr, ''])
         return core.std.MakeDiff(In, shrpL, planes=[0])
     else:
         return out
@@ -570,7 +576,10 @@ def FineSharp(clip, mode=1, sstr=2.5, cstr=None, xstr=0, lstr=1.5, pstr=1.28, ld
     mid = 0 if isFLOAT else 1 << (bd - 1)
     i = 0.00392 if isFLOAT else 1 << (bd - 8)
     xy = 'x y - {} /'.format(i) if bd != 8 else 'x y -'
-    R = core.rgsf.Repair if isFLOAT else core.rgvs.Repair
+    if hasattr(core,'zsmooth'):
+      R = core.zsmooth.Repair
+    else:
+      R = core.rgsf.Repair if isFLOAT else core.rgvs.Repair
     mat1 = [1, 2, 1, 2, 4, 2, 1, 2, 1]
     mat2 = [1, 1, 1, 1, 1, 1, 1, 1, 1]
     
@@ -968,7 +977,10 @@ def ContraSharpening(
     # the difference of a simple kernel blur
     ssD = core.std.MakeDiff(s, RG11, planes=planes)
     # limit the difference to the max of what the denoising removed locally
-    ssDD = core.rgvs.Repair(ssD, allD, mode=[rep if i in planes else 0 for i in plane_range])
+    if hasattr(core,'zsmooth'):
+      ssDD = core.zsmooth.Repair(ssD, allD, mode=[rep if i in planes else 0 for i in plane_range])
+    else:
+      ssDD = core.rgvs.Repair(ssD, allD, mode=[rep if i in planes else 0 for i in plane_range])
     # abs(diff) after limiting may not be bigger than before
     ssDD = core.std.Expr([ssDD, ssD], expr=[f'x {neutral} - abs y {neutral} - abs < x y ?' if i in planes else '' for i in plane_range])
     # apply the limited difference (sharpening is just inverse blurring)

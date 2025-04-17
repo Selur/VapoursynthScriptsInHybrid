@@ -341,7 +341,10 @@ def ContraSharpening(
     # the difference of a simple kernel blur
     ssD = core.std.MakeDiff(s, RG11, planes=planes)
     # limit the difference to the max of what the denoising removed locally
-    ssDD = core.rgvs.Repair(ssD, allD, mode=[rep if i in planes else 0 for i in plane_range])
+    if hasattr(core,'zsmooth'):
+      ssDD = core.zsmooth.Repair(ssD, allD, mode=[rep if i in planes else 0 for i in plane_range])
+    else:
+      ssDD = core.rgvs.Repair(ssD, allD, mode=[rep if i in planes else 0 for i in plane_range])
     # abs(diff) after limiting may not be bigger than before
     ssDD = core.std.Expr([ssDD, ssD], expr=[f'x {neutral} - abs y {neutral} - abs < x y ?' if i in planes else '' for i in plane_range])
     # apply the limited difference (sharpening is just inverse blurring)

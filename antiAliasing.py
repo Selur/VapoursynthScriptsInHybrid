@@ -42,7 +42,10 @@ def daa(
     dbl = core.std.Merge(nn[::2], nn[1::2])
     dblD = core.std.MakeDiff(c, dbl)
     shrpD = core.std.MakeDiff(dbl, dbl.std.Convolution(matrix=[1, 1, 1, 1, 1, 1, 1, 1, 1] if c.width > 1100 else [1, 2, 1, 2, 4, 2, 1, 2, 1]))
-    DD = core.rgvs.Repair(shrpD, dblD, mode=13)
+    if hasattr(core,'zsmooth'):
+      DD = core.zsmooth.Repair(shrpD, dblD, mode=13)
+    else:
+      DD = core.rgvs.Repair(shrpD, dblD, mode=13)
     return core.std.MergeDiff(dbl, DD)
 
 def daamod(c, nsize=None, nns=None, qual=None, pscrn=None, exp=None, opencl=False, device=None, rep=9):
@@ -52,8 +55,12 @@ def daamod(c, nsize=None, nns=None, qual=None, pscrn=None, exp=None, opencl=Fals
         raise TypeError("daamod: This is not a clip")
 
     isFLOAT = c.format.sample_type == vs.FLOAT
-    R = core.rgsf.Repair if isFLOAT else core.rgvs.Repair
-    V = core.rgsf.VerticalCleaner if isFLOAT else core.rgvs.VerticalCleaner
+    if hasattr(core,'zsmooth'):
+      R = core.zsmooth.Repair
+      V = core.zsmooth.VerticalCleaner
+    else:
+      R = core.rgsf.Repair if isFLOAT else core.rgvs.Repair
+      V = core.rgsf.VerticalCleaner if isFLOAT else core.rgvs.VerticalCleaner
 
     if opencl:
         NNEDI3 = core.nnedi3cl.NNEDI3CL
@@ -276,6 +283,9 @@ def aaf(                \
     repMode = [18] if isGray else [18, 0]
 
     if mode == "repair":
+      if hasattr(core,'zsmooth'):
+        return core.zsmooth.Repair(aa, inputClip, mode=repMode)
+      else:
         return core.rgvs.Repair(aa, inputClip, mode=repMode)
 
     if mode != "edge":

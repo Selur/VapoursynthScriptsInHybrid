@@ -489,9 +489,13 @@ def MultiRemoveGrain(input: vs.VideoNode, mode: Union[int, Sequence[int]] = 0,
     if loop < 0:
         raise ValueError(funcName + ': \"loop\" must be positive value!')
 
+    zsmooth = hasattr(core,'zsmooth')
     if isinstance(mode, list):
         for i in range(loop):
             for m in mode:
+              if zsmooth:
+                clip = core.zsmooth.RemoveGrain(input, mode=m) 
+              else:
                 clip = core.rgvs.RemoveGrain(input, mode=m)
     else:
         raise TypeError(funcName + ': \"mode\" must be an int, a list of ints or a list of a list of ints!')
@@ -646,7 +650,7 @@ def GradFun3(src: vs.VideoNode, thr: float = 0.35, radius: Optional[int] = None,
         dmask = mvf.GetPlane(src_8, 0)
         dmask = _Build_gf3_range_mask(dmask, mask)
         dmask = core.std.Expr([dmask], [mexpr])
-        dmask = core.rgvs.RemoveGrain(dmask, [22])
+        dmask = core.zsmooth.RemoveGrain(dmask, [22]) if hasattr(core,'zsmooth') else core.rgvs.RemoveGrain(dmask, [22])
         if mask > 1:
             dmask = core.std.Convolution(dmask, matrix=[1, 2, 1, 2, 4, 2, 1, 2, 1])
             if mask > 2:
@@ -1296,14 +1300,23 @@ def Sort(input: vs.VideoNode, order: int = 1, planes: PlanesType = None,
     if mode == 'min':
         order = 10 - order # the nth smallest value in 3x3 neighbourhood is the same as the (10-n)th largest value
 
+    zsmooth = hasattr(core,'zsmooth')
     if order == 1:
         sort = core.std.Maximum(input, planes=planes)
     elif order in range(2, 5):
+      if zsmooth:
+        sort = core.zsmooth.Repair(core.std.Maximum(input, planes=planes), input,
+                                [(order if i in planes else 0) for i in range(input.format.num_planes)])
+      else:
         sort = core.rgvs.Repair(core.std.Maximum(input, planes=planes), input,
                                 [(order if i in planes else 0) for i in range(input.format.num_planes)])
     elif order == 5:
         sort = core.std.Median(input, planes=planes)
     elif order in range(6, 9):
+      if zsmooth:
+        sort = core.zsmooth.Repair(core.std.Minimum(input, planes=planes), input,
+                                [((10 - order) if i in planes else 0) for i in range(input.format.num_planes)])
+      else:
         sort = core.rgvs.Repair(core.std.Minimum(input, planes=planes), input,
                                 [((10 - order) if i in planes else 0) for i in range(input.format.num_planes)])
     else: # order == 9
@@ -2237,10 +2250,17 @@ def SeeSaw(clp: vs.VideoNode, denoised: Optional[vs.VideoNode] = None, NRlimit: 
     tame = core.std.Expr([clp, denoised], [tameexpr])
 
     head = _SeeSaw_sharpen2(tame, Sstr, Spower, Szp, SdampLo, SdampHi, 4, diff)
-
+    zsmooth = hasattr(core,'zsmooth')
     if ssx == 1. and ssy == 1.:
+      if zsmooth:
+        last = core.zsmooth.Repair(_SeeSaw_sharpen2(tame, Sstr, Spower, Szp, SdampLo, SdampHi, Smode, diff), head, [1])
+      else:
         last = core.rgvs.Repair(_SeeSaw_sharpen2(tame, Sstr, Spower, Szp, SdampLo, SdampHi, Smode, diff), head, [1])
     else:
+      if zsmooth:
+        last = core.zsmooth.Repair(_SeeSaw_sharpen2(tame.resize.Lanczos(xss, yss), Sstr, Spower, Szp, SdampLo, SdampHi, Smode, diff),
+            head.resize.Bicubic(xss, yss, filter_param_a=-0.2, filter_param_b=0.6), [1]).resize.Lanczos(ox, oy)
+      else:
         last = core.rgvs.Repair(_SeeSaw_sharpen2(tame.resize.Lanczos(xss, yss), Sstr, Spower, Szp, SdampLo, SdampHi, Smode, diff),
             head.resize.Bicubic(xss, yss, filter_param_a=-0.2, filter_param_b=0.6), [1]).resize.Lanczos(ox, oy)
 
@@ -2313,6 +2333,9 @@ def _SeeSaw_sharpen2(clp: vs.VideoNode, strength: float, power: float, zp: float
     elif rg == 20:
         method = clp.std.Convolution(matrix=[1, 1, 1, 1, 1, 1, 1, 1, 1], planes=[0])
     else:
+      if hasattr(core,'zsmooth'):
+        method = clp.zsmooth.RemoveGrain([rg] if isGray else [rg, 0])
+      else:
         method = clp.rgvs.RemoveGrain([rg] if isGray else [rg, 0])
 
     sharpdiff = core.std.MakeDiff(clp, method, [0]).std.Lut(function=get_lut1, planes=[0])
@@ -2407,7 +2430,7 @@ def abcxyz(clp: vs.VideoNode, rad: float = 3.0, ss: float = 1.5) -> vs.VideoNode
     y = core.std.Expr([clp, x], ['x {a} + y < x {a} + x {b} - y > x {b} - y ? ? x y - abs * x {c} x y - abs - * + {c} /'.format(
         a=scale(8, bits), b=scale(24, bits), c=scale(32, bits))])
 
-    z1 = core.rgvs.Repair(clp, y, [1])
+    z1 = core.zsmooth.Repair(clp, y, [1]) if hasattr(core,'zsmooth') else core.rgvs.Repair(clp, y, [1])
 
     if ss != 1.:
         maxbig = core.std.Maximum(y).resize.Bicubic(haf_m4(ox*ss), haf_m4(oy*ss), filter_param_a=1/3, filter_param_b=1/3)
@@ -4300,7 +4323,10 @@ def YAHRmod(clp: vs.VideoNode, blur: int = 2, depth: int = 32, **limit_filter_ar
     w1b1 = core.std.Convolution(haf_MinBlur(w1, 2), matrix=[1, 2, 1, 2, 4, 2, 1, 2, 1])
     w1b1D = core.std.MakeDiff(w1, w1b1)
     w1b1D = mvf.LimitFilter(b1D, w1b1D, **limit_filter_args) # The only modification
-    DD = core.rgvs.Repair(b1D, w1b1D, 13)
+    if hasattr(core,'zsmooth'):
+      DD = core.zsmooth.Repair(b1D, w1b1D, 13)
+    else:
+      DD = core.rgvs.Repair(b1D, w1b1D, 13)
     DD2 = core.std.MakeDiff(b1D, DD)
     last = core.std.MakeDiff(clp, DD2)
 
@@ -5248,7 +5274,10 @@ def YAHRmask(clp: vs.VideoNode, expand: float = 5, warpdepth: int = 32, blur: in
 
         w1b1 = core.std.Convolution(haf_MinBlur(w1, 2), matrix=[1, 2, 1, 2, 4, 2, 1, 2, 1])
         w1b1D = core.std.MakeDiff(w1, w1b1)
-        DD = core.rgvs.Repair(b1D, w1b1D, 13)
+        if hasattr(core,'zsmooth'):
+          DD = core.zsmooth.Repair(b1D, w1b1D, 13)
+        else:
+          DD = core.rgvs.Repair(b1D, w1b1D, 13)
         DD2 = core.std.MakeDiff(b1D, DD)
         yahr = core.std.MakeDiff(clp, DD2)
     else:
@@ -5867,9 +5896,13 @@ def MSR(clip: vs.VideoNode, *passes: numbers.Real, radius: int = 1, planes: Plan
 
     def blur(clip: vs.VideoNode, num_pass: int) -> vs.VideoNode:
         if clip.format.sample_type == vs.INTEGER and radius == 1:
+          if hasattr(core,'zsmooth'):
+            for _ in range(num_pass):
+                clip = clip.zsmooth.RemoveGrain([(20 if i in planes else 0) for i in range(clip.format.num_planes)]) # type: ignore
+          else:
             for _ in range(num_pass):
                 clip = clip.rgvs.RemoveGrain([(20 if i in planes else 0) for i in range(clip.format.num_planes)]) # type: ignore
-            return clip
+          return clip
         else:
             return clip.std.BoxBlur(hpasses=num_pass, hradius=radius, vpasses=num_pass, vradius=radius, planes=planes)
 
@@ -7410,6 +7443,9 @@ def haf_LSFmod(input, strength=None, Smode=None, Smethod=None, kernel=11, preblu
     elif kernel == 20:
         RemoveGrain = functools.partial(core.std.Convolution, matrix=[1, 1, 1, 1, 1, 1, 1, 1, 1])
     else:
+      if hasattr(core,'zsmooth'):
+        RemoveGrain = functools.partial(core.zsmooth.RemoveGrain, mode=[kernel])
+      else:
         RemoveGrain = functools.partial(core.rgvs.RemoveGrain, mode=[kernel])
 
     if soft == -1:
@@ -7486,6 +7522,9 @@ def haf_LSFmod(input, strength=None, Smode=None, Smethod=None, kernel=11, preblu
     edge = edge.std.Expr(expr=[f'x {1 / factor if isInteger else factor} * {128 if edgemaskHQ else 32} / 0.86 pow 255 * {factor if isInteger else 1 / factor} *'])
 
     if Lmode < 0:
+      if hasattr(core,'zsmooth'):
+        limit1 = core.zsmooth.Repair(normsharp, tmp, mode=[abs(Lmode)])
+      else:
         limit1 = core.rgvs.Repair(normsharp, tmp, mode=[abs(Lmode)])
     elif Lmode == 0:
         limit1 = normsharp
@@ -7548,7 +7587,10 @@ def haf_LSFmod(input, strength=None, Smode=None, Smethod=None, kernel=11, preblu
 
         shrpD = core.std.MakeDiff(In, out, planes=[0])
         expr = f'x {neutral} - abs y {neutral} - abs < x y ?'
-        shrpL = core.std.Expr([core.rgvs.Repair(shrpD, core.std.MakeDiff(In, src, planes=[0]), mode=[1] if isGray else [1, 0]), shrpD], expr=[expr] if isGray else [expr, ''])
+        if hasattr(core,'zsmooth'):
+          shrpL = core.std.Expr([core.zsmooth.Repair(shrpD, core.std.MakeDiff(In, src, planes=[0]), mode=[1] if isGray else [1, 0]), shrpD], expr=[expr] if isGray else [expr, ''])
+        else:
+          shrpL = core.std.Expr([core.rgvs.Repair(shrpD, core.std.MakeDiff(In, src, planes=[0]), mode=[1] if isGray else [1, 0]), shrpD], expr=[expr] if isGray else [expr, ''])
         return core.std.MakeDiff(In, shrpL, planes=[0])
     else:
         return out

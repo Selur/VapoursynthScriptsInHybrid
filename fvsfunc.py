@@ -340,6 +340,7 @@ def GradFun3(src, thr=None, radius=None, elast=None, mask=None, mode=None, ampo=
         dmask = mvf.GetPlane(src_8, 0)
         dmask = muf._Build_gf3_range_mask(dmask, mask)
         dmask = core.std.Expr([dmask], [mexpr])
+        
         dmask = core.rgvs.RemoveGrain(dmask, [22])
         if mask > 1:
             dmask = core.std.Convolution(dmask, matrix=[1,2,1,2,4,2,1,2,1])

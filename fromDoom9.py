@@ -66,9 +66,9 @@ def DeStripe(clip: vs.VideoNode, rad: int=2, offset: int=0, thr: int=256, vertic
 ##
 def StabilizeIT(clip: vs.VideoNode, div: float=2.0, initZoom: float=1.0, zoomMax: float=1.0, rotMax: float=10.0, pixelAspect: float=1.0, thSCD1: int=800, thSCD2: int=150, stabMethod: int=1, cutOff: float=0.33, anaError: float=30.0, rgMode: int=4):
   zsmooth = hasattr(core,'zsmooth')
-  pf = core.rgvs.RemoveGrain(clip=clip, mode=rgMode) if zsmooth else core.rgvs.RemoveGrain(clip=clip, mode=rgMode)
+  pf = core.zsmooth.RemoveGrain(clip=clip, mode=rgMode) if zsmooth else core.rgvs.RemoveGrain(clip=clip, mode=rgMode)
   pf = core.resize.Bilinear(clip=pf, width=int(pf.width/div), height=int(pf.height/div))
-  pf = core.rgvs.RemoveGrain(clip=clip, mode=rgMode) if zsmooth else core.rgvs.RemoveGrain(clip=clip, mode=rgMode)
+  pf = core.zsmooth.RemoveGrain(clip=clip, mode=rgMode) if zsmooth else core.rgvs.RemoveGrain(clip=clip, mode=rgMode)
   pf = core.resize.Bilinear(clip=pf, width=pf.width*div, height=pf.height*div) 
   super = core.mv.Super(clip=pf) 
   vectors = core.mv.Analyse(super=super, isb=False)
@@ -145,6 +145,8 @@ def Small_Deflicker(clip: vs.VideoNode, width: int=0, height: int=0, preset: int
   clip2 = core.resize.Bicubic(clip2, clip.width,clip.height)
   clip2 = core.std.MakeDiff(clip, clip2, planes=[0, 1, 2])
   if rep:
+    if hasattr(core,'zsmooth'):
+      return core.zsmooth.Repair(clip2, clip, mode=[10, 10, 10])  
     return core.rgvs.Repair(clip2, clip, mode=[10, 10, 10])
   return clip2
 

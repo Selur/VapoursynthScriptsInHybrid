@@ -152,7 +152,10 @@ def sharpen(clip, mode=1, sstr=2.0, cstr=None, xstr=0.19, lstr=1.49, pstr=1.272,
     if xstr >= 0.01:
         expr = 'x x y - 9.9 * +'
         xyshrp = core.std.Expr(clips=[shrp, core.std.Convolution(shrp, matrix=[1, 1, 1, 1, 1, 1, 1, 1, 1])], expr=expr)
-        rpshrp = core.rgvs.Repair(clip=xyshrp, repairclip=shrp, mode=[12])
+        if hasattr(core, 'zsmooth'):
+          rpshrp = core.zsmooth.Repair(clip=xyshrp, repairclip=shrp, mode=[12])
+        else:
+          rpshrp = core.rgvs.Repair(clip=xyshrp, repairclip=shrp, mode=[12])
         shrp = core.std.Merge(clipa=shrp, clipb=rpshrp, weight=[xstr])
 
     if src.format.color_family != vs.GRAY:
