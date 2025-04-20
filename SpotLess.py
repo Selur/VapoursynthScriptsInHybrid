@@ -1,10 +1,6 @@
 import vapoursynth as vs
 core = vs.core
 
-# 2024.10.19: fix bug and made adjustments optional
-# 2024.10.18: extended the script to also filter first and last frame
-# 2025.04.09: added iterations, requestlinear, debugmask
-
 def SpotLess(
     clip: vs.VideoNode,
     radT: int = 1,
@@ -74,12 +70,12 @@ def SpotLess(
         - If chroma=False, only the luma plane is denoised.
         - Requires mvtools, tmedian, and optionally zsmooth plugins.
     """
-    core = vs.core
+    
     if radT < 1 or radT > 10:
         raise ValueError("radT must be between 1 and 10")
     if pel is None:
         pel = 1 if clip.width > 960 else 2
-    if not pel in [1, 2, 4]:
+    if pel not in [1, 2, 4]:
         raise ValueError("pel must be 1, 2 or 4")
 
     isGRAY = clip.format.color_family == vs.GRAY
@@ -112,8 +108,10 @@ def SpotLess(
     R = core.mv.Recalculate
     C = core.mv.Compensate
 
+    # Mirror at start/end if requested
     if mStart or mEnd:
-        head = core.std.Reverse(core.std.Trim(clip, 0, radT)) if mStart else None
+        # Only mirror frames 1…radT (exactly radT frames) to avoid off-by-one
+        head = core.std.Reverse(core.std.Trim(clip, 1, radT)) if mStart else None
         tail = core.std.Reverse(core.std.Trim(clip, clip.num_frames - radT, clip.num_frames - 1)) if mEnd else None
         if head and tail:
             clip = head + clip + tail
@@ -161,14 +159,14 @@ def SpotLess(
         out = core.std.SelectEvery(out, radT * 2 + 1, radT)
         denoised = out
 
+    # Remove mirrored start/end again
     if mStart:
         denoised = core.std.Trim(denoised, radT, denoised.num_frames - 1)
     if mEnd:
-        denoised = core.std.Trim(denoised, 0, denoised.num_frames - 1 - radT)       
+        denoised = core.std.Trim(denoised, 0, denoised.num_frames - 1 - radT)
 
     if debugmask:
         mask = core.std.Expr([clip, denoised], expr=["x y - abs"])
         return core.std.StackVertical([clip, denoised, mask])
 
     return core.std.AssumeFPS(denoised, fpsnum=fpsnum, fpsden=fpsden)
-
