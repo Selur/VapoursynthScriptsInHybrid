@@ -1001,8 +1001,9 @@ def HQDeringmod(
     if smoothed is None:
         if nrmode <= 0:
             # Currently the CPU backend only supports `sbsize == 16`
-            useDFTTest2 = (cuda or sbsize == 16) and hasattr(core,'dfttest2')  
+            useDFTTest2 = (cuda or sbsize == 16) and hasattr(core,'dfttest2_nvrt')  
             if useDFTTest2:
+                import dfttest2
                 if sbsize == 16:
                     # NVRTC is faster than cuFFT but only supports `sbsize == 16`
                     backend = dfttest2.Backend.NVRTC if cuda else dfttest2.Backend.CPU

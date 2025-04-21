@@ -794,8 +794,12 @@ def QTGMC(
             dnWindow = mvf.BM3D(noiseWindow, radius1=NoiseTR, sigma=[Sigma if plane in CNplanes else 0 for plane in range(3)])
         elif Denoiser == 'dfttest':
           if opencl:
-            if hasattr(core, 'dfttest2'):  
-              dnWindow = dfttest2.DFTTest(noiseWindow, sigma=Sigma * 4, tbsize=noiseTD, planes=CNplanes, backend=dfttest2.Backend.NVRTC)
+            if hasattr(core, 'dfttest2_nvrtc'):  
+              try:
+                 import dfttest2
+                 dnWindow = dfttest2.DFTTest(noiseWindow, sigma=Sigma * 4, tbsize=noiseTD, planes=CNplanes)
+              except ModuleNotFoundError:
+                 dnWindow = noiseWindow.dfttest.DFTTest(sigma=Sigma * 4, tbsize=noiseTD, planes=CNplanes)
             else:
               dnWindow = noiseWindow.dfttest.DFTTest(sigma=Sigma * 4, tbsize=noiseTD, planes=CNplanes)   
           else:
