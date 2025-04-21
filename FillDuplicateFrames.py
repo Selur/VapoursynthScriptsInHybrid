@@ -11,7 +11,6 @@ fdf = FillDuplicateFrames(clip, debug=True, thresh=0.001, method='SVP')
 clip = fdf.out
 
 Replaces duplicate frames with interpolations.
-v0.0.3
 0.0.4 removed and added back RGBH support or RIFE
 0.0.3 allow to set device_index for RIFE and support RGBH input for RIFE
 0.0.4 removed RGBH since RIFE ncnn does not support it

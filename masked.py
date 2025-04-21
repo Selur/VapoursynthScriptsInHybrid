@@ -1,5 +1,6 @@
 import vapoursynth as vs
-from typing import Union
+from typing import Union, List, Optional, Tuple
+core = vs.core
 
 # collection of Mask filters.
 
@@ -7,7 +8,6 @@ from typing import Union
 # draft=True is a lot faster, albeit less accurate
 # from https://blog.kageru.moe/legacy/edgemasks.html
 def retinex_edgemask(src: vs.VideoNode, sigma: int=1, draft: bool=False) -> vs.VideoNode:
-    core = vs.core
     import mvsfunc as mvf
     src = mvf.Depth(src, 16)
     luma = mvf.GetPlane(src, 0)
@@ -23,7 +23,6 @@ def retinex_edgemask(src: vs.VideoNode, sigma: int=1, draft: bool=False) -> vs.V
 # more information: https://ddl.kageru.moe/konOJ.pdf
 # from https://blog.kageru.moe/legacy/edgemasks.html
 def kirsch(src: vs.VideoNode) -> vs.VideoNode:
-    core = vs.core
     w = [5]*3 + [-3]*5
     weights = [w[-i:] + w[:-i] for i in range(4)]
     c = [src.std.Convolution((w[:4]+[0]+w[4:]), saturate=False) for w in weights]
@@ -34,7 +33,6 @@ def kirsch(src: vs.VideoNode) -> vs.VideoNode:
 # the internal filter is also a little brighter
 # from https://blog.kageru.moe/legacy/edgemasks.html
 def fast_sobel(src: vs.VideoNode) -> vs.VideoNode:
-    core = vs.core
     sx = src.std.Convolution([-1, -2, -1, 0, 0, 0, 1, 2, 1], saturate=False)
     sy = src.std.Convolution([-1, 0, 1, -2, 0, 2, -1, 0, 1], saturate=False)
     return core.std.Expr([sx, sy], 'x y max')
@@ -52,7 +50,6 @@ def bloated_edgemask(src: vs.VideoNode) -> vs.VideoNode:
 
 # https://github.com/DeadNews/dnfunc/blob/f5d22057e424fb3b8bd80d1aadd0c2ed2b7e71d5/dnfunc.py#L1212                                                                              
 def kirsch2(clip_y: vs.VideoNode) -> vs.VideoNode:
-    core = vs.core
     n = core.std.Convolution(clip_y, [5, 5, 5, -3, 0, -3, -3, -3, -3], divisor=3, saturate=False)
     nw = core.std.Convolution(clip_y, [5, 5, -3, 5, 0, -3, -3, -3, -3], divisor=3, saturate=False)
     w = core.std.Convolution(clip_y, [5, -3, -3, 5, 0, -3, 5, -3, -3], divisor=3, saturate=False)
@@ -70,7 +67,6 @@ def scale8(x, newmax):
         return x * newmax // 0xFF
 
 def CartoonEdges(clip, low=0, high=255):
-    core = vs.core
     """Should behave like mt_edge(mode="cartoon")"""
     valuerange = (1 << clip.format.bits_per_sample)
     maxvalue = valuerange - 1
@@ -82,7 +78,6 @@ def CartoonEdges(clip, low=0, high=255):
                                  .format(low=low, high=high, maxvalue=maxvalue), ''])
 
 def RobertsEdges(clip, low=0, high=255):
-    core = vs.core
     """Should behave like mt_edge(mode="roberts")"""
     valuerange = (1 << clip.format.bits_per_sample)
     maxvalue = valuerange - 1
@@ -97,7 +92,6 @@ def RobertsEdges(clip, low=0, high=255):
 def dehalo_mask(src: vs.VideoNode, expand: float = 0.5, iterations: int = 2, brz: int = 255, shift: int = 8) -> vs.VideoNode:
     from vsutil import depth, iterate, get_depth, get_y
     from math import sqrt
-    core = vs.core
     """
     Based on muvsfunc.YAHRmask(), stand-alone version with some tweaks.
 
@@ -155,3 +149,4 @@ def hue_mask(clip: vs.VideoNode, min_hue: Union[float, int], max_hue: Union[floa
     
     # Ensure mask is 8-bit grayscale
     return core.resize.Bicubic(mask, format=vs.GRAY8)
+

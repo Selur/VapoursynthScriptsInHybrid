@@ -795,11 +795,7 @@ def QTGMC(
         elif Denoiser == 'dfttest':
           if opencl:
             if hasattr(core, 'dfttest2'):  
-              try:
-                 dfttest2 = importlib.import_module('dfttest2')
-                 dnWindow = dfttest2.DFTTest(noiseWindow, sigma=Sigma * 4, tbsize=noiseTD, planes=CNplanes, backend=dfttest2.Backend.NVRTC)
-              except ModuleNotFoundError:
-                 dnWindow = noiseWindow.dfttest.DFTTest(sigma=Sigma * 4, tbsize=noiseTD, planes=CNplanes)
+              dnWindow = dfttest2.DFTTest(noiseWindow, sigma=Sigma * 4, tbsize=noiseTD, planes=CNplanes, backend=dfttest2.Backend.NVRTC)
             else:
               dnWindow = noiseWindow.dfttest.DFTTest(sigma=Sigma * 4, tbsize=noiseTD, planes=CNplanes)   
           else:

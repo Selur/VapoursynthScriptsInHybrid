@@ -338,10 +338,7 @@ def MCTemporalDenoise(i, radius=None, pfMode=3, sigma=None, twopass=None, useTTm
     pointresize_args = dict(width=xn, height=yn, src_left=-xf / 2, src_top=-yf / 2, src_width=xn, src_height=yn)
     i = i.resize.Point(**pointresize_args)
 
-    dfttest2 = None
-    if cuda and hasattr(core,'dfttest2_nvrtc'):
-       import importlib
-       dfttest2 = importlib.import_module('dfttest2')
+    useDFTTest2 = cuda and hasattr(core,'dfttest2_nvrtc')
     
     ### PREFILTERING
     fft3d_args = dict(planes=planes, bw=bwbh, bh=bwbh, bt=bt, ow=owoh, oh=owoh, ncpu=ncpu)
@@ -355,7 +352,7 @@ def MCTemporalDenoise(i, radius=None, pfMode=3, sigma=None, twopass=None, useTTm
         else:                              
             p = i.fft3dfilter.FFT3DFilter(sigma=sigma * 0.8, sigma2=sigma * 0.6, sigma3=sigma * 0.4, sigma4=sigma * 0.2, **fft3d_args)
     elif pfMode >= 3:
-        if dfttest2:
+        if useDFTTest2:
           p = dfttest2.DFTTest(i, tbsize=1, slocation=[0.0,4.0, 0.2,9.0, 1.0,15.0], planes=planes, backend=dfttest2.Backend.NVRTC)
         else:
           p = i.dfttest.DFTTest(tbsize=1, slocation=[0.0,4.0, 0.2,9.0, 1.0,15.0], planes=planes)
@@ -546,7 +543,7 @@ def MCTemporalDenoise(i, radius=None, pfMode=3, sigma=None, twopass=None, useTTm
         mP = AvsPrewitt(GetPlane(smP, 0))
         mS = mt_expand_multi(mP, sw=ECrad, sh=ECrad).std.Inflate()
         mD = core.std.Expr([mS, mP.std.Inflate()], expr=[f'x y - {ECthr} <= 0 x y - ?']).std.Inflate().std.Convolution(matrix=[1, 1, 1, 1, 1, 1, 1, 1, 1])
-        if dfttest2:
+        if useDFTTest2:
           smP = core.std.MaskedMerge(smP, DeHalo_alpha(dfttest2.DFTTest(smP, tbsize=1, planes=planes), darkstr=0), mD, planes=planes, backend=dfttest2.Backend.NVRTC)
         else:
           smP = core.std.MaskedMerge(smP, DeHalo_alpha(smP.dfttest.DFTTest(tbsize=1, planes=planes), darkstr=0), mD, planes=planes)
