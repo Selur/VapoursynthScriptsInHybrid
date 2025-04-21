@@ -118,10 +118,11 @@ def HQDeringmod(
     if smoothed is None:
         if nrmode <= 0:
           useDFTTest2 = false
+          # NVRTC is faster than cuFFT but only supports `sbsize == 16`
           if cuda and sbsize == 16:
-            useDFTTest2 = hasattr(core,'dfttest2')            
+            useDFTTest2 = hasattr(core,'dfttest2_nvrtc')            
           if useDFTTest2:
-              # NVRTC is faster than cuFFT but only supports `sbsize == 16`
+              import dfttest2
               smoothed = dfttest2.DFTTest(input, sbsize=sbsize, sosize=sosize, tbsize=1, slocation=[0.0, sigma2, 0.05, sigma, 0.5, sigma, 0.75, sigma2, 1.0, 0.0], planes=planes, backend=dfttest2.Backend.NVRTC)
           else:                      
             smoothed = input.dfttest.DFTTest(sbsize=sbsize, sosize=sosize, tbsize=1, slocation=[0.0, sigma2, 0.05, sigma, 0.5, sigma, 0.75, sigma2, 1.0, 0.0], planes=planes)
