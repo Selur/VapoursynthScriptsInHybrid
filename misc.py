@@ -172,3 +172,49 @@ def Overlay(
     if base_orig is not None:
         last = last.resize.Point(format=base_orig.format)
     return last
+
+def ShiftLinesHorizontally(clip: vs.VideoNode, shift: int, ymin: int, ymax: int) -> vs.VideoNode:
+    # Validate clip format and subsampling
+    if clip.format.color_family != vs.YUV or clip.format.subsampling_w != 0 or clip.format.subsampling_h != 0:
+        raise ValueError("ShiftLinesHorizontalRange: only YUV444 input is supported.")
+    
+    # Ensure ymin and ymax are within valid range
+    if ymin < 0 or ymin >= clip.height:
+        raise ValueError(f"ShiftLinesHorizontalRange: ymin ({ymin}) is out of range.")
+    if ymax < ymin or ymax >= clip.height:
+        raise ValueError(f"ShiftLinesHorizontalRange: ymax ({ymax}) is out of range.")
+    
+    # If no shift is needed, return original clip
+    if shift == 0:
+        return clip
+
+    width = clip.width
+    height = clip.height
+
+    # Create shifted version of just the target lines
+    mid = clip.std.CropAbs(width=width, height=ymax-ymin+1, left=0, top=ymin)
+    black = core.std.BlankClip(mid, width=abs(shift), height=mid.height, color=[0, 128, 128])
+    
+    if shift > 0:
+        shifted_mid = core.std.StackHorizontal([black, mid.std.CropRel(right=shift)])
+    else:
+        shifted_mid = core.std.StackHorizontal([mid.std.CropRel(left=-shift), black])
+    
+    shifted_mid = shifted_mid.resize.Point(width=width, height=mid.height)
+
+    # Build the output clip by stacking:
+    # 1. Lines above ymin (unchanged)
+    # 2. Shifted lines (ymin to ymax)
+    # 3. Lines below ymax (unchanged)
+    parts = []
+    
+    if ymin > 0:
+        parts.append(clip.std.CropAbs(width=width, height=ymin, left=0, top=0))
+    
+    parts.append(shifted_mid)
+    
+    if ymax < height - 1:
+        parts.append(clip.std.CropAbs(width=width, height=height-ymax-1, left=0, top=ymax+1))
+    
+    return core.std.StackVertical(parts)
+    

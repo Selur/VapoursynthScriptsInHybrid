@@ -432,3 +432,80 @@ def RGBAdjust(rgb: vs.VideoNode, r: float=1.0, g: float=1.0, b: float=1.0, a: fl
   planes = [core.std.Levels(planes[p], gamma=g) if not g==1 else planes[p] for p, g in enumerate([rg, gg, bg])]
   rgb_adjusted = core.std.ShufflePlanes(planes, planes=[0,0,0], colorfamily = vs.RGB)
   return rgb_adjusted
+  
+  
+def AutoGain(clip: vs.VideoNode, gain_limit: float = 1.0, strength: float = 0.5, darken: bool = False) -> vs.VideoNode:
+    """
+    Dynamically adjusts the brightness and contrast of a clip based on its luminance range.
+    
+    Parameters:
+    clip (vs.VideoNode): Input clip. Must be YUV format (integer or float samples).
+    gain_limit (float): Limits maximum scaling percentage (0 = no gain/stretching, 100 = full gain). Default is 1.0.
+    strength (float): Strength of the adjustment. 0.0 = no adjustment, 1.0 = full adjustment. Default is 0.5.
+    darken (bool): If True, compresses dynamic range. If False, expands it. Default is False.
+
+    Returns:
+    vs.VideoNode: Processed clip with adjusted dynamic range, in original format.
+    """
+    import vapoursynth as vs
+    core = vs.core
+
+    if not clip.format:
+        raise ValueError("AutoGain: Variable format clips are not supported.")
+
+    fmt = clip.format
+
+    # Check supported formats
+    if fmt.color_family != vs.YUV:
+        raise ValueError("AutoGain: Only YUV color family is supported.")
+    if fmt.sample_type not in (vs.INTEGER, vs.FLOAT):
+        raise ValueError("AutoGain: Only integer and float sample types are supported.")
+
+    # Extract Y plane
+    Y = core.std.ShufflePlanes(clip, planes=0, colorfamily=vs.GRAY)
+
+    is_float = fmt.sample_type == vs.FLOAT
+    bits = fmt.bits_per_sample
+    peak = 1.0 if is_float else (1 << bits) - 1
+
+    props = core.std.PlaneStats(Y)
+
+    def apply_gain(n: int, f: vs.VideoFrame) -> vs.VideoNode:
+        avg = f.props.PlaneStatsAverage
+        min_ = f.props.PlaneStatsMin
+        max_ = f.props.PlaneStatsMax
+
+        y_range = max_ - min_
+
+        # Avoid division by zero if the range is zero
+        if y_range == 0:
+            scale = 1.0
+            offset = 0.0
+        else:
+            if darken:
+                # Compression: reduce contrast by moving toward average
+                scale = 1.0 - (gain_limit * strength)
+                offset = (1.0 - scale) * avg  # Shift toward the average to compress
+            else:
+                # Expansion: stretch contrast to use full available range
+                ideal_scale = peak / y_range
+                scale = 1.0 + (ideal_scale - 1.0) * (gain_limit * strength)
+                offset = -scale * min_  # Adjust the offset to use the full available range
+
+        # Calculate final expression (now strength=0 means no adjustment)
+        weight = max(min(strength, 1.0), 0.0)
+        expr = f"x {offset:.8f} + {scale:.8f} * {weight:.8f} * x {1.0-weight:.8f} * +"
+        return core.std.Expr([Y], expr=[expr])
+
+    # Adjusted luma (frame by frame)
+    Y_adj = core.std.FrameEval(Y, eval=apply_gain, prop_src=props)
+
+    if fmt.num_planes == 1:
+        result = Y_adj
+    else:
+        # Handle U and V planes separately and merge
+        U = core.std.ShufflePlanes(clip, planes=1, colorfamily=vs.GRAY)
+        V = core.std.ShufflePlanes(clip, planes=2, colorfamily=vs.GRAY)
+        result = core.std.ShufflePlanes([Y_adj, U, V], planes=[0, 0, 0], colorfamily=vs.YUV)
+
+    return result

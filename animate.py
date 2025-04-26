@@ -1,7 +1,7 @@
 import vapoursynth as vs
 from vapoursynth import core
 import functools
-import havsfunc
+import misc
 
 
 class Crossfade:
@@ -133,7 +133,7 @@ def distribute(n, clip, MAP, selection, **overlay_kwargs):
             clip = functools.reduce(lambda r, f: f(r, n, lower, upper), funcs, clip)
             change = True
     if change and selection is not None:
-        return havsfunc.Overlay(clip_master, clip, x=selection[2], y=selection[3], **overlay_kwargs)
+        return misc.Overlay(clip_master, clip, x=selection[2], y=selection[3], **overlay_kwargs)
     else:
         return clip
 
@@ -141,7 +141,7 @@ def distribute(n, clip, MAP, selection, **overlay_kwargs):
 def run(clip,
         MAP,
         selection=None,
-        mask=None, opacity=1.0, mode='normal', planes=None, mask_first_plane=True, # havsfunc.Overlay kwargs
+        mask=None, opacity=1.0, mode='normal', planes=None, mask_first_plane=True, # misc.Overlay kwargs
         placeholder = None):
     
     if placeholder is None:
