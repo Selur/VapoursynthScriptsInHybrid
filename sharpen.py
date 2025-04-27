@@ -1001,44 +1001,56 @@ def Padding(clip: vs.VideoNode, left: int = 0, right: int = 0, top: int = 0, bot
     
     
 def UnsharpMask(clip: vs.VideoNode, strength: int = 64, radius: int = 3, threshold: int = 8) -> vs.VideoNode:
-    """
-    Ported by Myrsloik
+    """Unsharp masking for sharpening a clip.
+    It's a sharpening method based on subtracting a blurred version of an image from the original and boosting the difference.
+
+    Threshold is specified in 8-bit scale and automatically scaled to the clip's bit depth.
     
-    Applies an unsharp mask filter to a given clip, which sharpens the image by enhancing edges.
-    
-    The function works by subtracting a blurred version of the clip from the original, then amplifying 
-    the difference based on the given strength. The threshold parameter determines the minimum difference
-    required for sharpening to take place, and the radius controls the size of the blur applied to the image.
-    
-    Args:
-        clip (vs.VideoNode): The input video clip to which the unsharp mask will be applied.
-        strength (Optional[int], default=64): The strength of the sharpening effect (higher values mean stronger sharpening).
-        radius (Optional[int], default=3): The radius of the blur filter to use for the unsharp mask.
-        threshold (Optional[int], default=8): The threshold for the difference between the original and blurred clip
-                                               that will be sharpened. Values between 0 and 255, with 8 being a typical starting point.
+    Parameters:
+    clip (vs.VideoNode): Input clip to be sharpened.
+    strength (int): Sharpening strength (0–128), default 64.
+    radius (int): Radius for the blur filter, default 3.
+    threshold (int): Minimum difference to apply sharpening (8-bit scale), default 8.
 
     Returns:
-        vs.VideoNode: The sharpened video clip after applying the unsharp mask.
+    vs.VideoNode: Sharpened video clip.
     """
     
-    # Calculate the maximum pixel value based on the bit depth of the clip
+    core = vs.core
+
+    # Choose Expr function: prefer akarin.Expr if available for faster execution
+    expr_func = core.akarin.Expr if hasattr(core, "akarin") else core.std.Expr
+
+    # Validate input parameters to avoid invalid or dangerous values
+    if strength < 0 or strength > 128:
+        raise ValueError("UnsharpMask: strength must be between 0 and 128.")
+    if radius < 1:
+        raise ValueError("UnsharpMask: radius must be at least 1.")
+    if threshold < 0:
+        raise ValueError("UnsharpMask: threshold must be non-negative.")
+    
+    # Calculate maximum pixel value for the clip's bit depth (e.g., 255 for 8-bit, 1023 for 10-bit)
     maxvalue = (1 << clip.format.bits_per_sample) - 1
-    
-    # Adjust the threshold to match the clip's color depth
+
+    # Adjust threshold from 8-bit range to native bit depth
     threshold = threshold * maxvalue // 255
+
+    # Precompute strength factor for later use in the expression
+    strength = strength / 128
+
+    # Create a blurred version of the clip using a fast box blur
+    blurclip = clip.std.BoxBlur(hradius=radius, vradius=radius, planes=[0])
+
+    # Define the sharpening expression:
+    # - If the absolute difference between original and blurred pixel exceeds threshold,
+    #   boost the difference scaled by strength and add to original.
+    # - Otherwise, leave pixel unchanged.
+    main_expr = f'x y - abs {threshold} > x y - {strength} * x + x ?'
     
-    # Apply convolution to blur the image horizontally and vertically
-    blurclip = clip.std.Convolution(matrix=[1] * (radius * 2 + 1), planes=0, mode='v')
-    blurclip = blurclip.std.Convolution(matrix=[1] * (radius * 2 + 1), planes=0, mode='h')
+    # Prepare expressions for each plane:
+    # - Apply sharpening only on luma (Y plane)
+    # - Pass chroma (Cb and Cr) planes through unchanged
+    expressions = [main_expr] + [""] * (clip.format.num_planes - 1)
     
-    # Create the expression to calculate the sharpened result
-    expressions = [
-        'x y - abs {} > x y - {} * x + x ?'.format(threshold, strength / 128)
-    ]
-    
-    # If the clip is not grayscale, append an empty expression (to handle color clips)
-    if clip.format.color_family != vs.GRAY:
-        expressions.append("")
-    
-    # Apply the expression to blend the original clip and the blurred clip
-    return core.std.Expr(clips=[clip, blurclip], expr=expressions)
+    # Apply the sharpening expression using the selected Expr function
+    return expr_func(clips=[clip, blurclip], expr=expressions)
