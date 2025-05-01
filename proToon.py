@@ -58,7 +58,8 @@ def mf_str_level(x: str, in_low: int, in_high: int, out_low: int, out_high: int,
 def Xsharpen(clip: vs.VideoNode, strength: int = 128, threshold: int = 8) -> vs.VideoNode:
     bits = clip.format.bits_per_sample
     expr = f"y x - x z - min {threshold} < x z - y x - < z y ? {strength / 256} * x {(256 - strength) / 256} * + x ?"
-    return core.std.Expr([clip, clip.std.Maximum(planes=0), clip.std.Minimum(planes=0)], [expr, ""])
+    EXPR = core.akarin.Expr if hasattr(core,'akarin') else core.std.Expr
+    return EXPR([clip, clip.std.Maximum(planes=0), clip.std.Minimum(planes=0)], [expr, ""])
 
 def merge_chroma(luma: vs.VideoNode, chroma: vs.VideoNode) -> vs.VideoNode:
     return core.std.ShufflePlanes([luma, chroma], planes=[0, 1, 2], colorfamily=vs.YUV)
@@ -78,34 +79,35 @@ def proToon(input: vs.VideoNode,
     thn = thinning / 16.0  # line thinning amount, 0-255
 
     # Create the edgemask
+    EXPR = core.akarin.Expr if hasattr(core,'akarin') else core.std.Expr
     if hasattr(core, 'zsmooth'):
-      edgemask = core.std.Expr(
+      edgemask = EXPR(EXPR(
           [input, core.zsmooth.RemoveGrain(input, 12)],
           expr=[mf_str_level("x y - abs 128 +", 132, 145, 0, 255, bits)]
-      ).zsmooth.RemoveGrain(12).std.Expr(expr=[mf_str_level("x", 0, 64, 0, 255, bits)])
+      ).zsmooth.RemoveGrain(12), expr=[mf_str_level("x", 0, 64, 0, 255, bits)])
     else:
-      edgemask = core.std.Expr(
+      edgemask = EXPR(EXPR(
           [input, core.rgvs.RemoveGrain(input, 12)],
           expr=[mf_str_level("x y - abs 128 +", 132, 145, 0, 255, bits)]
-      ).rgvs.RemoveGrain(12).std.Expr(expr=[mf_str_level("x", 0, 64, 0, 255, bits)])
+      ).rgvs.RemoveGrain(12), expr=[mf_str_level("x", 0, 64, 0, 255, bits)])
 
     exin = core.std.Maximum(input).std.Minimum()
-    diff = core.std.Expr(
+    diff = EXPR(
         [input, exin], 
         expr=[f"y {lum} < y {lum} ? x {thr} + > x y {lum} < y {lum} ? - 0 ? {127 * scale // 255} +"]
     )
-    thick = core.std.Expr(
+    thick = EXPR(
         [input, exin], 
         expr=[f"y {lum} < y {lum} ? x {thr} + > x y {lum} < y {lum} ? - 0 ? {str_value} * x +"]
     )
 
     darkened = (thinning == 0) and thick or core.std.MaskedMerge(
-        core.std.Expr(
+        EXPR(
             [core.std.Maximum(input), diff], 
             expr=[f"x y {127 * scale // 255} - {str_value} 1 + * +"]
         ), 
         thick, 
-        core.std.Expr(
+        EXPR(
             [core.std.Minimum(diff)], 
             expr=[f"x {127 * scale // 255} - {thn} * {scale} +"]
         ).std.Convolution(matrix=[1, 1, 1, 1, 1, 1, 1, 1, 1])

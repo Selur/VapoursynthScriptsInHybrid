@@ -282,8 +282,9 @@ def aaf(                \
 
     repMode = [18] if isGray else [18, 0]
 
+    zsmooth = hasattr(core,'zsmooth')
     if mode == "repair":
-      if hasattr(core,'zsmooth'):
+      if zsmooth:
         return core.zsmooth.Repair(aa, inputClip, mode=repMode)
       else:
         return core.rgvs.Repair(aa, inputClip, mode=repMode)
@@ -302,12 +303,13 @@ def aaf(                \
                              , inputClip.std.Minimum(planes=0)\
                              , planes=0)
     expr = 'x {i} > {estr} x {neutral} - {j} 90 / * {bstr} + ?'.format(i=scale(218, peak), estr=scale(estr, peak), neutral=neutral, j=estr - bstr, bstr=scale(bstr, peak))
-    mask = mask.std.Expr(expr=[expr] if isGray else [expr, ''])
+    EXPR = core.akarin.Expr if hasattr(core,'akarin') else core.std.Expr
+    mask = EXPR(mask, expr=[expr] if isGray else [expr, ''])
 
     merged = core.std.MaskedMerge(inputClip, aa, mask, planes=0)
     if aas > 0.84:
         return merged
-    return core.rgvs.Repair(merged, inputClip, mode=repMode)
+    return core.zsmooth.Repair(merged, inputClip, mode=repMode) if zsmooth else core.rgvs.Repair(merged, inputClip, mode=repMode)
 
 # Taken from sfrom vsutil
 def fallback(value: Optional[T], fallback_value: T) -> T:

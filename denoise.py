@@ -502,15 +502,15 @@ def MCTemporalDenoise(i, radius=None, pfMode=3, sigma=None, twopass=None, useTTm
     ### DENOISING: FIRST PASS
     dMVS = d.mv.Super(levels=1, **super_args)
     sm = MCTD_TTSM(d, dMVS, thSAD) if useTTmpSm else MCTD_MVD(d, dMVS, thSAD, thSADC)
-
+    EXPR = core.akarin.Expr if hasattr(core,'akarin') else core.std.Expr
     if limit <= -1:
         smD = core.std.MakeDiff(i, sm, planes=planes)
         expr = f'x {neutral} - abs y {neutral} - abs < x y ?'
-        DD = core.std.Expr([pD, smD], expr=[expr] if chroma or isGray else [expr, ''])
+        DD = EXPR([pD, smD], expr=[expr] if chroma or isGray else [expr, ''])
         smL = core.std.MakeDiff(i, DD, planes=planes)
     elif limit > 0:
         expr = f'x y - abs {limit} <= x x y - 0 < y {limit} - y {limit} + ? ?'
-        smL = core.std.Expr([sm, i], expr=[expr] if chroma or isGray else [expr, ''])
+        smL = EXPR([sm, i], expr=[expr] if chroma or isGray else [expr, ''])
     else:
         smL = sm
 
@@ -522,11 +522,11 @@ def MCTemporalDenoise(i, radius=None, pfMode=3, sigma=None, twopass=None, useTTm
         if limit2 <= -1:
             smD = core.std.MakeDiff(i, sm, planes=planes)
             expr = f'x {neutral} - abs y {neutral} - abs < x y ?'
-            DD = core.std.Expr([pD, smD], expr=[expr] if chroma or isGray else [expr, ''])
+            DD = EXPR([pD, smD], expr=[expr] if chroma or isGray else [expr, ''])
             smL = core.std.MakeDiff(i, DD, planes=planes)
         elif limit2 > 0:
             expr = f'x y - abs {limit2} <= x x y - 0 < y {limit2} - y {limit2} + ? ?'
-            smL = core.std.Expr([sm, i], expr=[expr] if chroma or isGray else [expr, ''])
+            smL = EXPR([sm, i], expr=[expr] if chroma or isGray else [expr, ''])
         else:
             smL = sm
 
@@ -543,7 +543,7 @@ def MCTemporalDenoise(i, radius=None, pfMode=3, sigma=None, twopass=None, useTTm
     if edgeclean:
         mP = AvsPrewitt(GetPlane(smP, 0))
         mS = mt_expand_multi(mP, sw=ECrad, sh=ECrad).std.Inflate()
-        mD = core.std.Expr([mS, mP.std.Inflate()], expr=[f'x y - {ECthr} <= 0 x y - ?']).std.Inflate().std.Convolution(matrix=[1, 1, 1, 1, 1, 1, 1, 1, 1])
+        mD = EXPR([mS, mP.std.Inflate()], expr=[f'x y - {ECthr} <= 0 x y - ?']).std.Inflate().std.Convolution(matrix=[1, 1, 1, 1, 1, 1, 1, 1, 1])
         if useDFTTest2:
           smP = core.std.MaskedMerge(smP, DeHalo_alpha(dfttest2.DFTTest(smP, tbsize=1, planes=planes), darkstr=0), mD, planes=planes, backend=dfttest2.Backend.NVRTC)
         else:
@@ -724,11 +724,12 @@ def mClean(clip, thSAD=400, chroma=True, sharp=10, rn=14, deband=0, depth=0, str
         import color
         expr = "x {a} < 0 x {b} > {p} 0 x {c} - {p} {a} {d} - / * - ? ?".format(a=32*i, b=45*i, c=35*i, d=65*i, p=peak)
         clean1 = core.std.Merge(clean2, core.std.MergeDiff(clean2, color.Tweak(TM(noise_diff), cont=1.008+0.00016*rn)), 0.3+rn*0.035)
-        clean2 = core.std.MaskedMerge(clean2, clean1, core.std.Expr([core.std.Expr([clean, clean.std.Invert()], 'x y min')], [expr]))
+        EXPR = core.akarin.Expr if hasattr(core,'akarin') else core.std.Expr
+        clean2 = core.std.MaskedMerge(clean2, clean1, EXPR([EXPR([clean, clean.std.Invert()], 'x y min')], [expr]))
 
     # Combining spatial detail enhancement with spatial noise reduction using prepared mask
     noise_diff = noise_diff.std.Binarize().std.Invert()
-    clean2 = core.std.MaskedMerge(clean2, clsharp if sharp else clean, core.std.Expr([noise_diff, clean.std.Sobel()], 'x y max'))
+    clean2 = core.std.MaskedMerge(clean2, clsharp if sharp else clean, EXPR([noise_diff, clean.std.Sobel()], 'x y max'))
 
     # Combining result of luma and chroma cleaning
     output = core.std.ShufflePlanes([clean2, filt], [0, 1, 2], vs.YUV)
@@ -758,7 +759,8 @@ def DitherLumaRebuild(src: vs.VideoNode, s0: float = 2.0, c: float = 0.0625, chr
     k = (s0 - 1) * c
     t = f'x {scale_value(16, 8, bits)} - {scale_value(219, 8, bits)} / 0 max 1 min' if is_integer else 'x 0 max 1 min'
     e = f'{k} {1 + c} {(1 + c) * c} {t} {c} + / - * {t} 1 {k} - * + ' + (f'{scale_value(256, 8, bits)} *' if is_integer else '')
-    return src.std.Expr(expr=e if is_gray else [e, f'x {neutral} - 128 * 112 / {neutral} +' if chroma and is_integer else ''])
+    EXPR = core.akarin.Expr if hasattr(core,'akarin') else core.std.Expr
+    return EXPR(src, expr=e if is_gray else [e, f'x {neutral} - 128 * 112 / {neutral} +' if chroma and is_integer else ''])
     
 def AvsPrewitt(clip: vs.VideoNode, planes: Optional[Union[int, Sequence[int]]] = None) -> vs.VideoNode:
     if not isinstance(clip, vs.VideoNode):
@@ -770,8 +772,8 @@ def AvsPrewitt(clip: vs.VideoNode, planes: Optional[Union[int, Sequence[int]]] =
         planes = list(plane_range)
     elif isinstance(planes, int):
         planes = [planes]
-
-    return core.std.Expr(
+    EXPR = core.akarin.Expr if hasattr(core,'akarin') else core.std.Expr
+    return EXPR(
         [
             clip.std.Convolution(matrix=[1, 1, 0, 1, 0, -1, 0, -1, -1], planes=planes, saturate=False),
             clip.std.Convolution(matrix=[1, 1, 1, 0, 0, 0, -1, -1, -1], planes=planes, saturate=False),

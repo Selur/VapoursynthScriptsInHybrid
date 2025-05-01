@@ -51,11 +51,11 @@ def DeHalo_alpha(
 
     ox = clp.width
     oy = clp.height
-
+    EXPR = core.akarin.Expr if hasattr(core,'akarin') else core.std.Expr
     halos = clp.resize.Bicubic(m4(ox / rx), m4(oy / ry), filter_param_a=1 / 3, filter_param_b=1 / 3).resize.Bicubic(ox, oy, filter_param_a=1, filter_param_b=0)
-    are = core.std.Expr([clp.std.Maximum(), clp.std.Minimum()], expr='x y -')
-    ugly = core.std.Expr([halos.std.Maximum(), halos.std.Minimum()], expr='x y -')
-    so = core.std.Expr(
+    are = EXPR([clp.std.Maximum(), clp.std.Minimum()], expr='x y -')
+    ugly = EXPR([halos.std.Maximum(), halos.std.Minimum()], expr='x y -')
+    so = EXPR(
         [ugly, are],
         expr=f'y x - y 0.000001 + / {scale_value(255, 8, bits)} * {scale_value(lowsens, 8, bits)} - y {scale_value(256, 8, bits)} + {scale_value(512, 8, bits)} / {highsens / 100} + *',
     )
@@ -68,9 +68,9 @@ def DeHalo_alpha(
       else:
         remove = core.rgvs.Repair(clp, lets, mode=1)
     else:
-        remove = core.std.Expr(
+        remove = EXPR(
             [
-                core.std.Expr(
+                EXPR(
                     [
                         clp.resize.Lanczos(m4(ox * ss), m4(oy * ss)),
                         lets.std.Maximum().resize.Bicubic(m4(ox * ss), m4(oy * ss), filter_param_a=1 / 3, filter_param_b=1 / 3),
@@ -81,7 +81,7 @@ def DeHalo_alpha(
             ],
             expr='x y max',
         ).resize.Lanczos(ox, oy)
-    them = core.std.Expr([clp, remove], expr=f'x y < x x y - {darkstr} * - x x y - {brightstr} * - ?')
+    them = EXPR([clp, remove], expr=f'x y < x x y - {darkstr} * - x x y - {brightstr} * - ?')
 
     if clp_orig is not None:
         them = core.std.ShufflePlanes([them, clp_orig], planes=[0, 1, 2], colorfamily=clp_orig.format.color_family)
@@ -132,9 +132,9 @@ def EdgeCleaner(c: vs.VideoNode, strength: int = 10, rep: bool = True, rmode: in
         main = core.zsmooth.Repair(main, c, mode=rmode)
       else:
         main = core.rgvs.Repair(main, c, mode=rmode)
+    EXPR = core.akarin.Expr if hasattr(core,'akarin') else core.std.Expr
     mask = (
-        AvsPrewitt(c)
-        .std.Expr(expr=f'x {scale_value(4, 8, bits)} < 0 x {scale_value(32, 8, bits)} > {peak} x ? ?')
+        EXPR(AvsPrewitt(c), expr=f'x {scale_value(4, 8, bits)} < 0 x {scale_value(32, 8, bits)} > {peak} x ? ?')
         .std.InvertMask()
         .std.Convolution(matrix=[1, 1, 1, 1, 1, 1, 1, 1, 1])
     )
@@ -149,7 +149,7 @@ def EdgeCleaner(c: vs.VideoNode, strength: int = 10, rep: bool = True, rmode: in
         RG = core.zsmooth.RemoveGrain if hasattr(core,'zsmooth') else core.rgvs.RemoveGrain
         clean = RG(c, mode=17)
         diff = core.std.MakeDiff(c, clean)
-        mask = AvsPrewitt(diff.std.Levels(min_in=scale_value(40, 8, bits), max_in=scale_value(168, 8, bits), gamma=0.35).RG(mode=7)).std.Expr(
+        mask = EXPR(AvsPrewitt(diff.std.Levels(min_in=scale_value(40, 8, bits), max_in=scale_value(168, 8, bits), gamma=0.35).RG(mode=7)),
             expr=f'x {scale_value(4, 8, bits)} < 0 x {scale_value(16, 8, bits)} > {peak} x ? ?'
         )
         final = core.std.MaskedMerge(final, c, mask)
@@ -245,7 +245,8 @@ def FineDehalo(
 
     vszip = hasattr(core,'vszip')
     # Keeps only the sharpest edges (line edges)
-    strong = edges.std.Expr(expr=f'x {scale_value(thmi, 8, bits)} - {thma - thmi} / 255 *')
+    EXPR = core.akarin.Expr if hasattr(core,'akarin') else core.std.Expr
+    strong = EXPR(edges, expr=f'x {scale_value(thmi, 8, bits)} - {thma - thmi} / 255 *')
     if is_float:
         strong = strong.vszip.Limiter() if vszip else strong.std.Limiter()
 
@@ -259,7 +260,7 @@ def FineDehalo(
     # Therefore we have to produce a mask to exclude these zones from the halo removal.
 
     # Includes more edges than previously, but ignores simple details
-    light = edges.std.Expr(expr=f'x {scale_value(thlimi, 8, bits)} - {thlima - thlimi} / 255 *')
+    light = EXPR(edges, expr=f'x {scale_value(thlimi, 8, bits)} - {thlima - thlimi} / 255 *')
     if is_float:
         light = light.vszip.Limiter() if vszip else light.std.Limiter()
 
@@ -271,7 +272,7 @@ def FineDehalo(
 
     # At this point, because the mask was made of a shades of grey, we may end up with large areas of dark grey after shrinking.
     # To avoid this, we amplify and saturate the mask here (actually we could even binarize it).
-    shrink = shrink.std.Expr(expr='x 4 *')
+    shrink = EXPR(shrink, expr='x 4 *')
     if is_float:
         shrink = shrink.vszip.Limiter() if vszip else shrink.std.Limiter()
 
@@ -286,23 +287,23 @@ def FineDehalo(
     # Previous mask may be a bit weak on the pure edge side, so we ensure that the main edges are really excluded.
     # We do not want them to be smoothed by the halo removal.
     if excl:
-        shr_med = core.std.Expr([strong, shrink], expr='x y max')
+        shr_med = EXPR([strong, shrink], expr='x y max')
     else:
         shr_med = strong
 
     # Subtracts masks and amplifies the difference to be sure we get 255 on the areas to be processed
-    outside = core.std.Expr([large, shr_med], expr='x y - 2 *')
+    outside = EXPR([large, shr_med], expr='x y - 2 *')
     if is_float:
         outside = outside.vszip.Limiter() if vszip else outside.std.Limiter()
 
     # If edge processing is required, adds the edgemask
     if edgeproc > 0:
-        outside = core.std.Expr([outside, strong], expr=f'x y {edgeproc * 0.66} * +')
+        outside = EXPR([outside, strong], expr=f'x y {edgeproc * 0.66} * +')
         if is_float:
             outside = outside.vszip.Limiter() if vszip else outside.std.Limiter()
 
     # Smooth again and amplify to grow the mask a bit, otherwise the halo parts sticking to the edges could be missed
-    outside = outside.std.Convolution(matrix=[1, 1, 1, 1, 1, 1, 1, 1, 1]).std.Expr(expr='x 2 *')
+    outside = EXPR(outside.std.Convolution(matrix=[1, 1, 1, 1, 1, 1, 1, 1, 1]), expr='x 2 *')
     if is_float:
         outside = outside.vszip.Limiter() if vszip else outside.std.Limiter()
 
@@ -360,8 +361,9 @@ def FineDehalo_contrasharp(dehaloed: vs.VideoNode, src: vs.VideoNode, level: flo
     else:
       bb2 = core.rgvs.Repair(bb, core.rgvs.Repair(bb, bb.ctmf.CTMF(radius=2), mode=1), mode=1)
     xd = core.std.MakeDiff(bb, bb2)
-    xd = xd.std.Expr(expr=f'x {neutral} - 2.49 * {level} * {neutral} +')
-    xdd = core.std.Expr(
+    EXPR = core.akarin.Expr if hasattr(core,'akarin') else core.std.Expr
+    xd = EXPR(xd, expr=f'x {neutral} - 2.49 * {level} * {neutral} +')
+    xdd = EXPR(
         [xd, core.std.MakeDiff(src, dehaloed)], expr=f'x {neutral} - y {neutral} - * 0 < {neutral} x {neutral} - abs y {neutral} - abs < x y ? ?'
     )
     last = core.std.MergeDiff(dehaloed, xdd)
@@ -426,8 +428,8 @@ def AvsPrewitt(clip: vs.VideoNode, planes: Optional[Union[int, Sequence[int]]] =
         planes = list(plane_range)
     elif isinstance(planes, int):
         planes = [planes]
-
-    return core.std.Expr(
+    EXPR = core.akarin.Expr if hasattr(core,'akarin') else core.std.Expr
+    return EXPR(
         [
             clip.std.Convolution(matrix=[1, 1, 0, 1, 0, -1, 0, -1, -1], planes=planes, saturate=False),
             clip.std.Convolution(matrix=[1, 1, 1, 0, 0, 0, -1, -1, -1], planes=planes, saturate=False),
@@ -548,5 +550,5 @@ def MinBlur(clp: vs.VideoNode, r: int = 1, planes: Optional[Union[int, Sequence[
             RG4 = LimitFilter(s16, depth(RG4, 16), thr=0.0625, elast=2, planes=planes)
         else:
             RG4 = clp.ctmf.CTMF(radius=3, planes=planes)
-
-    return core.std.Expr([clp, RG11, RG4], expr=['x y - x z - * 0 < x x y - abs x z - abs < y z ? ?' if i in planes else '' for i in plane_range])
+    EXPR = core.akarin.Expr if hasattr(core,'akarin') else core.std.Expr
+    return EXPR([clp, RG11, RG4], expr=['x y - x z - * 0 < x x y - abs x z - abs < y z ? ?' if i in planes else '' for i in plane_range])

@@ -11,11 +11,12 @@ def retinex_edgemask(src: vs.VideoNode, sigma: int=1, draft: bool=False) -> vs.V
     import mvsfunc as mvf
     src = mvf.Depth(src, 16)
     luma = mvf.GetPlane(src, 0)
+    EXPR = core.akarin.Expr if hasattr(core,'akarin') else core.std.Expr
     if draft:
-        ret = core.std.Expr(luma, 'x 65535 / sqrt 65535 *')
+        ret = EXPR(luma, 'x 65535 / sqrt 65535 *')
     else:
         ret = core.retinex.MSRCP(luma, sigma=[50, 200, 350], upper_thr=0.005)
-    mask = core.std.Expr([kirsch(luma), ret.tcanny.TCanny(mode=1, sigma=sigma).std.Minimum(coordinates=[1, 0, 1, 0, 0, 1, 0, 1])], 'x y +')
+    mask = EXPR([kirsch(luma), ret.tcanny.TCanny(mode=1, sigma=sigma).std.Minimum(coordinates=[1, 0, 1, 0, 0, 1, 0, 1])], 'x y +')
     return mask
 
 
@@ -26,7 +27,8 @@ def kirsch(src: vs.VideoNode) -> vs.VideoNode:
     w = [5]*3 + [-3]*5
     weights = [w[-i:] + w[:-i] for i in range(4)]
     c = [src.std.Convolution((w[:4]+[0]+w[4:]), saturate=False) for w in weights]
-    return core.std.Expr(c, 'x y max z max a max')
+    EXPR = core.akarin.Expr if hasattr(core,'akarin') else core.std.Expr
+    return EXPR(c, 'x y max z max a max')
 
 
 # should behave similar to std.Sobel() but faster since it has no additional high-/lowpass or gain.
@@ -35,7 +37,8 @@ def kirsch(src: vs.VideoNode) -> vs.VideoNode:
 def fast_sobel(src: vs.VideoNode) -> vs.VideoNode:
     sx = src.std.Convolution([-1, -2, -1, 0, 0, 0, 1, 2, 1], saturate=False)
     sy = src.std.Convolution([-1, 0, 1, -2, 0, 2, -1, 0, 1], saturate=False)
-    return core.std.Expr([sx, sy], 'x y max')
+    EXPR = core.akarin.Expr if hasattr(core,'akarin') else core.std.Expr
+    return EXPR([sx, sy], 'x y max')
 
 
 # a weird kind of edgemask that draws around the edges. probably needs more tweaking/testing
@@ -58,7 +61,8 @@ def kirsch2(clip_y: vs.VideoNode) -> vs.VideoNode:
     se = core.std.Convolution(clip_y, [-3, -3, -3, -3, 0, 5, -3, 5, 5], divisor=3, saturate=False)
     e = core.std.Convolution(clip_y, [-3, -3, 5, -3, 0, 5, -3, -3, 5], divisor=3, saturate=False)
     ne = core.std.Convolution(clip_y, [-3, 5, 5, -3, 0, 5, -3, -3, -3], divisor=3, saturate=False)
-    return core.std.Expr(
+    EXPR = core.akarin.Expr if hasattr(core,'akarin') else core.std.Expr
+    return EXPR(
         [n, nw, w, sw, s, se, e, ne],
         ["x y max z max a max b max c max d max e max"],
     )
@@ -74,7 +78,8 @@ def CartoonEdges(clip, low=0, high=255):
     low = scale8(low, maxvalue)
     high = scale8(high, maxvalue)
     edges = core.std.Convolution(clip, matrix=[0,-2,1,0,1,0,0,0,0], saturate=True)
-    return core.std.Expr(edges, ['x {high} >= {maxvalue} x {low} <= 0 x ? ?'
+    EXPR = core.akarin.Expr if hasattr(core,'akarin') else core.std.Expr
+    return EXPR(edges, ['x {high} >= {maxvalue} x {low} <= 0 x ? ?'
                                  .format(low=low, high=high, maxvalue=maxvalue), ''])
 
 def RobertsEdges(clip, low=0, high=255):
@@ -85,7 +90,7 @@ def RobertsEdges(clip, low=0, high=255):
     low = scale8(low, maxvalue)
     high = scale8(high, maxvalue)
     edges = core.std.Convolution(clip, matrix=[0,0,0,0,2,-1,0,-1,0], divisor=2, saturate=False)
-    return core.std.Expr(edges, ['x {high} >= {maxvalue} x {low} <= 0 x ? ?'
+    return EXPR(edges, ['x {high} >= {maxvalue} x {low} <= 0 x ? ?'
                                  .format(low=low, high=high, maxvalue=maxvalue), ''])
 
 # from https://github.com/dnjulek/jvsfunc/blob/main/jvsfunc/mask.py -> Tcanny
@@ -106,15 +111,16 @@ def dehalo_mask(src: vs.VideoNode, expand: float = 0.5, iterations: int = 2, brz
 
     src_b = depth(src, 8)
     luma = get_y(src_b)
-    vEdge = core.std.Expr([luma, luma.std.Maximum().std.Maximum()], [f'y x - {shift} - 128 *'])
-    mask1 = vEdge.tcanny.TCanny(sigma=sqrt(expand*2), mode=-1).std.Expr(['x 16 *'])
+    EXPR = core.akarin.Expr if hasattr(core,'akarin') else core.std.Expr
+    vEdge = EXPR([luma, luma.std.Maximum().std.Maximum()], [f'y x - {shift} - 128 *'])
+    mask1 = EXPR(vEdge.tcanny.TCanny(sigma=sqrt(expand*2), mode=-1), ['x 16 *'])
     mask2 = iterate(vEdge, core.std.Maximum, iterations)
     mask2 = iterate(mask2, core.std.Minimum, iterations)
     mask2 = mask2.std.Invert().std.Binarize(80)
     mask3 = mask2.std.Inflate().std.Inflate().std.Binarize(brz)
     mask4 = mask3 if brz < 255 else mask2
     mask4 = mask4.std.Convolution(matrix=[1, 2, 1, 2, 4, 2, 1, 2, 1])
-    mask = core.std.Expr([mask1, mask4], ['x y min'])
+    mask = EXPR([mask1, mask4], ['x y min'])
     return depth(mask, get_depth(src), range=1)
 
 
@@ -141,8 +147,9 @@ def hue_mask(clip: vs.VideoNode, min_hue: Union[float, int], max_hue: Union[floa
     hsl_clip = core.resize.Bicubic(clip, format=vs.YUV444P8, matrix_in_s="709")
     hue = core.std.ShufflePlanes(hsl_clip, planes=0, colorfamily=vs.GRAY)
     
+    EXPR = core.akarin.Expr if hasattr(core,'akarin') else core.std.Expr
     # Build the mask
-    mask = core.std.Expr(
+    mask = EXPR(
         [hue],
         expr=f"x {min_hue} >= x {max_hue} <= and 255 0 ?"
     )

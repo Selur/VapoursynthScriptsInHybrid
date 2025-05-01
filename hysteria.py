@@ -104,11 +104,12 @@ def Hysteria(clip, strength=1.0, usemask=True, lowthresh=6, highthresh=20, luma_
 
     # imitate mt_edge(mode=cartoon) (stolen from Frechdachs)
     noisymask = core.std.Convolution(clip, matrix=[0, -2, 1, 0, 1, 0, 0, 0, 0], planes=planes, saturate=True)
-    noisymask = core.std.Expr(noisymask, ['x {high} >= {maxvalue} x {low} <= 0 x ? ?'
+    EXPR = core.akarin.Expr if hasattr(core,'akarin') else core.std.Expr
+    noisymask = EXPR(noisymask, ['x {high} >= {maxvalue} x {low} <= 0 x ? ?'
                               .format(low=lowthresh, high=lowthresh, maxvalue=max_bitval)])
 
     cleanmask = core.std.Convolution(clip, matrix=[0, -2, 1, 0, 1, 0, 0, 0, 0], planes=planes, saturate=True)
-    cleanmask = core.std.Expr(cleanmask, ['x {high} >= {maxvalue} x {low} <= 0 x ? ?'
+    cleanmask = EXPR(cleanmask, ['x {high} >= {maxvalue} x {low} <= 0 x ? ?'
                               .format(low=highthresh, high=highthresh, maxvalue=max_bitval)])
 
     themask = core.misc.Hysteresis(cleanmask, noisymask)
@@ -122,9 +123,9 @@ def Hysteria(clip, strength=1.0, usemask=True, lowthresh=6, highthresh=20, luma_
 
     clipa = core.std.Inflate(clip, planes=[0])
     diffs = core.std.MakeDiff(clipa, clip)
-    diffs = core.std.Expr([diffs], ['x {mid} - {strength} *'.format(strength=strength, mid=mid)])
+    diffs = EXPR([diffs], ['x {mid} - {strength} *'.format(strength=strength, mid=mid)])
 
-    darkened = core.std.Expr([clip, diffs], [
+    darkened = EXPR([clip, diffs], [
         'x x {luma_cap} > 0 y {maxchg} > {maxchg} y {minchg} < 0 y ? ? ? -'.format(luma_cap=luma_cap, maxchg=maxchg,
                                                                                    minchg=minchg)])
 

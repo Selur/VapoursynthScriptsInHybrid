@@ -71,15 +71,15 @@ def LUTDeRainbow(input, cthresh=10, ythresh=10, y=True, linkUV=True, mask=False)
     input_plus_y = GetPlane(input_plus, 0)
     input_plus_u = GetPlane(input_plus, 1)
     input_plus_v = GetPlane(input_plus, 2)
-
-    average_y = core.std.Expr([input_minus_y, input_plus_y], expr=[f'x y - abs {ythresh} < {peak} 0 ?']).resize.Bilinear(input_u.width, input_u.height)
-    average_u = core.std.Expr([input_minus_u, input_plus_u], expr=[f'x y - abs {cthresh} < x y + 2 / 0 ?'])
-    average_v = core.std.Expr([input_minus_v, input_plus_v], expr=[f'x y - abs {cthresh} < x y + 2 / 0 ?'])
+    EXPR = core.akarin.Expr if hasattr(core,'akarin') else core.std.Expr
+    average_y = EXPR([input_minus_y, input_plus_y], expr=[f'x y - abs {ythresh} < {peak} 0 ?']).resize.Bilinear(input_u.width, input_u.height)
+    average_u = EXPR([input_minus_u, input_plus_u], expr=[f'x y - abs {cthresh} < x y + 2 / 0 ?'])
+    average_v = EXPR([input_minus_v, input_plus_v], expr=[f'x y - abs {cthresh} < x y + 2 / 0 ?'])
 
     umask = average_u.std.Binarize(threshold=21 << shift)
     vmask = average_v.std.Binarize(threshold=21 << shift)
     if useExpr:
-        themask = core.std.Expr([umask, vmask], expr=[f'x y + {peak + 1} < 0 {peak} ?'])
+        themask = EXPR([umask, vmask], expr=[f'x y + {peak + 1} < 0 {peak} ?'])
         if y:
             umask = core.std.MaskedMerge(core.std.BlankClip(average_y), average_y, umask)
             vmask = core.std.MaskedMerge(core.std.BlankClip(average_y), average_y, vmask)

@@ -34,21 +34,22 @@ def bbmod(c, cTop, cBottom, cLeft, cRight, thresh=128, blur=999):
 
         last = c2.std.CropAbs(width=cWidth * 2, height=2, top=cTop * 2)
         last = last.resize.Point(cWidth * 2, cTop * 2)
-        referenceBlurChroma = BicubicResize(BicubicResize(last.std.Expr(expr=[f'x {neutral} - abs 2 *', '']), blurWidth * 2, cTop * 2), cWidth * 2, cTop * 2)
+        EXPR = core.akarin.Expr if hasattr(core,'akarin') else core.std.Expr
+        referenceBlurChroma = BicubicResize(BicubicResize(EXPR(last, expr=[f'x {neutral} - abs 2 *', '']), blurWidth * 2, cTop * 2), cWidth * 2, cTop * 2)
         referenceBlur = BicubicResize(BicubicResize(last, blurWidth * 2, cTop * 2), cWidth * 2, cTop * 2)
 
         original = c2.std.CropAbs(width=cWidth * 2, height=cTop * 2)
 
         last = BicubicResize(original, blurWidth * 2, cTop * 2)
-        originalBlurChroma = BicubicResize(BicubicResize(last.std.Expr(expr=[f'x {neutral} - abs 2 *', '']), blurWidth * 2, cTop * 2), cWidth * 2, cTop * 2)
+        originalBlurChroma = BicubicResize(BicubicResize(EXPR(last, expr=[f'x {neutral} - abs 2 *', '']), blurWidth * 2, cTop * 2), cWidth * 2, cTop * 2)
         originalBlur = BicubicResize(BicubicResize(last, blurWidth * 2, cTop * 2), cWidth * 2, cTop * 2)
 
-        balancedChroma = core.std.Expr([original, originalBlurChroma, referenceBlurChroma], expr=['', f'z y / 8 min 0.4 max x {neutral} - * {neutral} +'])
+        balancedChroma = EXPR([original, originalBlurChroma, referenceBlurChroma], expr=['', f'z y / 8 min 0.4 max x {neutral} - * {neutral} +'])
         expr = 'z {i} - y {i} - / 8 min 0.4 max x {i} - * {i} +'.format(i=scale(16, peak))
-        balancedLuma = core.std.Expr([balancedChroma, originalBlur, referenceBlur], expr=[expr, 'z y - x +'])
+        balancedLuma = EXPR([balancedChroma, originalBlur, referenceBlur], expr=[expr, 'z y - x +'])
 
         difference = core.std.MakeDiff(balancedLuma, original)
-        difference = difference.std.Expr(expr=[f'x {scale(128 + thresh, peak)} min {scale(128 - thresh, peak)} max'])
+        difference = EXPR(difference, expr=[f'x {scale(128 + thresh, peak)} min {scale(128 - thresh, peak)} max'])
 
         last = core.std.MergeDiff(original, difference)
         return core.std.StackVertical([last, c2.std.CropAbs(width=cWidth * 2, height=(cHeight - cTop) * 2, top=cTop * 2)]).resize.Point(cWidth, cHeight)

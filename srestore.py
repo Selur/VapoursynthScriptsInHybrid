@@ -90,6 +90,7 @@ def sRestoreMUVs(
         dclip.height if srad == 4 else int(dclip.height / 2 / srad + 4) * 4
     )
     dclip = dclip.std.Trim(first=2)
+    EXPR = core.akarin.Expr if hasattr(core,'akarin') else core.std.Expr
     if mode < 0:
         dclip = core.std.StackVertical([
             core.std.StackHorizontal([GetPlane(dclip, 1), GetPlane(dclip, 2)]),
@@ -98,15 +99,15 @@ def sRestoreMUVs(
     else:
         dclip = GetPlane(dclip, 0)
     if bom:
-        dclip = dclip.std.Expr(expr=['x 0.5 * 64 +'])
+        dclip = EXPR(dclip, expr=['x 0.5 * 64 +'])
 
     expr1 = 'x 128 - y 128 - * 0 > x 128 - abs y 128 - abs < x 128 - 128 x - * y 128 - 128 y - * ? x y + 256 - dup * ? 0.25 * 128 +'
     expr2 = 'x y - dup * 3 * x y + 256 - dup * - 128 +'
     diff = core.std.MakeDiff(dclip, dclip.std.Trim(first=1))
     if not bom:
-        bclp = core.std.Expr([diff, diff.std.Trim(first=1)], expr=[expr1]).resize.Bilinear(bsize, bsize)
+        bclp = EXPR([diff, diff.std.Trim(first=1)], expr=[expr1]).resize.Bilinear(bsize, bsize)
     else:
-        bclp = core.std.Expr([
+        bclp = EXPR([
             diff.std.Trim(first=1),
             core.std.MergeDiff(diff, diff.std.Trim(first=2))
         ], expr=[expr2])
@@ -120,8 +121,8 @@ def sRestoreMUVs(
         sourceTrim1 = source.std.Trim(first=1)
         sourceTrim2 = source.std.Trim(first=2)
 
-        unblend1 = core.std.Expr([sourceDuplicate, source], expr=['x -1 * y 2 * +'])
-        unblend2 = core.std.Expr([sourceTrim1, sourceTrim2], expr=['x 2 * y -1 * +'])
+        unblend1 = EXPR([sourceDuplicate, source], expr=['x -1 * y 2 * +'])
+        unblend2 = EXPR([sourceTrim1, sourceTrim2], expr=['x 2 * y -1 * +'])
 
         qmask1 = core.std.MakeDiff(
             unblend1.std.Convolution(matrix=[1, 1, 1, 1, 0, 1, 1, 1, 1], planes=[0]),
@@ -134,24 +135,24 @@ def sRestoreMUVs(
             planes=[0]
         )
         diffm = core.std.MakeDiff(sourceDuplicate, source, planes=[0]).std.Maximum(planes=[0])
-        bmask = core.std.Expr([qmask1, qmask2], expr=[f'x {neutral} - dup * dup y {neutral} - dup * + / {peak} *', ''])
+        bmask = EXPR([qmask1, qmask2], expr=[f'x {neutral} - dup * dup y {neutral} - dup * + / {peak} *', ''])
         expr = (
             'x 2 * y < x {i} < and 0 y 2 * x < y {i} < and {peak} x x y + / {j} * {k} + ? ?'
             .format(i=scale(4, bits), peak=peak, j=scale(200, bits), k=scale(28, bits))
         )
-        dmask = core.std.Expr([diffm, diffm.std.Trim(first=2)], expr=[expr, ''])
-        pmask = core.std.Expr([dmask, bmask], expr=[f'y 0 > y {peak} < and x 0 = x {peak} = or and x y ?', ''])
+        dmask = EXPR([diffm, diffm.std.Trim(first=2)], expr=[expr, ''])
+        pmask = EXPR([dmask, bmask], expr=[f'y 0 > y {peak} < and x 0 = x {peak} = or and x y ?', ''])
 
         matrix = [1, 2, 1, 2, 4, 2, 1, 2, 1]
 
         omode = omode.lower()
         if omode == 'pp0':
-            fin = core.std.Expr([sourceDuplicate, source, sourceTrim1, sourceTrim2], expr=['x -0.5 * y + z + a -0.5 * +'])
+            fin = EXPR([sourceDuplicate, source, sourceTrim1, sourceTrim2], expr=['x -0.5 * y + z + a -0.5 * +'])
         elif omode == 'pp1':
             fin = core.std.MaskedMerge(
                 unblend1,
                 unblend2,
-                dmask.std.Convolution(matrix=matrix, planes=[0]).std.Expr(expr=['', repr(neutral)])
+                EXPR(dmask.std.Convolution(matrix=matrix, planes=[0]), expr=['', repr(neutral)])
             )
         elif omode == 'pp2':
             fin = core.std.MaskedMerge(

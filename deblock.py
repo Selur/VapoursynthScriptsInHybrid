@@ -72,8 +72,9 @@ def Deblock_QED(
 
     # separate border values of the difference maps, and set the interiours to '128'
     expr = f'y {peak} = x {neutral} ?'
-    normalD2 = core.std.Expr([normalD, block], expr=expr if uv > 2 or is_gray else [expr, ''])
-    strongD2 = core.std.Expr([strongD, block], expr=expr if uv > 2 or is_gray else [expr, ''])
+    EXPR = core.akarin.Expr if hasattr(core,'akarin') else core.std.Expr
+    normalD2 = EXPR([normalD, block], expr=expr if uv > 2 or is_gray else [expr, ''])
+    strongD2 = EXPR([strongD, block], expr=expr if uv > 2 or is_gray else [expr, ''])
 
     # interpolate the border values over the whole block: DCTFilter can do it. (Kiss to Tom Barry!)
     # (Note: this is not fully accurate, but a reasonable approximation.)
@@ -86,14 +87,14 @@ def Deblock_QED(
         strongD2 = strongD2.resize.Point(sw + remX, sh + remY, src_width=sw + remX, src_height=sh + remY)
     expr = f'x {neutral} - 1.01 * {neutral} +'
     strongD3 = (
-        strongD2.std.Expr(expr=expr if uv > 2 or is_gray else [expr, ''])
+        EXPR(strongD2, expr=expr if uv > 2 or is_gray else [expr, ''])
         .dctf.DCTFilter(factors=[1, 1, 0, 0, 0, 0, 0, 0], planes=planes)
         .std.Crop(right=remX, bottom=remY)
     )
 
     # apply compensation from "normal" deblocking to the borders of the full-block-compensations calculated from "strong" deblocking ...
     expr = f'y {neutral} = x y ?'
-    strongD4 = core.std.Expr([strongD3, normalD2], expr=expr if uv > 2 or is_gray else [expr, ''])
+    strongD4 = EXPR([strongD3, normalD2], expr=expr if uv > 2 or is_gray else [expr, ''])
 
     # ... and apply it.
     deblocked = core.std.MakeDiff(clp, strongD4, planes=planes)

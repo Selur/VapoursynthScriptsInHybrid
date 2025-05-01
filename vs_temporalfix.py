@@ -41,7 +41,8 @@ def TweakDarks(src, s0=2.0, c=0.0625, chroma=True):
     c1 = 1 + c
     c2 = c1 * c
     e = "{} {} {} {} {} + / - * {} 1 {} - * + {} *".format(k, c1, c2, t, c, t, k, 256 * i)
-    return core.std.Expr([src], [e] if src.format.num_planes == 1 else [e, expr if chroma else ""])
+    EXPR = core.akarin.Expr if hasattr(core,'akarin') else core.std.Expr
+    return EXPR([src], [e] if src.format.num_planes == 1 else [e, expr if chroma else ""])
 
 
 def ExcludeRegions(clip, replacement, exclude=None):
@@ -202,7 +203,8 @@ def vs_temporalfix(clip, strength=400, tr=6, exclude=None, debug=False):
     m3 = motionmask[3:]  + motionmask[-3:] # shift - 3
     p1 = motionmask[0]   + motionmask[:-1] # shift + 1
     p2 = motionmask[0:2] + motionmask[:-2] # shift + 2
-    motionmask = core.std.Expr([motionmask, m1, m2, m3, p1, p2], expr=["x y + z 0.75 * + a 0.5 * + b 0.75 * + c 0.5 * +"]) # fades the mask in/out over a few frames
+    EXPR = core.akarin.Expr if hasattr(core,'akarin') else core.std.Expr
+    motionmask = EXPR([motionmask, m1, m2, m3, p1, p2], expr=["x y + z 0.75 * + a 0.5 * + b 0.75 * + c 0.5 * +"]) # fades the mask in/out over a few frames
     motionmask = core.std.Median(motionmask)
     motionmask = core.resize.Point(motionmask, width=pre_stabilize.width, height=pre_stabilize.height)
     BOX = core.vszip.BoxBlur if hasattr(core,'vszip') else core.std.BoxBlur
@@ -456,7 +458,8 @@ def ContraSharpening(clip, src, radius=None, rep=24, planes=[0, 1, 2]):
     allD = core.std.MakeDiff(src, clip, planes)  # the difference achieved by the denoising
     ssDD = R(ssD, allD, [rep if i in planes else 0 for i in range(num)])  # limit the difference to the max of what the denoising removed locally
     expr = "x {} - abs y {} - abs < x y ?".format(mid, mid)  # abs(diff) after limiting may not be bigger than before
-    ssDD = core.std.Expr([ssDD, ssD], [expr if i in planes else "" for i in range(num)])
+    EXPR = core.akarin.Expr if hasattr(core,'akarin') else core.std.Expr
+    ssDD = EXPR([ssDD, ssD], [expr if i in planes else "" for i in range(num)])
     return core.std.MergeDiff(clip, ssDD, planes)  # apply the limited difference (sharpening is just inverse blurring)
 
 
@@ -474,4 +477,5 @@ def MinBlur(clip, planes=[0, 1, 2]):
     RG11 = core.std.Convolution(clip, matrix=mat1, planes=planes).std.Convolution(matrix=mat2, planes=planes)
     RG4 = core.ctmf.CTMF(clip, radius=2, planes=planes)
     expr = "x y - x z - * 0 < x dup y - abs x z - abs < y z ? ?"
-    return core.std.Expr([clip, RG11, RG4], [expr if i in planes else "" for i in range(clip.format.num_planes)])
+    EXPR = core.akarin.Expr if hasattr(core,'akarin') else core.std.Expr
+    return EXPR([clip, RG11, RG4], [expr if i in planes else "" for i in range(clip.format.num_planes)])

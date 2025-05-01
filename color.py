@@ -11,6 +11,7 @@ def Tweak(clip, hue=None, sat=None, bright=None, cont=None, coring=True):
 
     if clip.format.color_family == vs.RGB:
         raise vs.Error("Tweak: RGB clips are not accepted.")
+    EXPR = core.akarin.Expr if hasattr(core,'akarin') else core.std.Expr
         
     if (hue is not None or sat is not None) and clip.format.color_family != vs.GRAY:
         hue = 0.0 if hue is None else hue
@@ -37,9 +38,8 @@ def Tweak(clip, hue=None, sat=None, bright=None, cont=None, coring=True):
 
         src_u = clip.std.ShufflePlanes(planes=1, colorfamily=vs.GRAY)
         src_v = clip.std.ShufflePlanes(planes=2, colorfamily=vs.GRAY)
-
-        dst_u = core.std.Expr(clips=[src_u, src_v], expr=expr_u)
-        dst_v = core.std.Expr(clips=[src_u, src_v], expr=expr_v)
+        dst_u = EXPR(clips=[src_u, src_v], expr=expr_u)
+        dst_v = EXPR(clips=[src_u, src_v], expr=expr_v)
 
         clip = core.std.ShufflePlanes(clips=[clip, dst_u, dst_v], planes=[0, 0, 0], colorfamily=clip.format.color_family)
 
@@ -64,7 +64,7 @@ def Tweak(clip, hue=None, sat=None, bright=None, cont=None, coring=True):
         else:
             expression = "x {} * {} + 0.0 max 1.0 min".format(cont, bright)
 
-            clip = clip.std.Expr(expr=[expression, "", ""])
+            clip = EXPR(expr=[expression, "", ""])
 
     return clip
 
@@ -270,38 +270,39 @@ def SmoothLevels(input, input_low=0, gamma=1.0, input_high=None, output_low=0, o
         exprP = f'x {protect} <= 0 x {protect + scale(16, peak)} >= 1 x {protect} - {scale(16, peak)} / abs ? ?'
 
     ### PROCESS
+    EXPR = core.akarin.Expr if hasattr(core,'akarin') else core.std.Expr
     if limiter == 1 or limiter >= 3:
-        limitI = input.std.Expr(expr=[f'x {input_low} max {input_high} min'])
+        limitI = EXPR(input, expr=[f'x {input_low} max {input_high} min'])
     else:
         limitI = input
 
     expr = exprL + ' ' + exprP + ' * ' + exprY + ' x - * x +'
-    level = limitI.std.Expr(expr=[expr] if chroma <= 0 or isGray else [expr, exprC])
-    diff = core.std.Expr([limitI, level], expr=[f'x y - {Mfactor} * {neutral[1]} +'])
+    level = EXPR(limitI, expr=[expr] if chroma <= 0 or isGray else [expr, exprC])
+    diff = EXPR([limitI, level], expr=[f'x y - {Mfactor} * {neutral[1]} +'])
     process = RemoveGrain(diff)
     if useDB:
         if hasattr(core, 'neo_f3kdb'):
-          process = process.std.Expr(expr=[f'x {neutral[1]} - {Mfactor} / {neutral[1]} +']).neo_f3kdb.Deband(grainy=0, grainc=0, output_depth=input.format.bits_per_sample)
+          process = EXPR(process, expr=[f'x {neutral[1]} - {Mfactor} / {neutral[1]} +']).neo_f3kdb.Deband(grainy=0, grainc=0, output_depth=input.format.bits_per_sample)
         else:
-          process = process.std.Expr(expr=[f'x {neutral[1]} - {Mfactor} / {neutral[1]} +']).f3kdb.Deband(grainy=0, grainc=0, output_depth=input.format.bits_per_sample)
+          process = EXPR(process, expr=[f'x {neutral[1]} - {Mfactor} / {neutral[1]} +']).f3kdb.Deband(grainy=0, grainc=0, output_depth=input.format.bits_per_sample)
         smth = core.std.MakeDiff(limitI, process)
     else:
-        smth = core.std.Expr([limitI, process], expr=[f'x y {neutral[1]} - {Mfactor} / -'])
+        smth = EXPR([limitI, process], expr=[f'x y {neutral[1]} - {Mfactor} / -'])
 
-    level2 = core.std.Expr([limitI, diff], expr=[f'x y {neutral[1]} - {Mfactor} / -'])
-    diff2 = core.std.Expr([level2, level], expr=[f'x y - {Mfactor} * {neutral[1]} +'])
+    level2 = EXPR([limitI, diff], expr=[f'x y {neutral[1]} - {Mfactor} / -'])
+    diff2 = EXPR([level2, level], expr=[f'x y - {Mfactor} * {neutral[1]} +'])
     process2 = RemoveGrain(diff2)
     if useDB:
         if hasattr(core, 'neo_f3kdb'):
-          process2 = process2.std.Expr(expr=[f'x {neutral[1]} - {Mfactor} / {neutral[1]} +']).neo_f3kdb.Deband(grainy=0, grainc=0, output_depth=input.format.bits_per_sample)
+          process2 = EXPR(process2, expr=[f'x {neutral[1]} - {Mfactor} / {neutral[1]} +']).neo_f3kdb.Deband(grainy=0, grainc=0, output_depth=input.format.bits_per_sample)
         else:
-          process2 = process2.std.Expr(expr=[f'x {neutral[1]} - {Mfactor} / {neutral[1]} +']).f3kdb.Deband(grainy=0, grainc=0, output_depth=input.format.bits_per_sample) 
+          process2 = EXPR(process2, expr=[f'x {neutral[1]} - {Mfactor} / {neutral[1]} +']).f3kdb.Deband(grainy=0, grainc=0, output_depth=input.format.bits_per_sample) 
         smth2 = core.std.MakeDiff(smth, process2)
     else:
-        smth2 = core.std.Expr([smth, process2], expr=[f'x y {neutral[1]} - {Mfactor} / -'])
+        smth2 = EXPR([smth, process2], expr=[f'x y {neutral[1]} - {Mfactor} / -'])
 
-    mask1 = core.std.Expr([limitI, level], expr=[f'x y - abs {neutral[0] / Mfactor} >= {peak} 0 ?'])
-    mask2 = core.std.Expr([limitI, level], expr=[f'x y - abs {peak / Mfactor} >= {peak} 0 ?'])
+    mask1 = EXPR([limitI, level], expr=[f'x y - abs {neutral[0] / Mfactor} >= {peak} 0 ?'])
+    mask2 = EXPR([limitI, level], expr=[f'x y - abs {peak / Mfactor} >= {peak} 0 ?'])
 
     if Smode >= 2:
         Slevel = smth2
@@ -315,7 +316,7 @@ def SmoothLevels(input, input_low=0, gamma=1.0, input_high=None, output_low=0, o
         Slevel = level
 
     if limiter >= 2:
-        limitO = Slevel.std.Expr(expr=[f'x {output_low} max {output_high} min'])
+        limitO = EXPR(Slevel, expr=[f'x {output_low} max {output_high} min'])
     else:
         limitO = Slevel
 
@@ -424,8 +425,9 @@ def RGBAdjust(rgb: vs.VideoNode, r: float=1.0, g: float=1.0, b: float=1.0, a: fl
       maxVal = 255.0
   rb,gb,bb = map(lambda b: b if size==maxVal else size/maxVal*b if type==vs.INTEGER else b/maxVal, [rb,gb,bb])
 
+  EXPR = core.akarin.Expr if hasattr(core,'akarin') else core.std.Expr
   #x*r + rb , x*g + gb , x*b + bb
-  rgb_adjusted = core.std.Expr(rgb, [f"x {r} * {rb} +", f"x {g} * {gb} +", f"x {b} * {bb} +"])
+  rgb_adjusted = EXPR(rgb, [f"x {r} * {rb} +", f"x {g} * {gb} +", f"x {b} * {bb} +"])
 
   #gamma per channel
   planes = [core.std.ShufflePlanes(rgb_adjusted, planes=p,  colorfamily=vs.GRAY)  for p in [0,1,2]]
@@ -495,7 +497,9 @@ def AutoGain(clip: vs.VideoNode, gain_limit: float = 1.0, strength: float = 0.5,
         # Calculate final expression (now strength=0 means no adjustment)
         weight = max(min(strength, 1.0), 0.0)
         expr = f"x {offset:.8f} + {scale:.8f} * {weight:.8f} * x {1.0-weight:.8f} * +"
-        return core.std.Expr([Y], expr=[expr])
+        
+        EXPR = core.akarin.Expr if hasattr(core,'akarin') else core.std.Expr
+        return EXPR([Y], expr=[expr])
 
     # Adjusted luma (frame by frame)
     Y_adj = core.std.FrameEval(Y, eval=apply_gain, prop_src=props)
@@ -509,3 +513,187 @@ def AutoGain(clip: vs.VideoNode, gain_limit: float = 1.0, strength: float = 0.5,
         result = core.std.ShufflePlanes([Y_adj, U, V], planes=[0, 0, 0], colorfamily=vs.YUV)
 
     return result
+
+# auto white from http://www.vapoursynth.com/doc/functions/frameeval.html
+def AutoWhiteAdjust(n, f, clip, core):
+   small_number = 0.000000001
+   red   = f[0].props['PlaneStatsAverage']
+   green = f[1].props['PlaneStatsAverage']
+   blue  = f[2].props['PlaneStatsAverage']
+   max_rgb = max(red, green, blue)
+   red_corr   = max_rgb/max(red, small_number)
+   green_corr = max_rgb/max(green, small_number)
+   blue_corr  = max_rgb/max(blue, small_number)
+   norm = max(blue, math.sqrt(red_corr*red_corr + green_corr*green_corr + blue_corr*blue_corr) / math.sqrt(3), small_number)
+   r_gain = red_corr/norm
+   g_gain = green_corr/norm
+   b_gain = blue_corr/norm
+   EXPR = core.akarin.Expr if hasattr(core,'akarin') else core.std.Expr
+   return EXPR(clip, expr=['x ' + repr(r_gain) + ' *', 'x ' + repr(g_gain) + ' *', 'x ' + repr(b_gain) + ' *'])
+
+###
+# AutoWhite is a function that takes a video clip as an input and calculates the average color values for each of the three color planes (red, green, blue).
+# The AutoWhiteAdjust function is then used to adjust the white balance of the input clip based on the color balance of the individual frames.
+# This function calculates the correction gain for each color plane (red, green, blue) based on the average color values of each plane, and applies the correction gain to each pixel in the input clip.
+# The output is a video clip with corrected white balance.
+###
+def AutoWhite(clip):
+   rgb_clip = clip
+   r_avg = core.std.PlaneStats(rgb_clip, plane=0)
+   g_avg = core.std.PlaneStats(rgb_clip, plane=1)
+   b_avg = core.std.PlaneStats(rgb_clip, plane=2)
+   return core.std.FrameEval(rgb_clip, partial(AutoWhiteAdjust, clip=rgb_clip, core=core), prop_src=[r_avg, g_avg, b_avg])
+
+# ToneMapping Simple
+def tm(clip="",source_peak="",desat=50,lin=True,show_satmask=False,show_clipped=False ) :
+    c=clip
+    o=c
+    a=c
+
+    source_peak=source_peak 
+    LDR_nits=100     
+    exposure_bias=source_peak/LDR_nits
+
+    if (desat <  0) :
+        desat=0
+    if (desat >  100) :
+       desat=100
+    desat=desat/100
+
+    ldr_value=(1/exposure_bias)# for example in linear light compressed (0-1 range ) hdr 1000 nits, 100nits becomes 0.1 
+    tm=((1*(0.15*1+0.10*0.50)+0.20*0.02) / (1*(0.15*1+0.50)+0.20*0.30)) - 0.02/0.30
+    w=((exposure_bias*(0.15*exposure_bias+0.10*0.50)+0.20*0.02)/(exposure_bias*(0.15*exposure_bias+0.50)+0.20*0.30))-0.02/0.30
+    tm_ldr_value=tm * (1 / w)#value of 100 nits after the tone mapping
+    ldr_value_mult=tm_ldr_value/(1/exposure_bias)#0.1 (100nits) * ldr_value_mult=tm_ldr_value
+    EXPR = core.akarin.Expr if hasattr(core,'akarin') else core.std.Expr
+    tm = EXPR(c, expr="x  {exposure_bias} * 0.15 x  {exposure_bias} * * 0.05 + * 0.004 + x  {exposure_bias} * 0.15 x  {exposure_bias} * * 0.50 + * 0.06 + / 0.02 0.30 / -  ".format(exposure_bias=exposure_bias),format=vs.RGBS)
+    w=((exposure_bias*(0.15*exposure_bias+0.10*0.50)+0.20*0.02)/(exposure_bias*(0.15*exposure_bias+0.50)+0.20*0.30))-0.02/0.30
+    tm = EXPR(clips=[tm,c], expr="x  1 {w}  / * ".format(exposure_bias=exposure_bias,w=w),format=vs.RGBS)
+    vszip = hasattr(core,'vszip')
+    tm = core.vszip.Limiter(tm, [0,0,0], [1,1,1]) if vszip else core.std.Limiter(tm, 0, 1)
+
+    if lin == True :
+        #linearize the tonemapper curve under 100nits
+        tm=EXPR(clips=[tm,o], expr="x {tm_ldr_value} < y {ldr_value_mult} * x ? ".format(tm_ldr_value=tm_ldr_value,ldr_value_mult=ldr_value_mult))
+    
+
+    r=core.std.ShufflePlanes(clips=[a], planes=[0], colorfamily=vs.GRAY)
+    g=core.std.ShufflePlanes(clips=[a], planes=[1], colorfamily=vs.GRAY)
+    b=core.std.ShufflePlanes(clips=[a], planes=[2], colorfamily=vs.GRAY)
+    #luminance
+    l=EXPR(clips=[r,g,b], expr="x 0.2627 *  y 0.678 * + z 0.0593 * +    ",format=vs.GRAY)
+
+
+    #value under 100nits after the tone mapping(tm_ldr_value) becomes 0, even tm_ldr_value becomes 0 and then scale all in the 0-1 range fo the mask 
+    mask=EXPR(clips=[l], expr="x {ldr_value_mult} * {tm_ldr_value}  - {ldr_value_mult} /".format(ldr_value_mult=ldr_value_mult,tm_ldr_value=tm_ldr_value))
+    mask = core.vszip.Limiter(mask, 0, 1) if vszip else core.std.Limiter(mask, 0, 1)
+
+
+    #reduce the saturation blending with grayscale
+    lrgb=core.std.ShufflePlanes(clips=[l,l,l], planes=[0,0,0], colorfamily=vs.RGB)
+    asat=EXPR(clips=[a,lrgb], expr=" y {desat} * x 1 {desat} - * + ".format(tm_ldr_value=tm_ldr_value,desat=desat))
+    a=core.std.MaskedMerge(a, asat, mask)
+
+
+    r=core.std.ShufflePlanes(clips=[a], planes=[0], colorfamily=vs.GRAY)
+    g=core.std.ShufflePlanes(clips=[a], planes=[1], colorfamily=vs.GRAY)
+    b=core.std.ShufflePlanes(clips=[a], planes=[2], colorfamily=vs.GRAY)
+
+    rl=core.std.ShufflePlanes(clips=[tm], planes=[0], colorfamily=vs.GRAY)
+    gl=core.std.ShufflePlanes(clips=[tm], planes=[1], colorfamily=vs.GRAY)
+    bl=core.std.ShufflePlanes(clips=[tm], planes=[2], colorfamily=vs.GRAY)
+    l2=EXPR(clips=[rl,gl,bl], expr="x 0.2627 *  y 0.678 * + z 0.0593 * +    ",format=vs.GRAY)
+    nl= l2
+    scale=EXPR(clips=[nl,l], expr="x y / ")
+    r1=EXPR(clips=[r,scale], expr="x  y *")
+    g1=EXPR(clips=[g,scale], expr="x  y *")
+    b1=EXPR(clips=[b,scale], expr="x  y *")
+
+    c=core.std.ShufflePlanes(clips=[r1,g1,b1], planes=[0,0,0], colorfamily=vs.RGB)
+    c = core.vszip.Limiter(c, [0,0,0], [1,1,1]) if vszip else core.std.Limiter(c, 0, 1)
+
+    if show_satmask == True :
+        #show mask
+        c=core.std.ShufflePlanes(clips=[mask,mask,mask], planes=[0,0,0], colorfamily=vs.RGB)
+
+    if show_clipped == True :
+        #show clipped
+        c=EXPR(clips=[o], expr="x {ldr_value_mult} * ".format(ldr_value_mult=ldr_value_mult))
+ 
+    return c 
+
+def hablehdr10tosdr(clip, source_peak=1000, desat=50, tFormat=vs.YUV420P8, tMatrix="709", tRange="limited", color_loc="center", f_a=0.0, f_b=0.75, show_satmask=False,lin=True,show_clipped=False) :
+  core = vs.core
+  clip=core.resize.Bicubic(clip=clip, format=vs.RGBS, filter_param_a=f_a, filter_param_b=f_b, range_in_s="limited", matrix_in_s="2020ncl", primaries_in_s="2020", primaries_s="2020", transfer_in_s="st2084", transfer_s="linear",dither_type="none", nominal_luminance=1000)
+  clip=tm(clip=clip,source_peak=source_peak,desat=desat,show_satmask=show_satmask,lin=lin,show_clipped=show_clipped) 
+  if tFormat != vs.RGBS:
+    clip=core.resize.Bicubic(clip=clip, format=tFormat, filter_param_a=f_a, filter_param_b=f_b, matrix_s=tMatrix, primaries_in_s="2020", primaries_s=tMatrix, transfer_in_s="linear", transfer_s=tMatrix, dither_type="ordered")
+    
+  return clip
+  
+def tm_simple(clip="",source_peak="" ) :
+    core = vs.core
+    c=clip
+    o=c
+    a=c
+    s=0.5
+    source_peak=source_peak 
+    LDR_nits=100     
+    exposure_bias=source_peak/LDR_nits
+
+    if (s <  0) :
+        s=0
+
+    #tm=((x*exposure_bias*(0.15*x*exposure_bias+0.10*0.50)+0.20*0.02) / (x*exposure_bias*(0.15*x*exposure_bias+0.50)+0.20*0.30)) - 0.02/0.30
+    #w=((exposure_bias*(0.15*exposure_bias+0.10*0.50)+0.20*0.02)/(exposure_bias*(0.15*exposure_bias+0.50)+0.20*0.30))-0.02/0.30
+    #tm=tm * (1 / w)
+    EXPR = core.akarin.Expr if hasattr(core,'akarin') else core.std.Expr
+    tm = EXPR(c, expr="x  {exposure_bias} * 0.15 x  {exposure_bias} * * 0.05 + * 0.004 + x  {exposure_bias} * 0.15 x  {exposure_bias} * * 0.50 + * 0.06 + / 0.02 0.30 / -  ".format(exposure_bias=exposure_bias),format=vs.RGBS)
+    w=((exposure_bias*(0.15*exposure_bias+0.10*0.50)+0.20*0.02)/(exposure_bias*(0.15*exposure_bias+0.50)+0.20*0.30))-0.02/0.30
+    tm = EXPR(clips=[tm,c], expr="x  1 {w}  / * ".format(exposure_bias=exposure_bias,w=w),format=vs.RGBS)
+    vszip = hasattr(core,'vszip')
+    tm = core.vszip.Limiter(tm, [0,0,0], [1,1,1]) if vszip else core.std.Limiter(tm, 0, 1)
+
+    r=core.std.ShufflePlanes(clips=[a], planes=[0], colorfamily=vs.GRAY)
+    g=core.std.ShufflePlanes(clips=[a], planes=[1], colorfamily=vs.GRAY)
+    b=core.std.ShufflePlanes(clips=[a], planes=[2], colorfamily=vs.GRAY)
+    l=EXPR(clips=[r,g,b], expr="x 0.2627 *  y 0.678 * + z 0.0593 * +    ",format=vs.GRAY)
+    #l=0.2627 * R + 0.678 * G + 0.0593 * B (formula for rec2020 luminance)
+    l=EXPR(clips=[l], expr="x 0 =  0.00001 x  ? ",format=vs.GRAY)#avoid dividing by 0
+
+    rl=core.std.ShufflePlanes(clips=[tm], planes=[0], colorfamily=vs.GRAY)
+    gl=core.std.ShufflePlanes(clips=[tm], planes=[1], colorfamily=vs.GRAY)
+    bl=core.std.ShufflePlanes(clips=[tm], planes=[2], colorfamily=vs.GRAY)
+    l2=EXPR(clips=[rl,gl,bl], expr="x 0.2627 *  y 0.678 * + z 0.0593 * +    ",format=vs.GRAY)
+
+    #r1=((r/l)^s)*l2
+    #g1=((g/l)^s)*l2
+    #b1=((b/l)^s)*l2
+    r1=EXPR(clips=[r,l,l2], expr="x  y /  {s} pow  z * ".format(s=s))
+    g1=EXPR(clips=[g,l,l2], expr="x  y /  {s} pow  z * ".format(s=s))
+    b1=EXPR(clips=[b,l,l2], expr="x  y /  {s} pow z *  ".format(s=s))
+
+    r2=EXPR(clips=[r,l,l2], expr="x  y /   z * ")
+    g2=EXPR(clips=[g,l,l2], expr="x  y /   z * ")
+    b2=EXPR(clips=[b,l,l2], expr="x  y /  z *  ")
+    mask=l2
+    mask = core.vszip.Limiter(mask, 0, 1) if vszip else core.std.Limiter(mask, 0, 1)
+
+    csat=core.std.ShufflePlanes(clips=[r1,g1,b1], planes=[0,0,0], colorfamily=vs.RGB)
+
+    c=core.std.ShufflePlanes(clips=[r2,g2,b2], planes=[0,0,0], colorfamily=vs.RGB)
+    c2=core.std.MaskedMerge(c, csat, mask)
+    c=core.std.Merge(c, c2, 0.5)
+    c = core.vszip.Limiter(c, [0,0,0], [1,1,1]) if vszip else core.std.Limiter(c, 0, 1)
+
+    return c 
+
+
+   
+def simplehdr10tosdr(clip, source_peak=1000, tFormat=vs.YUV420P8, tMatrix="709", tRange="limited", color_loc="center", f_a=0.0, f_b=0.75) :
+  core = vs.core
+  clip=core.resize.Bicubic(clip=clip, format=vs.RGBS,filter_param_a=f_a,filter_param_b=f_b, range_in_s="limited", matrix_in_s="2020ncl", primaries_in_s="2020", primaries_s="2020", transfer_in_s="st2084", transfer_s="linear",dither_type="none", nominal_luminance=1000)
+  clip=tm_simple(clip=clip,source_peak=source_peak)
+  if tFormat != vs.RGBS:
+    clip=core.resize.Bicubic(clip=clip, format=tFormat, filter_param_a=f_a, filter_param_b=f_b, matrix_s=tMatrix, primaries_in_s="2020", primaries_s=tMatrix, transfer_in_s="linear", transfer_s=tMatrix, dither_type="ordered")
+  return clip

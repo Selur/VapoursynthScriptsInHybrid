@@ -128,7 +128,7 @@ def SMDegrain(input, tr=2, thSAD=300, thSADC=None, RefineMotion=False, contrasha
     # Prefilter & Motion Filter
     if mfilter is None:
         mfilter = inputP
-
+    EXPR = core.akarin.Expr if hasattr(core,'akarin') else core.std.Expr
     if not GlobalR:
         if preclip:
             pref = prefilter
@@ -143,7 +143,7 @@ def SMDegrain(input, tr=2, thSAD=300, thSADC=None, RefineMotion=False, contrasha
             else:
               DFTTest = core.dfttest.DFTTest
               filtered = DFTTest(inputP, tbsize=1, slocation=[0.0,4.0, 0.2,9.0, 1.0,15.0], planes=planes)
-            pref = core.std.MaskedMerge(filtered, inputP, GetPlane(inputP, 0).std.Expr(expr=[expr]), planes=planes)
+            pref = EXPR(core.std.MaskedMerge(filtered, inputP, GetPlane(inputP, 0), expr=[expr]), planes=planes)
         elif prefilter >= 4:
             pref = KNLMeansCL(inputP, d=1, a=1, h=7)
         else:
@@ -346,7 +346,8 @@ def ContraSharpening(
     else:
       ssDD = core.rgvs.Repair(ssD, allD, mode=[rep if i in planes else 0 for i in plane_range])
     # abs(diff) after limiting may not be bigger than before
-    ssDD = core.std.Expr([ssDD, ssD], expr=[f'x {neutral} - abs y {neutral} - abs < x y ?' if i in planes else '' for i in plane_range])
+    EXPR = core.akarin.Expr if hasattr(core,'akarin') else core.std.Expr
+    ssDD = EXPR([ssDD, ssD], expr=[f'x {neutral} - abs y {neutral} - abs < x y ?' if i in planes else '' for i in plane_range])
     # apply the limited difference (sharpening is just inverse blurring)
     last = core.std.MergeDiff(denoised, ssDD, planes=planes)
     return last.std.Crop(pad, pad, pad, pad)
@@ -392,8 +393,8 @@ def MinBlur(clp: vs.VideoNode, r: int = 1, planes: Optional[Union[int, Sequence[
             RG4 = LimitFilter(s16, depth(RG4, 16), thr=0.0625, elast=2, planes=planes)
         else:
             RG4 = clp.ctmf.CTMF(radius=3, planes=planes)
-
-    return core.std.Expr([clp, RG11, RG4], expr=['x y - x z - * 0 < x x y - abs x z - abs < y z ? ?' if i in planes else '' for i in plane_range])
+    EXPR = core.akarin.Expr if hasattr(core,'akarin') else core.std.Expr
+    return EXPR([clp, RG11, RG4], expr=['x y - x z - * 0 < x x y - abs x z - abs < y z ? ?' if i in planes else '' for i in plane_range])
     
     
 def DitherLumaRebuild(src, s0=2., c=0.0625, chroma=True):
@@ -414,8 +415,8 @@ def DitherLumaRebuild(src, s0=2., c=0.0625, chroma=True):
     c1 = 1 + c
     c2 = c1 * c
     e = '{} {} {} {} {} + / - * {} 1 {} - * + {} *'.format(k, c1, c2, t, c, t, k, 256*i)
-    
-    return core.std.Expr([src], [e] if src.format.num_planes == 1 else [e, expr if chroma else ''])
+    EXPR = core.akarin.Expr if hasattr(core,'akarin') else core.std.Expr
+    return EXPR([src], [e] if src.format.num_planes == 1 else [e, expr if chroma else ''])
     
 # Taken from muvsfunc
 def GetPlane(clip, plane=None):
@@ -504,8 +505,8 @@ def sbr(c: vs.VideoNode, r: int = 1, planes: Optional[Union[int, Sequence[int]]]
         RG11DS = RG11DS.std.Convolution(matrix=matrix2, planes=planes)
     if r >= 3:
         RG11DS = RG11DS.std.Convolution(matrix=matrix2, planes=planes)
-
-    RG11DD = core.std.Expr(
+    EXPR = core.akarin.Expr if hasattr(core,'akarin') else core.std.Expr
+    RG11DD = EXPR(
         [RG11D, RG11DS],
         expr=[f'x y - x {neutral} - * 0 < {neutral} x y - abs x {neutral} - abs < x y - {neutral} + x ? ?' if i in planes else '' for i in plane_range],
     )

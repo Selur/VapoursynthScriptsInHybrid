@@ -198,12 +198,13 @@ def FrameRateConverter(C, newNum = None, newDen = None, preset = "normal", blkSi
         # Mask: Temporal blending
         EMfwd = ToGray(C.mv.Mask(fwd, ml=255, kind=1, gamma=1/gam, thscd2=skipOver))
         EM = havs.Overlay(EM, EMfwd, opacity=.6, mode="lighten")
+    EXPR = core.akarin.Expr if hasattr(core,'akarin') else core.std.Expr
     # Mask: Occlusion
     if maskOcc > 0:
         EMocc = ToGray(C.mv.Mask(bak, ml=maskOcc, kind=2, gamma=1/gam, ysc=255, thscd2=skipOver).std.Minimum())
         EM = havs.Overlay(EM, EMocc, opacity=.7, mode="lighten")
     if dct_mult!=1 or dct_pow!=1:
-       EM = core.std.Expr(EM, f"x {dct_mult} * {dct_pow} pow")
+       EM = EXPR(EM, f"x {dct_mult} * {dct_pow} pow")
 
     ## For calcDiff, calculate a 2nd version and create mask to restore from 2nd version the areas that look better
     if calcDiff:
@@ -225,7 +226,7 @@ def FrameRateConverter(C, newNum = None, newDen = None, preset = "normal", blkSi
             EM2 = havs.Overlay(EM2, EMocc2, opacity=.7, mode="lighten")
 
         # Get difference mask between two versions
-        EMdiff = core.std.Expr([EM, EM2], "x y -") \
+        EMdiff = EXPR([EM, EM2], "x y -") \
             .resize.Bicubic(round(C.width//blkSize)*4, round(C.height//blkSizeV)*4) \
             .std.Maximum() \
             .std.Maximum(coordinates=[0, 1, 0, 1, 1, 0, 1, 0]) \
@@ -438,11 +439,11 @@ def StripeMask(clip, blksize = 16, blksizev = None, str = 200, strf = 0):
     blksize *= 1.25
     blksizev *= 1.25
     mask2 = clip.frc.StripeMaskPass(blksize=blksize, blksizev=blksizev, overlap=blksize//2+1, overlapv=blksizev//2+1, thr=42, range=214, gamma=2.2, comp=5, str=str)
-
+    EXPR = core.akarin.Expr if hasattr(core,'akarin') else core.std.Expr
     if strf > 0:
         mask1f = mask1.std.DeleteFrames(frames=[0]).std.DuplicateFrames(frames=[clip.num_frames-2])
         mask2f = mask2.std.DeleteFrames(frames=[0]).std.DuplicateFrames(frames=[clip.num_frames-2])
-        return core.std.Expr(clips=[mask1, mask2, mask1f, mask2f], expr=f"x {str} y {str} z {strf} a {strf} 0 ? ? ? ?")
+        return EXPR(clips=[mask1, mask2, mask1f, mask2f], expr=f"x {str} y {str} z {strf} a {strf} 0 ? ? ? ?")
     else:
-        return core.std.Expr(clips=[mask1, mask2], expr=f"x {str} y {str} 0 ? ?")
+        return EXPR(clips=[mask1, mask2], expr=f"x {str} y {str} 0 ? ?")
     

@@ -81,8 +81,8 @@ def STPresso(
         else:
             RG = core.zsmooth.RemoveGrain if hasattr(core,'zsmooth') else core.rgvs.RemoveGrain
             bzz = RG(clp, mode=RGmode)
-
-    last = core.std.Expr([clp, bzz], expr=[expr if i in planes else '' for i in plane_range])
+    EXPR = core.akarin.Expr if hasattr(core,'akarin') else core.std.Expr
+    last = EXPR([clp, bzz], expr=[expr if i in planes else '' for i in plane_range])
 
     if tthr > 0:
         analyse_args = dict(truemotion=False, delta=1, blksize=16, overlap=8)
@@ -101,11 +101,11 @@ def STPresso(
 
         diff = core.std.MakeDiff(bzz, smooth, planes=planes)
         diff = core.std.MakeDiff(last, diff, planes=planes)
-        last = core.std.Expr([last, diff], expr=[texpr if i in planes else '' for i in plane_range])
+        last = EXPR([last, diff], expr=[texpr if i in planes else '' for i in plane_range])
 
     if back > 0:
         expr = f'x {back} + y < x {back} + x {back} - y > x {back} - y ? ?'
-        last = core.std.Expr([last, clp], expr=[expr if i in planes else '' for i in plane_range])
+        last = EXPR([last, clp], expr=[expr if i in planes else '' for i in plane_range])
 
     return last
     
@@ -266,7 +266,8 @@ def TemporalDegrain(          \
     nr1Diff = core.std.MakeDiff(inpClip, nr1)
 
     # Limit NR1 to not do more than what "spat" would do.
-    dd = core.std.Expr([spatD, nr1Diff], expr=[f'x {neutral} - abs y {neutral} - abs < x y ?'])
+    EXPR = core.akarin.Expr if hasattr(core,'akarin') else core.std.Expr
+    dd = EXPR([spatD, nr1Diff], expr=[f'x {neutral} - abs y {neutral} - abs < x y ?'])
     nr1X = core.std.MakeDiff(inpClip, dd, planes=0)
 
     # Second MV-denoising stage
@@ -375,7 +376,8 @@ def MLD_helper(clip, srch, tr, thSAD, rec, chroma, soft):
         else:
             RG = MinBlur(clip, 1, planes)
         RG = core.std.Merge(clip, RG, [soft] if chroma or isGRAY else [soft, 0]) if soft < 1 else RG
-        sup2 = S(core.std.Expr([clip, RG], ['x dup y - +'] if chroma or isGRAY else ['x dup y - +', '']), hpad=bs, vpad=bs, pel=pel, levels=1, rfilter=1)
+        EXPR = core.akarin.Expr if hasattr(core,'akarin') else core.std.Expr
+        sup2 = S(EXPR([clip, RG], ['x dup y - +'] if chroma or isGRAY else ['x dup y - +', '']), hpad=bs, vpad=bs, pel=pel, levels=1, rfilter=1)
     else:
         RG = clip
         sup2 = S(clip, hpad=bs, vpad=bs, pel=pel, levels=1, rfilter=1)
@@ -645,6 +647,8 @@ def TemporalDegrain2(clip, degrainTR=1, degrainPlane=4, grainLevel=2, grainLevel
     if maxTR > 3 and not isFLOAT:
         raise ValueError("TemporalDegrain2: maxTR > 3 requires input of float sample type")
     
+    EXPR = core.akarin.Expr if hasattr(core,'akarin') else core.std.Expr
+    
     if SrchClipPP == 1:
         spatialBlur = core.resize.Bilinear(clip, m4(w/2), m4(h/2)).std.Convolution(matrix=mat, planes=CMplanes).resize.Bilinear(w, h)
     elif SrchClipPP > 1:
@@ -656,7 +660,7 @@ def TemporalDegrain2(clip, degrainTR=1, degrainPlane=4, grainLevel=2, grainLevel
         srchClip = spatialBlur
     else:
         expr = 'x {a} + y < x {b} + x {a} - y > x {b} - x y + 2 / ? ?'.format(a=7*bitDepthMultiplier, b=2*bitDepthMultiplier)
-        srchClip = core.std.Expr([spatialBlur, clip], [expr] if ChromaMotion or isGRAY else [expr, ''])
+        srchClip = EXPR([spatialBlur, clip], [expr] if ChromaMotion or isGRAY else [expr, ''])
 
     super_args = dict(pel=meSubpel, hpad=hpad, vpad=vpad, sharp=SubPelInterp, chroma=ChromaMotion)
     analyse_args = dict(blksize=meBlksz, overlap=Overlap, search=meAlg, searchparam=meAlgPar, pelsearch=meSubpel, truemotion=meTM, lambda_=Lambda, pnew=PNew, global_=GlobalMotion, dct=DCT, chroma=ChromaMotion)
@@ -732,7 +736,7 @@ def TemporalDegrain2(clip, degrainTR=1, degrainPlane=4, grainLevel=2, grainLevel
     if degrainTR > 0:
         NR1D = core.std.MakeDiff(clip, NR1)
         expr = 'x abs y abs < x y ?' if isFLOAT else f'x {mid} - abs y {mid} - abs < x y ?'
-        DD   = core.std.Expr([spatD, NR1D], [expr])
+        DD   = EXPR([spatD, NR1D], [expr])
         NR1x = core.std.MakeDiff(clip, DD, [0])
     else:
         NR1x = clip
@@ -804,7 +808,7 @@ def TemporalDegrain2(clip, degrainTR=1, degrainPlane=4, grainLevel=2, grainLevel
     sharpened = ContraSharpening(dnWindow, clip, rad)
 
     if postMix > 0:
-        sharpened = core.std.Expr([clip,sharpened],f"x {postMix} * y {100-postMix} * + 100 /")
+        sharpened = EXPR([clip,sharpened],f"x {postMix} * y {100-postMix} * + 100 /")
 
     return [NR1x, NR2, sharpened][outputStage]
 
@@ -836,7 +840,8 @@ def DitherLumaRebuild(src: vs.VideoNode, s0: float = 2.0, c: float = 0.0625, chr
     k = (s0 - 1) * c
     t = f'x {scale_value(16, 8, bits)} - {scale_value(219, 8, bits)} / 0 max 1 min' if is_integer else 'x 0 max 1 min'
     e = f'{k} {1 + c} {(1 + c) * c} {t} {c} + / - * {t} 1 {k} - * + ' + (f'{scale_value(256, 8, bits)} *' if is_integer else '')
-    return src.std.Expr(expr=e if is_gray else [e, f'x {neutral} - 128 * 112 / {neutral} +' if chroma and is_integer else ''])
+    EXPR = core.akarin.Expr if hasattr(core,'akarin') else core.std.Expr
+    return EXPR(src, expr=e if is_gray else [e, f'x {neutral} - 128 * 112 / {neutral} +' if chroma and is_integer else ''])
     
 ########################################
 ## Didée's functions:
@@ -884,7 +889,8 @@ def ContraSharpening(denoised, original, radius=None, rep=13, planes=None):
     else:
       ssDD = core.rgvs.Repair(ssD, allD, mode=[rep if i in planes else 0 for i in range(denoised.format.num_planes)])  # limit the difference to the max of what the denoising removed locally
     expr = f'x {neutral} - abs y {neutral} - abs < x y ?'
-    ssDD = core.std.Expr([ssDD, ssD], expr=[expr if i in planes else '' for i in range(denoised.format.num_planes)]) # abs(diff) after limiting may not be bigger than before
+    EXPR = core.akarin.Expr if hasattr(core,'akarin') else core.std.Expr
+    ssDD = EXPR([ssDD, ssD], expr=[expr if i in planes else '' for i in range(denoised.format.num_planes)]) # abs(diff) after limiting may not be bigger than before
     return core.std.MergeDiff(denoised, ssDD, planes=planes)
     
 # Taken from mvsfunc
@@ -1065,11 +1071,11 @@ def LimitFilter(flt, src, ref=None, thr=None, elast=None, brighten_thr=None, thr
                     expr.append(limitExprY)
             else:
                 expr.append("")
-
+        EXPR = core.akarin.Expr if hasattr(core,'akarin') else core.std.Expr
         if ref is None:
-            clip = core.std.Expr([flt, src], expr)
+            clip = EXPR([flt, src], expr)
         else:
-            clip = core.std.Expr([flt, src, ref], expr)
+            clip = EXPR([flt, src, ref], expr)
     else: # implementation with std.MakeDiff, std.Lut and std.MergeDiff
         diff = core.std.MakeDiff(flt, src, planes=planes)
         if sIsYUV:
@@ -1123,7 +1129,8 @@ def MinBlur(clp, r=1, planes=None):
             RG4 = clp.ctmf.CTMF(radius=3, planes=planes)
 
     expr = 'x y - x z - * 0 < x x y - abs x z - abs < y z ? ?'
-    return core.std.Expr([clp, RG11, RG4], expr=[expr if i in planes else '' for i in range(clp.format.num_planes)])
+    EXPR = core.akarin.Expr if hasattr(core,'akarin') else core.std.Expr
+    return EXPR([clp, RG11, RG4], expr=[expr if i in planes else '' for i in range(clp.format.num_planes)])
 
 
 # Taken from havsfunc
@@ -1161,4 +1168,99 @@ def KNLMeansCL(
           return nlmeans(d=d, a=a, s=s, h=h, channels='UV', wmode=wmode, wref=wref, device_type=device_type, device_id=device_id)
       else:
           return nlmeans(d=d, a=a, s=s, h=h, channels='YUV', wmode=wmode, wref=wref, device_type=device_type, device_id=device_id)
+
+""" From https://gist.github.com/4re/b5399b1801072458fc80#file-mcdegrainsharp-py 
+"""
+
+def _sharpen(clip, strength, planes):
+    core = vs.core
+    blur = core.tcanny.TCanny(clip, sigma=strength, mode=-1, planes=planes)
+    EXPR = core.akarin.Expr if hasattr(core,'akarin') else core.std.Expr
+    return EXPR([clip, blur], "x x + y -")
+
+
+def mcdegrainsharp(clip, frames=2, bblur=0.3, csharp=0.3, bsrch=True, thsad=400, plane=4):
+    """Based on MCDegrain By Didee:
+    http://forum.doom9.org/showthread.php?t=161594
+    Also based on DiDee observations in this thread:
+    http://forum.doom9.org/showthread.php?t=161580
+
+    "Denoise with MDegrainX, do slight sharpening where motionmatch is good,
+    do slight blurring where motionmatch is bad"
+
+    In areas where MAnalyse cannot find good matches,
+    the blur() will be dominant.
+    In areas where good matches are found,
+    the sharpen()'ed pixels will overweight the blur()'ed pixels
+    when the pixel averaging is performed.
+
+    Args:
+        frames (int): Strength of the denoising (1-3).
+        bblur (float): Strength of the blurring for bad motion matching areas.
+        csharp (float): Strength of the sharpening for god motion match areas.
+        bsrch (bool): Blur the clip for the super clip for the motion search.
+        thsad (int): Soft threshold of block sum absolute differences.
+            Low values can result in staggered denoising,
+            large values can result in ghosting and artefacts.
+        plane (int): Sets processed color plane:
+            0 - luma, 1 - chroma U, 2 - chroma V, 3 - both chromas, 4 - all.
+    """
+    core = vs.core
+
+    if bblur > 1.58 or bblur < 0.0:
+        raise ValueError('"bblur" must be between 0.0 and 1.58')
+    if csharp > 1.0 or csharp < 0.0:
+        raise ValueError('"csharp" must be between 0.0 and 1.0')
+
+    blksize = 16 if clip.width > 960 else 8
+    bblur = ((bblur * 2.83) / 1.58)
+    csharp = ((csharp * 2.83) / 1.0)
+
+    if plane == 3:
+        planes = [1, 2]
+    elif plane == 4:
+        planes = [0, 1, 2]
+    else:
+        planes = plane
+    
+    c2 = core.tcanny.TCanny(clip, sigma=bblur, mode=-1, planes=planes)
+
+    if bsrch is True:
+        super_a = core.mv.Super(c2, pel=2, sharp=1)
+    else:
+        super_a = core.mv.Super(clip, pel=2, sharp=1)
+
+    super_rend = core.mv.Super(_sharpen(clip, csharp, planes=planes), pel=2, sharp=1, levels=1)
+
+    mvbw3 = core.mv.Analyse(super_a, isb=True, delta=3,
+                            overlap=blksize//2, blksize=blksize)
+    mvbw2 = core.mv.Analyse(super_a, isb=True, delta=2,
+                            overlap=blksize//2, blksize=blksize)
+    mvbw1 = core.mv.Analyse(super_a, isb=True, delta=1,
+                            overlap=blksize//2, blksize=blksize)
+    mvfw1 = core.mv.Analyse(super_a, isb=False, delta=1,
+                            overlap=blksize//2, blksize=blksize)
+    mvfw2 = core.mv.Analyse(super_a, isb=False, delta=2,
+                            overlap=blksize//2, blksize=blksize)
+    mvfw3 = core.mv.Analyse(super_a, isb=False, delta=3,
+                            overlap=blksize//2, blksize=blksize)
+
+    if frames == 1:
+        last = core.mv.Degrain1(clip=c2, super=super_rend,
+                                mvbw=mvbw1, mvfw=mvfw1, thsad=thsad,
+                                plane=plane)
+    elif frames == 2:
+        last = core.mv.Degrain2(clip=c2, super=super_rend,
+                                mvbw=mvbw1, mvfw=mvfw1,
+                                mvbw2=mvbw2, mvfw2=mvfw2,
+                                thsad=thsad, plane=plane)
+    elif frames == 3:
+        last = core.mv.Degrain3(clip=c2, super=super_rend,
+                                mvbw=mvbw1, mvfw=mvfw1, mvbw2=mvbw2,
+                                mvfw2=mvfw2, mvbw3=mvbw3, mvfw3=mvfw3,
+                                thsad=thsad, plane=plane)
+    else:
+        raise ValueError('"frames" must be 1, 2 or 3.')
+
+    return last
         

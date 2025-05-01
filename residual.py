@@ -29,15 +29,16 @@ def Vinverse(clp, sstr=2.7, amnt=255, chroma=True, scl=0.25):
 
     vblur = clp.std.Convolution(matrix=[50, 99, 50], mode='v')
     vblurD = core.std.MakeDiff(clp, vblur)
-    vshrp = core.std.Expr([vblur, vblur.std.Convolution(matrix=[1, 4, 6, 4, 1], mode='v')], expr=[f'x x y - {sstr} * +'])
+    EXPR = core.akarin.Expr if hasattr(core,'akarin') else core.std.Expr
+    vshrp = EXPR([vblur, vblur.std.Convolution(matrix=[1, 4, 6, 4, 1], mode='v')], expr=[f'x x y - {sstr} * +'])
     vshrpD = core.std.MakeDiff(vshrp, vblur)
     expr = f'x {neutral} - y {neutral} - * 0 < x {neutral} - abs y {neutral} - abs < x y ? {neutral} - {scl} * {neutral} + x {neutral} - abs y {neutral} - abs < x y ? ?'
-    vlimD = core.std.Expr([vshrpD, vblurD], expr=[expr])
+    vlimD = EXPR([vshrpD, vblurD], expr=[expr])
     last = core.std.MergeDiff(vblur, vlimD)
     if amnt <= 0:
         return clp
     elif amnt < 255:
-        last = core.std.Expr([clp, last], expr=['x {AMN} + y < x {AMN} + x {AMN} - y > x {AMN} - y ? ?'.format(AMN=scale(amnt, peak))])
+        last = EXPR([clp, last], expr=['x {AMN} + y < x {AMN} + x {AMN} - y > x {AMN} - y ? ?'.format(AMN=scale(amnt, peak))])
 
     if clp_orig is not None:
         last = core.std.ShufflePlanes([last, clp_orig], planes=[0, 1, 2], colorfamily=clp_orig.format.color_family)
@@ -63,15 +64,16 @@ def Vinverse2(clp, sstr=2.7, amnt=255, chroma=True, scl=0.25):
 
     vblur = sbrV(clp)
     vblurD = core.std.MakeDiff(clp, vblur)
-    vshrp = core.std.Expr([vblur, vblur.std.Convolution(matrix=[1, 2, 1], mode='v')], expr=[f'x x y - {sstr} * +'])
+    EXPR = core.akarin.Expr if hasattr(core,'akarin') else core.std.Expr
+    vshrp = EXPR([vblur, vblur.std.Convolution(matrix=[1, 2, 1], mode='v')], expr=[f'x x y - {sstr} * +'])
     vshrpD = core.std.MakeDiff(vshrp, vblur)
     expr = f'x {neutral} - y {neutral} - * 0 < x {neutral} - abs y {neutral} - abs < x y ? {neutral} - {scl} * {neutral} + x {neutral} - abs y {neutral} - abs < x y ? ?'
-    vlimD = core.std.Expr([vshrpD, vblurD], expr=[expr])
+    vlimD = EXPR([vshrpD, vblurD], expr=[expr])
     last = core.std.MergeDiff(vblur, vlimD)
     if amnt <= 0:
         return clp
     elif amnt < 255:
-        last = core.std.Expr([clp, last], expr=['x {AMN} + y < x {AMN} + x {AMN} - y > x {AMN} - y ? ?'.format(AMN=scale(amnt, peak))])
+        last = EXPR([clp, last], expr=['x {AMN} + y < x {AMN} + x {AMN} - y > x {AMN} - y ? ?'.format(AMN=scale(amnt, peak))])
 
     if clp_orig is not None:
         last = core.std.ShufflePlanes([last, clp_orig], planes=[0, 1, 2], colorfamily=clp_orig.format.color_family)
@@ -107,8 +109,8 @@ def sbrV(c: vs.VideoNode, r: int = 1, planes: Optional[Union[int, Sequence[int]]
         RG11DS = RG11DS.std.Convolution(matrix=matrix2, planes=planes, mode='v')
     if r >= 3:
         RG11DS = RG11DS.std.Convolution(matrix=matrix2, planes=planes, mode='v')
-
-    RG11DD = core.std.Expr(
+    EXPR = core.akarin.Expr if hasattr(core,'akarin') else core.std.Expr
+    RG11DD = EXPR(
         [RG11D, RG11DS],
         expr=[f'x y - x {neutral} - * 0 < {neutral} x y - abs x {neutral} - abs < x y - {neutral} + x ? ?' if i in planes else '' for i in plane_range],
     )

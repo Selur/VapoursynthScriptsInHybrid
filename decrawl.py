@@ -86,15 +86,16 @@ def LUTDeCrawl(input, ythresh=10, cthresh=10, maxdiff=50, scnchg=25, usemaxdiff=
     input_plus_y = GetPlane(input_plus, 0)
     input_plus_u = GetPlane(input_plus, 1)
     input_plus_v = GetPlane(input_plus, 2)
+    EXPR = core.akarin.Expr if hasattr(core,'akarin') else core.std.Expr
 
-    average_y = core.std.Expr([input_minus_y, input_plus_y], expr=[f'x y - abs {ythresh} < x y + 2 / 0 ?'])
-    average_u = core.std.Expr([input_minus_u, input_plus_u], expr=[f'x y - abs {cthresh} < {peak} 0 ?'])
-    average_v = core.std.Expr([input_minus_v, input_plus_v], expr=[f'x y - abs {cthresh} < {peak} 0 ?'])
+    average_y = EXPR([input_minus_y, input_plus_y], expr=[f'x y - abs {ythresh} < x y + 2 / 0 ?'])
+    average_u = EXPR([input_minus_u, input_plus_u], expr=[f'x y - abs {cthresh} < {peak} 0 ?'])
+    average_v = EXPR([input_minus_v, input_plus_v], expr=[f'x y - abs {cthresh} < {peak} 0 ?'])
 
     ymask = average_y.std.Binarize(threshold=1 << shift)
     if usemaxdiff:
-        diffplus_y = core.std.Expr([input_plus_y, input_y], expr=[f'x y - abs {maxdiff} < {peak} 0 ?'])
-        diffminus_y = core.std.Expr([input_minus_y, input_y], expr=[f'x y - abs {maxdiff} < {peak} 0 ?'])
+        diffplus_y = EXPR([input_plus_y, input_y], expr=[f'x y - abs {maxdiff} < {peak} 0 ?'])
+        diffminus_y = EXPR([input_minus_y, input_y], expr=[f'x y - abs {maxdiff} < {peak} 0 ?'])
         diffs_y = core.std.Lut2(diffplus_y, diffminus_y, function=lambda x, y: x & y)
         ymask = core.std.Lut2(ymask, diffs_y, function=lambda x, y: x & y)
     cmask = core.std.Lut2(average_u.std.Binarize(threshold=129 << shift), average_v.std.Binarize(threshold=129 << shift), function=lambda x, y: x & y)

@@ -132,7 +132,7 @@ def HQDeringmod(
     # Post-Process: Contra-Sharpening
     matrix1 = [1, 2, 1, 2, 4, 2, 1, 2, 1]
     matrix2 = [1, 1, 1, 1, 1, 1, 1, 1, 1]
-
+    EXPR = core.akarin.Expr if hasattr(core,'akarin') else core.std.Expr
     if sharp <= 0:
         sclp = smoothed
     else:
@@ -151,7 +151,7 @@ def HQDeringmod(
           ssDD = core.zsmooth.Repair(sharpdiff, allD, mode=[1 if i in planes else 0 for i in plane_range])
         else:
           ssDD = core.rgvs.Repair(sharpdiff, allD, mode=[1 if i in planes else 0 for i in plane_range])
-        ssDD = core.std.Expr(
+        ssDD = EXPR(
             [ssDD, sharpdiff], expr=[f'x {neutral} - abs y {neutral} - abs <= x y ?' if i in planes else '' for i in plane_range]
         )
         sclp = core.std.MergeDiff(smoothed, ssDD, planes=planes)
@@ -170,11 +170,11 @@ def HQDeringmod(
         limitclp = repclp
     else:
         limitclp = LimitFilter(repclp, input, thr=thr, elast=elast, brighten_thr=darkthr, planes=planes)
-
+    EXPR = core.akarin.Expr if hasattr(core,'akarin') else core.std.Expr
     # Post-Process: Ringing Mask Generating
     if ringmask is None:
         expr = f'x {scale_value(mthr, 8, bits)} < 0 x ?'
-        prewittm = AvsPrewitt(input, planes=0).std.Expr(expr=expr if is_gray else [expr, ''])
+        prewittm = EXPR(AvsPrewitt(input, planes=0), expr=expr if is_gray else [expr, ''])
         fmask = core.misc.Hysteresis(prewittm.std.Median(planes=0), prewittm, planes=0)
         if mrad > 0:
             omask = mt_expand_multi(fmask, planes=0, sw=mrad, sh=mrad)
@@ -196,14 +196,14 @@ def HQDeringmod(
             else:
                 imask = fmask
             expr = f'x {peak} y - * {peak} /'
-            ringmask = core.std.Expr([omask, imask], expr=expr if is_gray else [expr, ''])
+            ringmask = EXPR([omask, imask], expr=expr if is_gray else [expr, ''])
 
     # Mask Merging & Output
     if show:
         if is_gray:
             return ringmask
         else:
-            return ringmask.std.Expr(expr=['', repr(neutral)])
+            return EXPR(ringmask, expr=['', repr(neutral)])
     else:
         return core.std.MaskedMerge(input, limitclp, ringmask, planes=planes, first_plane=True)
 
@@ -377,6 +377,7 @@ def LimitFilter(flt, src, ref=None, thr=None, elast=None, brighten_thr=None, thr
         limitExprY = _limit_filter_expr(ref is not None, thr, elast, brighten_thr, valueRange)
         limitExprC = _limit_filter_expr(ref is not None, thrc, elast, thrc, valueRange)
         expr = []
+        EXPR = core.akarin.Expr if hasattr(core,'akarin') else core.std.Expr
         for i in range(sNumPlanes):
             if process[i]:
                 if i > 0 and (sIsYUV):
@@ -387,9 +388,9 @@ def LimitFilter(flt, src, ref=None, thr=None, elast=None, brighten_thr=None, thr
                 expr.append("")
 
         if ref is None:
-            clip = core.std.Expr([flt, src], expr)
+            clip = EXPR([flt, src], expr)
         else:
-            clip = core.std.Expr([flt, src, ref], expr)
+            clip = EXPR([flt, src, ref], expr)
     else: # implementation with std.MakeDiff, std.Lut and std.MergeDiff
         diff = core.std.MakeDiff(flt, src, planes=planes)
         if sIsYUV:
@@ -439,12 +440,13 @@ def MinBlur(clp, r=1, planes=None):
         if clp.format.bits_per_sample == 16:
             s16 = clp
             RG4 = clp.fmtc.bitdepth(bits=12, planes=planes, dmode=1).ctmf.CTMF(radius=3, planes=planes).fmtc.bitdepth(bits=16, planes=planes)
-            RG4 = mvf.LimitFilter(s16, RG4, thr=0.0625, elast=2, planes=planes)
+            RG4 = LimitFilter(s16, RG4, thr=0.0625, elast=2, planes=planes)
         else:
             RG4 = clp.ctmf.CTMF(radius=3, planes=planes)
 
     expr = 'x y - x z - * 0 < x x y - abs x z - abs < y z ? ?'
-    return core.std.Expr([clp, RG11, RG4], expr=[expr if i in planes else '' for i in range(clp.format.num_planes)])
+    EXPR = core.akarin.Expr if hasattr(core,'akarin') else core.std.Expr
+    return EXPR([clp, RG11, RG4], expr=[expr if i in planes else '' for i in range(clp.format.num_planes)])
     
     
     
@@ -529,8 +531,8 @@ def AvsPrewitt(clip: vs.VideoNode, planes: Optional[Union[int, Sequence[int]]] =
         planes = list(plane_range)
     elif isinstance(planes, int):
         planes = [planes]
-
-    return core.std.Expr(
+    EXPR = core.akarin.Expr if hasattr(core,'akarin') else core.std.Expr
+    return EXPR(
         [
             clip.std.Convolution(matrix=[1, 1, 0, 1, 0, -1, 0, -1, -1], planes=planes, saturate=False),
             clip.std.Convolution(matrix=[1, 1, 1, 0, 0, 0, -1, -1, -1], planes=planes, saturate=False),

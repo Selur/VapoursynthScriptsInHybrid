@@ -95,9 +95,9 @@ def Overlay(
     overlay = overlay.std.AddBorders(left=pl, right=pr, top=pt, bottom=pb)
     mask = mask.std.Crop(left=cl, right=cr, top=ct, bottom=cb)
     mask = mask.std.AddBorders(left=pl, right=pr, top=pt, bottom=pb, color=[0] * mask.format.num_planes)
-
+    EXPR = core.akarin.Expr if hasattr(core,'akarin') else core.std.Expr
     if opacity < 1:
-        mask = mask.std.Expr(expr=f'x {opacity} *')
+        mask = EXPR(mask, expr=f'x {opacity} *')
 
     if mode == 'normal':
         pass
@@ -165,7 +165,7 @@ def Overlay(
         raise vs.Error('Overlay: invalid mode specified')
 
     if mode != 'normal':
-        overlay = core.std.Expr([overlay, base], expr=[expr if i in planes else '' for i in plane_range])
+        overlay = EXPR([overlay, base], expr=[expr if i in planes else '' for i in plane_range])
 
     # Return padded clip
     last = core.std.MaskedMerge(base, overlay, mask, planes=planes, first_plane=mask_first_plane)

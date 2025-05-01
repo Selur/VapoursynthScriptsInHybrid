@@ -405,7 +405,7 @@ def LSFmod(input, strength=None, Smode=None, Smethod=None, kernel=11, preblur=No
     if not isGray:
         tmp_orig = tmp
         tmp = GetPlane(tmp, 0)
-
+    EXPR = core.akarin.Expr if hasattr(core,'akarin') else core.std.Expr
     if preblur <= -1:
         pre = tmp
     elif preblur >= 3:
@@ -414,11 +414,11 @@ def LSFmod(input, strength=None, Smode=None, Smethod=None, kernel=11, preblur=No
         if cuda:
           if hasattr(core,'dfttest2_nvrtc'):
             import dfttest2
-            pre = core.std.MaskedMerge(dfttest2.DFTTest(tmp, tbsize=1, slocation=[0.0,4.0, 0.2,9.0, 1.0,15.0], backend=dfttest2.Backend.NVRTC), tmp, tmp.std.Expr(expr=[expr]))
+            pre = core.std.MaskedMerge(dfttest2.DFTTest(tmp, tbsize=1, slocation=[0.0,4.0, 0.2,9.0, 1.0,15.0], backend=dfttest2.Backend.NVRTC), tmp, EXPR(tmp, expr=[expr]))
           else:
-            pre = core.std.MaskedMerge(tmp.dfttest.DFTTest(tbsize=1, slocation=[0.0,4.0, 0.2,9.0, 1.0,15.0]), tmp, tmp.std.Expr(expr=[expr]))
+            pre = core.std.MaskedMerge(tmp.dfttest.DFTTest(tbsize=1, slocation=[0.0,4.0, 0.2,9.0, 1.0,15.0]), tmp, EXPR(tmp, expr=[expr]))
         else:
-          pre = core.std.MaskedMerge(tmp.dfttest.DFTTest(tbsize=1, slocation=[0.0,4.0, 0.2,9.0, 1.0,15.0]), tmp, tmp.std.Expr(expr=[expr]))
+          pre = core.std.MaskedMerge(tmp.dfttest.DFTTest(tbsize=1, slocation=[0.0,4.0, 0.2,9.0, 1.0,15.0]), tmp, EXPR(tmp, expr=[expr]))
     else:
         pre = MinBlur(tmp, r=preblur)
 
@@ -434,23 +434,23 @@ def LSFmod(input, strength=None, Smode=None, Smethod=None, kernel=11, preblur=No
             method = RemoveGrain(core.std.Merge(dark_limit, bright_limit))
 
         if secure:
-            method = core.std.Expr([method, pre], expr=['x y < x {i} + x y > x {i} - x ? ?'.format(i=scale(1, peak))])
+            method = EXPR([method, pre], expr=['x y < x {i} + x y > x {i} - x ? ?'.format(i=scale(1, peak))])
 
         if preblur > -1:
             method = core.std.MakeDiff(tmp, core.std.MakeDiff(pre, method))
 
         if Smode <= 1:
-            normsharp = core.std.Expr([tmp, method], expr=[f'x x y - {Str} * +'])
+            normsharp = EXPR([tmp, method], expr=[f'x x y - {Str} * +'])
         else:
-            tmpScaled = tmp.std.Expr(expr=[f'x {1 / factor if isInteger else factor} *'], format=tmp.format.replace(sample_type=vs.FLOAT, bits_per_sample=32))
-            methodScaled = method.std.Expr(expr=[f'x {1 / factor if isInteger else factor} *'], format=method.format.replace(sample_type=vs.FLOAT, bits_per_sample=32))
+            tmpScaled = EXPR(tmp, expr=[f'x {1 / factor if isInteger else factor} *'], format=tmp.format.replace(sample_type=vs.FLOAT, bits_per_sample=32))
+            methodScaled = EXPR(method, expr=[f'x {1 / factor if isInteger else factor} *'], format=method.format.replace(sample_type=vs.FLOAT, bits_per_sample=32))
             expr = f'x y = x x x y - abs {Szrp} / {1 / Spwr} pow {Szrp} * {Str} * x y - dup abs / * x y - dup * {Szrp * Szrp} {SdmpLo} + * x y - dup * {SdmpLo} + {Szrp * Szrp} * / * 1 {SdmpHi} 0 = 0 {(Szrp / SdmpHi) ** 4} ? + 1 {SdmpHi} 0 = 0 x y - abs {SdmpHi} / 4 pow ? + / * + ? {factor if isInteger else 1 / factor} *'
-            normsharp = core.std.Expr([tmpScaled, methodScaled], expr=[expr], format=tmp.format)
+            normsharp = EXPR([tmpScaled, methodScaled], expr=[expr], format=tmp.format)
     else:
         normsharp = pre.cas.CAS(sharpness=min(Str, 1))
 
         if secure:
-            normsharp = core.std.Expr([normsharp, pre], expr=['x y < x {i} + x y > x {i} - x ? ?'.format(i=scale(1, peak))])
+            normsharp = EXPR([normsharp, pre], expr=['x y < x {i} + x y > x {i} - x ? ?'.format(i=scale(1, peak))])
 
         if preblur > -1:
             normsharp = core.std.MakeDiff(tmp, core.std.MakeDiff(pre, normsharp))
@@ -463,8 +463,8 @@ def LSFmod(input, strength=None, Smode=None, Smethod=None, kernel=11, preblur=No
     if edgemaskHQ:
         edge = tmp.std.Sobel(scale=2)
     else:
-        edge = core.std.Expr([tmp.std.Maximum(), tmp.std.Minimum()], expr=['x y -'])
-    edge = edge.std.Expr(expr=[f'x {1 / factor if isInteger else factor} * {128 if edgemaskHQ else 32} / 0.86 pow 255 * {factor if isInteger else 1 / factor} *'])
+        edge = EXPR([tmp.std.Maximum(), tmp.std.Minimum()], expr=['x y -'])
+    edge = EXPR(edge, expr=[f'x {1 / factor if isInteger else factor} * {128 if edgemaskHQ else 32} / 0.86 pow 255 * {factor if isInteger else 1 / factor} *'])
 
     if Lmode < 0:
       if hasattr(core,'zsmooth'):
@@ -494,13 +494,13 @@ def LSFmod(input, strength=None, Smode=None, Smethod=None, kernel=11, preblur=No
         PP1 = limit2
     else:
         sharpdiff = core.std.MakeDiff(tmp, limit2)
-        sharpdiff = core.std.Expr([sharpdiff, sharpdiff.std.Convolution(matrix=[1, 1, 1, 1, 0, 1, 1, 1, 1])], expr=[f'x {neutral} - abs y {neutral} - abs > y {soft} * x {100 - soft} * + 100 / x ?'])
+        sharpdiff = EXPR([sharpdiff, sharpdiff.std.Convolution(matrix=[1, 1, 1, 1, 0, 1, 1, 1, 1])], expr=[f'x {neutral} - abs y {neutral} - abs > y {soft} * x {100 - soft} * + 100 / x ?'])
         PP1 = core.std.MakeDiff(tmp, sharpdiff)
 
     ### SOOTHE
     if soothe:
         diff = core.std.MakeDiff(tmp, PP1)
-        diff = core.std.Expr([diff, AverageFrames(diff, weights=[1] * 3, scenechange=32 / 255)],
+        diff = EXPR([diff, AverageFrames(diff, weights=[1] * 3, scenechange=32 / 255)],
                              expr=[f'x {neutral} - y {neutral} - * 0 < x {neutral} - 100 / {keep} * {neutral} + x {neutral} - abs y {neutral} - abs > x {keep} * y {100 - keep} * + 100 / x ? ?'])
         PP2 = core.std.MakeDiff(tmp, diff)
     else:
@@ -533,9 +533,9 @@ def LSFmod(input, strength=None, Smode=None, Smethod=None, kernel=11, preblur=No
         shrpD = core.std.MakeDiff(In, out, planes=[0])
         expr = f'x {neutral} - abs y {neutral} - abs < x y ?'
         if hasattr(core,'zsmooth'):
-          shrpL = core.std.Expr([core.zsmooth.Repair(shrpD, core.std.MakeDiff(In, src, planes=[0]), mode=[1] if isGray else [1, 0]), shrpD], expr=[expr] if isGray else [expr, ''])
+          shrpL = EXPR([core.zsmooth.Repair(shrpD, core.std.MakeDiff(In, src, planes=[0]), mode=[1] if isGray else [1, 0]), shrpD], expr=[expr] if isGray else [expr, ''])
         else:
-          shrpL = core.std.Expr([core.rgvs.Repair(shrpD, core.std.MakeDiff(In, src, planes=[0]), mode=[1] if isGray else [1, 0]), shrpD], expr=[expr] if isGray else [expr, ''])
+          shrpL = EXPR([core.rgvs.Repair(shrpD, core.std.MakeDiff(In, src, planes=[0]), mode=[1] if isGray else [1, 0]), shrpD], expr=[expr] if isGray else [expr, ''])
         return core.std.MakeDiff(In, shrpL, planes=[0])
     else:
         return out
@@ -603,7 +603,7 @@ def FineSharp(clip, mode=1, sstr=2.5, cstr=None, xstr=0, lstr=1.5, pstr=1.28, ld
         return clip
 
     tmp = core.std.ShufflePlanes(clip, [0], vs.GRAY) if color in [vs.YUV] else clip
-
+    EXPR = core.akarin.Expr if hasattr(core,'akarin') else core.std.Expr
     if abs(mode) == 1:
         c2 = core.std.Convolution(tmp, matrix=mat1).std.Median()
     else:
@@ -613,18 +613,18 @@ def FineSharp(clip, mode=1, sstr=2.5, cstr=None, xstr=0, lstr=1.5, pstr=1.28, ld
     
     if sstr >= 0.01:
         expr = 'x y = x dup {} dup dup dup abs {} / {} pow swap3 abs {} + / swap dup * dup {} + / * * {} * + ?'
-        shrp = core.std.Expr([tmp, c2], [expr.format(xy, lstr, 1/pstr, hdmp, ldmp, sstr*i)])
+        shrp = EXPR([tmp, c2], [expr.format(xy, lstr, 1/pstr, hdmp, ldmp, sstr*i)])
 
         if cstr >= 0.01:
             diff = core.std.MakeDiff(shrp, tmp)
             if cstr != 1:
                 expr = 'x {} *'.format(cstr) if isFLOAT else 'x {} - {} * {} +'.format(mid, cstr, mid)
-                diff = core.std.Expr([diff], [expr])
+                diff = EXPR([diff], [expr])
             diff = core.std.Convolution(diff, matrix=mat1) if mode > 0 else core.std.Convolution(diff, matrix=mat2)
             shrp = core.std.MakeDiff(shrp, diff)
 
     if xstr >= 0.01:
-        xyshrp = core.std.Expr([shrp, core.std.Convolution(shrp, matrix=mat2)], ['x dup y - 9.69 * +'])
+        xyshrp = EXPR([shrp, core.std.Convolution(shrp, matrix=mat2)], ['x dup y - 9.69 * +'])
         rpshrp = R(xyshrp, shrp, [rep])
         shrp = core.std.Merge(shrp, rpshrp, [xstr])
 
@@ -668,7 +668,7 @@ def DetailSharpen(clip, z=4, sstr=1.5, power=4, ldmp=1, mode=1, med=False):
         blur = blur.std.Median()
 
     expr = 'x y = x dup {} dup dup abs {} / {} pow swap2 abs {} + / * {} * + ?'
-    tmp = core.std.Expr([tmp, blur], [expr.format(xy, z, 1/power, ldmp, sstr*z*i)])
+    tmp = EXPR([tmp, blur], [expr.format(xy, z, 1/power, ldmp, sstr*z*i)])
 
     return core.std.ShufflePlanes([tmp, clip], [0, 1, 2], color) if color in [vs.YUV] else tmp
 
@@ -712,9 +712,9 @@ def psharpen(clip, strength=25, threshold=75, ss_x=1.0, ss_y=1.0, dest_x=None, d
 
     max_ = core.std.Maximum(clip)
     min_ = core.std.Minimum(clip)
-
-    nmax = core.std.Expr([max_, min_], ["x y -"])
-    nval = core.std.Expr([clip, min_], ["x y -"])
+    EXPR = core.akarin.Expr if hasattr(core,'akarin') else core.std.Expr
+    nmax = EXPR([max_, min_], ["x y -"])
+    nval = EXPR([clip, min_], ["x y -"])
 
     expr0 = threshold * (1.0 - strength) / (1.0 - (1.0 - threshold) * (1.0 - strength))
     epsilon = 0.000000000000001
@@ -728,9 +728,9 @@ def psharpen(clip, strength=25, threshold=75, ss_x=1.0, ss_y=1.0, dest_x=None, d
         f"* {threshold} + ? {x} {y} 2 / > 1 -1 ? * 1 + {y} * 2 / {scl} *"
     )
 
-    nval = core.std.Expr([nval, nmax], [expr])
+    nval = EXPR([nval, nmax], [expr])
 
-    clip = core.std.Expr([nval, min_], ["x y +"])
+    clip = EXPR([nval, min_], ["x y +"])
 
     if src.format.num_planes != 1:
         clip = core.std.ShufflePlanes(
@@ -815,7 +815,8 @@ def MinBlur(clp, r=1, planes=None):
             RG4 = clp.ctmf.CTMF(radius=3, planes=planes)
 
     expr = 'x y - x z - * 0 < x x y - abs x z - abs < y z ? ?'
-    return core.std.Expr([clp, RG11, RG4], expr=[expr if i in planes else '' for i in range(clp.format.num_planes)])
+    EXPR = core.akarin.Expr if hasattr(core,'akarin') else core.std.Expr
+    return EXPR([clp, RG11, RG4], expr=[expr if i in planes else '' for i in range(clp.format.num_planes)])
     
     
 def sbr(c: vs.VideoNode, r: int = 1, planes: Optional[Union[int, Sequence[int]]] = None) -> vs.VideoNode:
@@ -848,8 +849,8 @@ def sbr(c: vs.VideoNode, r: int = 1, planes: Optional[Union[int, Sequence[int]]]
         RG11DS = RG11DS.std.Convolution(matrix=matrix2, planes=planes)
     if r >= 3:
         RG11DS = RG11DS.std.Convolution(matrix=matrix2, planes=planes)
-
-    RG11DD = core.std.Expr(
+    EXPR = core.akarin.Expr if hasattr(core,'akarin') else core.std.Expr
+    RG11DD = EXPR(
         [RG11D, RG11DS],
         expr=[f'x y - x {neutral} - * 0 < {neutral} x y - abs x {neutral} - abs < x y - {neutral} + x ? ?' if i in planes else '' for i in plane_range],
     )
@@ -875,8 +876,8 @@ def mt_clamp(
         planes = list(plane_range)
     elif isinstance(planes, int):
         planes = [planes]
-
-    return core.std.Expr([clip, bright_limit, dark_limit], expr=[f'x y {overshoot} + min z {undershoot} - max' if i in planes else '' for i in plane_range])
+    EXPR = core.akarin.Expr if hasattr(core,'akarin') else core.std.Expr
+    return EXPR([clip, bright_limit, dark_limit], expr=[f'x y {overshoot} + min z {undershoot} - max' if i in planes else '' for i in plane_range])
 
 def spline(x, coordinates):
     def get_matrix(px, py, l):
@@ -982,7 +983,8 @@ def ContraSharpening(
     else:
       ssDD = core.rgvs.Repair(ssD, allD, mode=[rep if i in planes else 0 for i in plane_range])
     # abs(diff) after limiting may not be bigger than before
-    ssDD = core.std.Expr([ssDD, ssD], expr=[f'x {neutral} - abs y {neutral} - abs < x y ?' if i in planes else '' for i in plane_range])
+    EXPR = core.akarin.Expr if hasattr(core,'akarin') else core.std.Expr
+    ssDD = EXPR([ssDD, ssD], expr=[f'x {neutral} - abs y {neutral} - abs < x y ?' if i in planes else '' for i in plane_range])
     # apply the limited difference (sharpening is just inverse blurring)
     last = core.std.MergeDiff(denoised, ssDD, planes=planes)
     return last.std.Crop(pad, pad, pad, pad)
@@ -1015,8 +1017,6 @@ def UnsharpMask(clip: vs.VideoNode, strength: int = 64, radius: int = 3, thresho
     Returns:
     vs.VideoNode: Sharpened video clip.
     """
-    
-    core = vs.core
 
     # Choose Expr function: prefer akarin.Expr if available for faster execution
     expr_func = core.akarin.Expr if hasattr(core, "akarin") else core.std.Expr

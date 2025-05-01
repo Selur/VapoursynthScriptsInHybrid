@@ -58,13 +58,14 @@ def FastLineDarkenMOD(c, strength=48, protection=5, luma_cap=191, threshold=4, t
 
     ## filtering ##
     exin = c.std.Maximum(threshold=peak / (protection + 1)).std.Minimum()
-    thick = core.std.Expr([c, exin], expr=[f'y {lum} < y {lum} ? x {thr} + > x y {lum} < y {lum} ? - 0 ? {Str} * x +'])
+    EXPR = core.akarin.Expr if hasattr(core,'akarin') else core.std.Expr
+    thick = EXPR([c, exin], expr=[f'y {lum} < y {lum} ? x {thr} + > x y {lum} < y {lum} ? - 0 ? {Str} * x +'])
     if thinning <= 0:
         last = thick
     else:
-        diff = core.std.Expr([c, exin], expr=[f'y {lum} < y {lum} ? x {thr} + > x y {lum} < y {lum} ? - 0 ? {scale(127, peak)} +'])
-        linemask = diff.std.Minimum().std.Expr(expr=[f'x {scale(127, peak)} - {thn} * {peak} +']).std.Convolution(matrix=[1, 1, 1, 1, 1, 1, 1, 1, 1])
-        thin = core.std.Expr([c.std.Maximum(), diff], expr=[f'x y {scale(127, peak)} - {Str} 1 + * +'])
+        diff = EXPR([c, exin], expr=[f'y {lum} < y {lum} ? x {thr} + > x y {lum} < y {lum} ? - 0 ? {scale(127, peak)} +'])
+        linemask = EXPR(diff.std.Minimum(), expr=[f'x {scale(127, peak)} - {thn} * {peak} +']).std.Convolution(matrix=[1, 1, 1, 1, 1, 1, 1, 1, 1])
+        thin = EXPR([c.std.Maximum(), diff], expr=[f'x y {scale(127, peak)} - {Str} 1 + * +'])
         last = core.std.MaskedMerge(thin, thick, linemask)
 
     if c_orig is not None:
@@ -113,9 +114,10 @@ def Toon(input, str=1.0, l_thr=2, u_thr=12, blur=2, depth=32):
     ludiff = u_thr - l_thr
 
     last = core.std.MakeDiff(input.std.Maximum().std.Minimum(), input)
-    last = core.std.Expr([last, Padding(last, 6, 6, 6, 6).warp.AWarpSharp2(blur=blur, depth=depth).std.Crop(6, 6, 6, 6)], expr=['x y min'])
+    EXPR = core.akarin.Expr if hasattr(core,'akarin') else core.std.Expr
+    last = EXPR([last, Padding(last, 6, 6, 6, 6).warp.AWarpSharp2(blur=blur, depth=depth).std.Crop(6, 6, 6, 6)], expr=['x y min'])
     expr = f'y {lthr} <= {neutral} y {uthr} >= x {uthr8} y {multiple} / - 128 * x {multiple} / y {multiple} / {lthr8} - * + {ludiff} / {multiple} * ? {neutral} - {str} * {neutral} + ?'
-    last = core.std.MakeDiff(input, core.std.Expr([last, last.std.Maximum()], expr=[expr]))
+    last = core.std.MakeDiff(input, EXPR([last, last.std.Maximum()], expr=[expr]))
 
     if input_orig is not None:
         last = core.std.ShufflePlanes([last, input_orig], planes=[0, 1, 2], colorfamily=input_orig.format.color_family)
