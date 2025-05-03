@@ -36,10 +36,11 @@ def KillerSpots(clip: vs.VideoNode, limit: int=10, advanced: bool=False):
 # From function RemoveDirt, original adaptation thanks to johnmeyer
 def RemoveDirtMod(clip: vs.VideoNode, limit: int =10):
   core = vs.core  
-  clensed = core.rgvs.Clense(clip)
   if hasattr(core, 'zsmooth'):
+    clensed = core.zsmooth.Clense(clip)
     alt = core.zsmooth.RemoveGrain(clip,mode=1)
   else:
+    clensed = core.rgvs.Clense(clip)
     alt = core.rgvs.RemoveGrain(clip,mode=1)
   clip = core.rdvs.RestoreMotionBlocks(clensed, clip, alternative=alt, pthreshold=4, cthreshold=6, gmthreshold=40, dist=3, dmode=2, noise=limit, noisy=12)
   return clip
