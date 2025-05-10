@@ -697,3 +697,32 @@ def simplehdr10tosdr(clip, source_peak=1000, tFormat=vs.YUV420P8, tMatrix="709",
   if tFormat != vs.RGBS:
     clip=core.resize.Bicubic(clip=clip, format=tFormat, filter_param_a=f_a, filter_param_b=f_b, matrix_s=tMatrix, primaries_in_s="2020", primaries_s=tMatrix, transfer_in_s="linear", transfer_s=tMatrix, dither_type="ordered")
   return clip
+  
+  
+ 
+def ClipRGB(clip: vs.VideoNode, min8: int = 16, max8: int = 235) -> vs.VideoNode:
+    """
+    Hard-clips all RGB channels of a clip to a specified limited-range interval,
+    scaled to the clip's bit depth. Useful for enforcing broadcast-safe RGB levels.
+
+    Args:
+        clip (vs.VideoNode): Input RGB clip.
+        min8 (int): Lower bound of the range (in 8-bit scale). Default is 16.
+        max8 (int): Upper bound of the range (in 8-bit scale). Default is 235.
+
+    Returns:
+        vs.VideoNode: RGB clip with channels clipped to the specified range.
+    """
+    if not clip.format.color_family == vs.RGB:
+        raise ValueError("ClipRGB: input must be RGB")
+
+    bits = clip.format.bits_per_sample
+    peak = (1 << bits) - 1
+
+    # Scale user-defined 8-bit min/max to current bit depth
+    lo = int(round(min8 * peak / 255))
+    hi = int(round(max8 * peak / 255))
+
+    EXPR = core.akarin.Expr if hasattr(core,'akarin') else core.std.Expr
+    expr = f'x {lo} max {hi} min'
+    return EXPR(clip, [expr] * 3)
