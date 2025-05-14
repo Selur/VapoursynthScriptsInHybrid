@@ -552,3 +552,168 @@ def MinBlur(clp: vs.VideoNode, r: int = 1, planes: Optional[Union[int, Sequence[
             RG4 = clp.ctmf.CTMF(radius=3, planes=planes)
     EXPR = core.akarin.Expr if hasattr(core,'akarin') else core.std.Expr
     return EXPR([clp, RG11, RG4], expr=['x y - x z - * 0 < x x y - abs x z - abs < y z ? ?' if i in planes else '' for i in plane_range])
+
+
+# Try to remove 2nd order halos
+# Added presets to classic FineDehalo2
+def SecondOrderDehalo(
+    src: vs.VideoNode,
+    preset: str = 'default',
+    hconv: list[int] | None = None,
+    vconv: list[int] | None = None,
+    edgemask: str | None = None,
+    growmask: str | None = None,
+    showmask: int = 0
+) -> vs.VideoNode:
+    """
+    SecondOrderDehalo - Second-order dehalo removal using directional edge masks and convolution.
+
+    Parameters:
+        src (vs.VideoNode):
+            Input clip. Must be GRAY or YUV (not RGB).
+        preset (str):
+            Preset for typical content:
+                - 'default'
+                - 'strong'
+                - 'light'
+                - 'anime'
+                - 'anime-strong'
+                - 'liveaction'
+                - 'liveaction-strong'
+        hconv (list[int]):
+            Optional horizontal convolution kernel override.
+        vconv (list[int]):
+            Optional vertical convolution kernel override.
+        edgemask (str):
+            Edge detection method: 'sobel' or 'prewitt'. Defaults based on preset.
+        growmask (str):
+            Grow mask type: 'default', 'strong', 'tight', or 'fast'. Controls edge expansion aggressiveness.
+        showmask (int):
+            If 1, returns combined mask for previewing. If 0, returns processed clip.
+
+    Returns:
+        vs.VideoNode: Dehaloed clip or visualized mask depending on showmask.
+    """
+
+    if not isinstance(src, vs.VideoNode):
+        raise TypeError('FineDehalo2: This is not a clip')
+    if src.format.color_family == vs.RGB:
+        raise vs.Error('FineDehalo2: RGB format is not supported')
+
+    # Extract luma if needed
+    if src.format.color_family != vs.GRAY:
+        src_orig = src
+        src = core.std.ShufflePlanes(src, 0, vs.GRAY)
+    else:
+        src_orig = None
+
+    # Preset parameters
+    presets = {
+        'default': {
+            'hconv': [-1, -2, 0, 0, 40, 0, 0, -2, -1],
+            'vconv': [-2, -1, 0, 0, 40, 0, 0, -1, -2],
+            'edgemask': 'sobel',
+            'growmask': 'default'
+        },
+        'strong': {
+            'hconv': [-2, -3, 0, 0, 50, 0, 0, -3, -2],
+            'vconv': [-3, -2, 0, 0, 50, 0, 0, -2, -3],
+            'edgemask': 'prewitt',
+            'growmask': 'strong'
+        },
+        'light': {
+            'hconv': [-1, 0, 0, 0, 30, 0, 0, 0, -1],
+            'vconv': [0, -1, 0, 0, 30, 0, 0, -1, 0],
+            'edgemask': 'sobel',
+            'growmask': 'fast'
+        },
+        'anime': {
+            'hconv': [-1, -1, 0, 0, 35, 0, 0, -1, -1],
+            'vconv': [-1, -1, 0, 0, 35, 0, 0, -1, -1],
+            'edgemask': 'sobel',
+            'growmask': 'tight'
+        },
+        'anime-strong': {
+            'hconv': [-2, -2, 0, 0, 45, 0, 0, -2, -2],
+            'vconv': [-2, -2, 0, 0, 45, 0, 0, -2, -2],
+            'edgemask': 'prewitt',
+            'growmask': 'strong'
+        },
+        'liveaction': {
+            'hconv': [-1, -2, 0, 0, 30, 0, 0, -2, -1],
+            'vconv': [-2, -1, 0, 0, 30, 0, 0, -1, -2],
+            'edgemask': 'sobel',
+            'growmask': 'default'
+        },
+        'liveaction-strong': {
+            'hconv': [-2, -3, 0, 0, 40, 0, 0, -3, -2],
+            'vconv': [-3, -2, 0, 0, 40, 0, 0, -2, -3],
+            'edgemask': 'prewitt',
+            'growmask': 'strong'
+        }
+    }
+
+    # Load preset
+    preset_vals = presets.get(preset)
+    if not preset_vals:
+        raise vs.Error(f'FineDehalo2: Unknown preset "{preset}"')
+
+    hconv = hconv or preset_vals['hconv']
+    vconv = vconv or preset_vals['vconv']
+    edgemask = edgemask or preset_vals['edgemask']
+    growmask = growmask or preset_vals['growmask']
+
+    # --- Edge mask generation ---
+    if edgemask == 'sobel':
+        mask_h = core.std.Convolution(src, matrix=[1, 2, 1, 0, 0, 0, -1, -2, -1], divisor=4, saturate=False)
+        mask_v = core.std.Convolution(src, matrix=[1, 0, -1, 2, 0, -2, 1, 0, -1], divisor=4, saturate=False)
+    elif edgemask == 'prewitt':
+        mask_h = core.std.Convolution(src, matrix=[1, 1, 1, 0, 0, 0, -1, -1, -1], divisor=3, saturate=False)
+        mask_v = core.std.Convolution(src, matrix=[1, 0, -1, 1, 0, -1, 1, 0, -1], divisor=3, saturate=False)
+    else:
+        raise vs.Error(f'FineDehalo2: Unknown edgemask type "{edgemask}"')
+
+    EXPR = core.akarin.Expr if hasattr(core, 'akarin') else core.std.Expr
+    temp_h = EXPR([mask_h, mask_v], ['x 3 * y -'])
+    temp_v = EXPR([mask_v, mask_h], ['x 3 * y -'])
+
+    # --- Mask grower ---
+    def grow(mask: vs.VideoNode, kind: str, coordinates: list[int]) -> vs.VideoNode:
+        mask = core.std.Maximum(mask, coordinates=coordinates).std.Minimum(coordinates=coordinates)
+        mask_1 = core.std.Maximum(mask, coordinates=coordinates)
+        mask_2 = core.std.Maximum(mask_1, coordinates=coordinates).std.Maximum(coordinates=coordinates)
+        diff = EXPR([mask_2, mask_1], ['x y -'])
+
+        if kind == 'tight':
+            conv = core.std.Convolution(diff, matrix=[1] * 9)
+            return EXPR([conv], ['x 1.2 *'])
+        elif kind == 'fast':
+            conv = core.std.Convolution(diff, matrix=[0, 1, 0, 1, 4, 1, 0, 1, 0])
+            return EXPR([conv], ['x 1.5 *'])
+        elif kind == 'strong':
+            conv = core.std.Convolution(diff, matrix=[1, 2, 1, 2, 4, 2, 1, 2, 1])
+            return EXPR([conv], ['x 2.0 *'])
+        else:
+            conv = core.std.Convolution(diff, matrix=[1, 2, 1, 2, 4, 2, 1, 2, 1])
+            return EXPR([conv], ['x 1.8 *'])
+
+    mask_h = grow(temp_h, growmask, [0, 1, 0, 0, 0, 0, 1, 0])
+    mask_v = grow(temp_v, growmask, [0, 0, 0, 1, 1, 0, 0, 0])
+
+    # --- Apply dehalo ---
+    fix_h = core.std.Convolution(src, matrix=vconv, mode='v')
+    fix_v = core.std.Convolution(src, matrix=hconv, mode='h')
+
+    if showmask:
+        last = EXPR([mask_h, mask_v], ['x y max'])
+    else:
+        last = core.std.MaskedMerge(src, fix_h, mask_h)
+        last = core.std.MaskedMerge(last, fix_v, mask_v)
+
+    # Restore chroma
+    if src_orig is not None:
+        if showmask:
+            return core.resize.Bicubic(last, format=src_orig.format.id)
+        return core.std.ShufflePlanes([last, src_orig], planes=[0, 1, 2], colorfamily=src_orig.format.color_family)
+    return last
+
