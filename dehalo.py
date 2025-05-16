@@ -2,9 +2,6 @@ import vapoursynth as vs
 from vapoursynth import core
 
 import math
-
-from vsutil import get_depth, get_y, scale_value, fallback
-
 from typing import Union, Optional, Sequence
 
 def DeHalo_alpha(
@@ -41,7 +38,7 @@ def DeHalo_alpha(
     if clp.format.color_family == vs.RGB:
         raise vs.Error('DeHalo_alpha: RGB format is not supported')
 
-    bits = get_depth(clp)
+    bits = clp.format.bits_per_sample
 
     if clp.format.color_family != vs.GRAY:
         clp_orig = clp
@@ -57,7 +54,7 @@ def DeHalo_alpha(
     ugly = EXPR([halos.std.Maximum(), halos.std.Minimum()], expr='x y -')
     so = EXPR(
         [ugly, are],
-        expr=f'y x - y 0.000001 + / {scale_value(255, 8, bits)} * {scale_value(lowsens, 8, bits)} - y {scale_value(256, 8, bits)} + {scale_value(512, 8, bits)} / {highsens / 100} + *',
+        expr=f'y x - y 0.000001 + / {scale(255, bits)} * {scale(lowsens, bits)} - y {scale(256, bits)} + {scale(512, bits)} / {highsens / 100} + *',
     )
     if clp.format.sample_type == vs.FLOAT:
         so = so.vszip.Limiter() if hasattr(core,'vszip') else so.std.Limiter()
@@ -114,7 +111,7 @@ def EdgeCleaner(c: vs.VideoNode, strength: int = 10, rep: bool = True, rmode: in
     if c.format.color_family == vs.RGB:
         raise vs.Error('EdgeCleaner: RGB format is not supported')
 
-    bits = get_depth(c)
+    bits = c.format.bits_per_sample
     peak = (1 << bits) - 1
 
     if c.format.color_family != vs.GRAY:
@@ -134,7 +131,7 @@ def EdgeCleaner(c: vs.VideoNode, strength: int = 10, rep: bool = True, rmode: in
         main = core.rgvs.Repair(main, c, mode=rmode)
     EXPR = core.akarin.Expr if hasattr(core,'akarin') else core.std.Expr
     mask = (
-        EXPR(AvsPrewitt(c), expr=f'x {scale_value(4, 8, bits)} < 0 x {scale_value(32, 8, bits)} > {peak} x ? ?')
+        EXPR(AvsPrewitt(c), expr=f'x {scale(4, bits)} < 0 x {scale_value(32, bits)} > {peak} x ? ?')
         .std.InvertMask()
         .std.Convolution(matrix=[1, 1, 1, 1, 1, 1, 1, 1, 1])
     )
@@ -149,8 +146,8 @@ def EdgeCleaner(c: vs.VideoNode, strength: int = 10, rep: bool = True, rmode: in
         RG = core.zsmooth.RemoveGrain if hasattr(core,'zsmooth') else core.rgvs.RemoveGrain
         clean = RG(c, mode=17)
         diff = core.std.MakeDiff(c, clean)
-        mask = EXPR(AvsPrewitt(diff.std.Levels(min_in=scale_value(40, 8, bits), max_in=scale_value(168, 8, bits), gamma=0.35).RG(mode=7)),
-            expr=f'x {scale_value(4, 8, bits)} < 0 x {scale_value(16, 8, bits)} > {peak} x ? ?'
+        mask = EXPR(AvsPrewitt(diff.std.Levels(min_in=scale(40, bits), max_in=scale(168, bits), gamma=0.35).RG(mode=7)),
+            expr=f'x {scale_value(4, bits)} < 0 x {scale(16, bits)} > {peak} x ? ?'
         )
         final = core.std.MaskedMerge(final, c, mask)
 
@@ -246,7 +243,7 @@ def FineDehalo(
     vszip = hasattr(core,'vszip')
     # Keeps only the sharpest edges (line edges)
     EXPR = core.akarin.Expr if hasattr(core,'akarin') else core.std.Expr
-    strong = EXPR(edges, expr=f'x {scale_value(thmi, 8, bits)} - {thma - thmi} / 255 *')
+    strong = EXPR(edges, expr=f'x {scale(thmi, bits)} - {thma - thmi} / 255 *')
     if is_float:
         strong = strong.vszip.Limiter() if vszip else strong.std.Limiter()
 
@@ -260,7 +257,7 @@ def FineDehalo(
     # Therefore we have to produce a mask to exclude these zones from the halo removal.
 
     # Includes more edges than previously, but ignores simple details
-    light = EXPR(edges, expr=f'x {scale_value(thlimi, 8, bits)} - {thlima - thlimi} / 255 *')
+    light = EXPR(edges, expr=f'x {scale(thlimi, bits)} - {thlima - thlimi} / 255 *')
     if is_float:
         light = light.vszip.Limiter() if vszip else light.std.Limiter()
 
@@ -410,13 +407,6 @@ def YAHR(clp: vs.VideoNode, blur: int = 2, depth: int = 32) -> vs.VideoNode:
     if clp_orig is not None:
         last = core.std.ShufflePlanes([last, clp_orig], planes=[0, 1, 2], colorfamily=clp_orig.format.color_family)
     return last
-
-
-def cround(x: float) -> int:
-    return math.floor(x + 0.5) if x > 0 else math.ceil(x - 0.5)
-
-def m4(x: Union[float, int]) -> int:
-    return 16 if x < 16 else cround(x / 4) * 4
 
 def AvsPrewitt(clip: vs.VideoNode, planes: Optional[Union[int, Sequence[int]]] = None) -> vs.VideoNode:
     if not isinstance(clip, vs.VideoNode):
@@ -717,3 +707,279 @@ def SecondOrderDehalo(
         return core.std.ShufflePlanes([last, src_orig], planes=[0, 1, 2], colorfamily=src_orig.format.color_family)
     return last
 
+def BlindDeHalo3(clp: vs.VideoNode, rx: float = 3.0, ry: float = 3.0, strength: float = 125,
+                 lodamp: float = 0, hidamp: float = 0, sharpness: float = 0, tweaker: float = 0,
+                 PPmode: int = 0, PPlimit: Optional[int] = None, interlaced: bool = False
+                 ) -> vs.VideoNode:
+    """Avisynth's BlindDeHalo3() version: 3_MT2
+
+    This script removes the light & dark halos from too strong "Edge Enhancement".
+
+    Author: Didée (https://forum.doom9.org/attachment.php?attachmentid=5599&d=1143030001)
+
+    Only the first plane (luma) will be processed.
+
+    Args:
+        clp: Input clip.
+
+        rx, ry: (float) The radii to use for the [quasi-] Gaussian blur, on which the halo removal is based. Default is 3.0.
+
+        strength: (float) The overall strength of the halo removal effect. Default is 125.
+
+        lodamp, hidamp: (float) With these two values, one can reduce the basic effect on areas that would change only little anyway (lodamp),
+            and/or on areas that would change very much (hidamp).
+            lodamp does a reasonable job in keeping more detail in affected areas.
+            hidamp is intended to keep rather small areas that are very bright or very dark from getting processed too strong.
+            Works OK on sources that contain only weak haloing - for sources with strong over sharpening,
+                it should not be used, mostly. (Usage has zero impact on speed.)
+            Range: 0.0 to ??? (try 4.0 as a start)
+            Default is 0.0.
+
+        sharpness: (float) By setting this bigger than 0.0, the affected areas will come out with better sharpness.
+            However, strength must be chosen somewhat bigger as well, then, to get the same effect than without.
+            (This is the same as initial version's "maskblur" option.)
+            Range: 0.0 to 1.58.
+            Default is 0.
+
+        tweaker: (float) May be used to get a stronger effect, separately from altering "strength".
+            (Also in accordance to initial version's working methodology. I had no better idea for naming this parameter.)
+            Range: 0.0 - 1.00.
+            Default is 0.
+
+        PPmode: (int) When set to "1" or "2", a second cleaning operation after the basic halo removal is done.
+            This deals with:
+                a) Removing/reducing those corona lines that sometimes are left over by BlindDeHalo
+                b) Improving on mosquito noise, if some is present.
+            PPmode=1 uses a simple Gaussian blur for post-cleaning. PPmode=2 uses a 3*3 average, with zero weighting of the center pixel.
+            Also, PPmode can be "-1" or "-2". In this case, the main dehaloing step is completely discarded, and *only* the PP cleaning is done.
+            This has less effect on halos, but can deal for sources containing more mosquito noise than halos.
+            Default is 0.
+
+        PPlimit: (int) Can be used to make the PP routine change no pixel by more than [PPlimit].
+            I'm not sure if this makes much sense in this context. However the option is there - you never know what it might be good for.
+            Default is 0.
+
+        interlaced: (bool) As formerly, this is intended for sources that were originally interlaced, but then made progressive by deinterlacing.
+            It aims in particular at clips that made their way through Restore24.
+            Default is False.
+
+    """
+
+    funcName = 'BlindDeHalo3'
+
+    if not isinstance(clp, vs.VideoNode):
+        raise TypeError(funcName + ': \"clp\" is not a clip!')
+
+    if clp.format.sample_type != vs.INTEGER:
+        raise TypeError(funcName + ': Only integer clip is supported!')
+
+    if PPlimit is None:
+        PPlimit = 4 if abs(PPmode) == 3 else 0
+
+    bits = clp.format.bits_per_sample
+    isGray = clp.format.color_family == vs.GRAY
+    neutral = 1 << (bits - 1)
+
+    if not isGray:
+        clp_src = clp
+        clp = GetPlane(clp)
+
+    sharpness = min(sharpness, 1.58)
+    tweaker = min(tweaker, 1.0)
+    strength *= 1 + sharpness * 0.25
+    RR = (rx + ry) / 2
+    ST = strength / 100
+    LD = scale(lodamp, bits)
+    HD = hidamp ** 2
+    TWK0 = 'x y - {i} /'.format(i=12 / ST / RR)
+    TWK = 'x y - {i} / abs'.format(i=12 / ST / RR)
+    TWK_HLIGHT = ('x y - abs {i} < {neutral} {TWK} {neutral} {TWK} - {TWK} {neutral} / * + {TWK0} {TWK} {LD} + / * '
+        '{neutral} {TWK} - {j} / dup * {neutral} {TWK} - {j} / dup * {HD} + / * {neutral} + ?'.format(
+            i=1 << (bits-8), neutral=neutral, TWK=TWK, TWK0=TWK0, LD=LD, j=scale(20, bits), HD=HD))
+
+    i = clp if not interlaced else core.std.SeparateFields(clp, tff=True)
+    oxi = i.width
+    oyi = i.height
+    sm = core.resize.Bicubic(i, m4(oxi/rx), m4(oyi/ry), filter_param_a=1/3, filter_param_b=1/3)
+    mm = core.std.Expr([sm.std.Maximum(), sm.std.Minimum()], ['x y - 4 *']).std.Maximum().std.Deflate().std.Convolution([1]*9)
+    mm = mm.std.Inflate().resize.Bicubic(oxi, oyi, filter_param_a=1, filter_param_b=0).std.Inflate()
+    sm = core.resize.Bicubic(sm, oxi, oyi, filter_param_a=1, filter_param_b=0)
+    smd = core.std.Expr([Sharpen(i, tweaker), sm], [TWK_HLIGHT])
+    if sharpness != 0.:
+        smd = Blur(smd, sharpness)
+    clean = core.std.Expr([i, smd], ['x y {neutral} - -'.format(neutral=neutral)])
+    clean = core.std.MaskedMerge(i, clean, mm)
+
+    if PPmode != 0:
+        LL = scale(PPlimit, bits)
+        LIM = 'x {LL} + y < x {LL} + x {LL} - y > x {LL} - y ? ?'.format(LL=LL)
+
+        base = i if PPmode < 0 else clean
+        small = core.resize.Bicubic(base, m4(oxi / math.sqrt(rx * 1.5)), m4(oyi / math.sqrt(ry * 1.5)), filter_param_a=1/3, filter_param_b=1/3)
+        ex1 = Blur(small.std.Maximum(), 0.5)
+        in1 = Blur(small.std.Minimum(), 0.5)
+        hull = core.std.Expr([ex1.std.Maximum().std.Convolution(matrix=[1, 2, 1, 2, 4, 2, 1, 2, 1]), ex1, in1,
+            in1.std.Minimum().std.Convolution(matrix=[1, 2, 1, 2, 4, 2, 1, 2, 1])],
+            ['x y - {i} - 5 * z a - {i} - 5 * max'.format(i=1 << (bits-8))]).resize.Bicubic(oxi, oyi, filter_param_a=1, filter_param_b=0)
+
+        if abs(PPmode) == 1:
+            postclean = core.std.MaskedMerge(base, small.resize.Bicubic(oxi, oyi, filter_param_a=1, filter_param_b=0), hull)
+        elif abs(PPmode) == 2:
+            postclean = core.std.MaskedMerge(base, base.std.Convolution(matrix=[1, 1, 1, 1, 0, 1, 1, 1, 1]), hull)
+        elif abs(PPmode) == 3:
+            postclean = core.std.MaskedMerge(base, base.std.Median(), hull)
+        else:
+            raise ValueError(funcName + ': \"PPmode\" must be in [-3 ... 3]!')
+    else:
+        postclean = clean
+
+    if PPlimit != 0:
+        postclean = core.std.Expr([base, postclean], [LIM])
+
+    last = haf_Weave(postclean, tff=True) if interlaced else postclean
+
+    if not isGray:
+        last = core.std.ShufflePlanes([last, clp_src], list(range(clp_src.format.num_planes)), clp_src.format.color_family)
+
+    return last
+    
+# Taken from muvsfunc
+def GetPlane(clip, plane=None):
+    # input clip
+    if not isinstance(clip, vs.VideoNode):
+        raise type_error('"clip" must be a clip!')
+
+    # Get properties of input clip
+    sFormat = clip.format
+    sNumPlanes = sFormat.num_planes
+
+    # Parameters
+    if plane is None:
+        plane = 0
+    elif not isinstance(plane, int):
+        raise type_error('"plane" must be an int!')
+    elif plane < 0 or plane > sNumPlanes:
+        raise value_error(f'valid range of "plane" is [0, {sNumPlanes})!')
+
+    # Process
+    return core.std.ShufflePlanes(clip, plane, vs.GRAY)
+    
+def cround(x: float) -> int:
+    return math.floor(x + 0.5) if x > 0 else math.ceil(x - 0.5)
+
+def scale(value, peak):
+    return cround(value * peak / 255) if peak != 1 else value / 255
+    
+def m4(value, mult=4.0):
+    return 16 if value < 16 else int(round(value / mult) * mult)
+    
+def Sharpen(clip: vs.VideoNode, amountH: float = 1.0, amountV: Optional[float] = None,
+            planes: Optional[Union[int, Sequence[int]]] = None
+            ) -> vs.VideoNode:
+    """Avisynth's internel filter Sharpen()
+
+    Simple 3x3-kernel sharpening filter.
+
+    Args:
+        clip: Input clip.
+
+        amountH, amountV: (float) Sharpen uses the kernel is [(1-2^amount)/2, 2^amount, (1-2^amount)/2].
+            A value of 1.0 gets you a (-1/2, 2, -1/2) for example.
+            Negative Sharpen actually blurs the image.
+            The allowable range for Sharpen is from -1.58 to +1.0.
+            If \"amountV\" is not set manually, it will be set to \"amountH\".
+            Default is 1.0.
+
+        planes: (int []) Whether to process the corresponding plane. By default, every plane will be processed.
+            The unprocessed planes will be copied from the source clip, "clip".
+
+    """
+
+    funcName = 'Sharpen'
+
+    if not isinstance(clip, vs.VideoNode):
+        raise TypeError(funcName + ': \"clip\" is not a clip!')
+
+    if amountH < -1.5849625 or amountH > 1:
+        raise ValueError(funcName + ': \'amountH\' have not a correct value! [-1.58 ~ 1]')
+
+    if amountV is None:
+        amountV = amountH
+    else:
+        if amountV < -1.5849625 or amountV > 1:
+            raise ValueError(funcName + ': \'amountV\' have not a correct value! [-1.58 ~ 1]')
+
+    if planes is None:
+        planes = list(range(clip.format.num_planes))
+
+    center_weight_v = math.floor(2 ** (amountV - 1) * 1023 + 0.5)
+    outer_weight_v = math.floor((0.25 - 2 ** (amountV - 2)) * 1023 + 0.5)
+    center_weight_h = math.floor(2 ** (amountH - 1) * 1023 + 0.5)
+    outer_weight_h = math.floor((0.25 - 2 ** (amountH - 2)) * 1023 + 0.5)
+
+    conv_mat_v = [outer_weight_v, center_weight_v, outer_weight_v]
+    conv_mat_h = [outer_weight_h, center_weight_h, outer_weight_h]
+
+    if math.fabs(amountH) >= 0.00002201361136: # log2(1+1/65536)
+        clip = core.std.Convolution(clip, conv_mat_v, planes=planes, mode='v')
+
+    if math.fabs(amountV) >= 0.00002201361136:
+        clip = core.std.Convolution(clip, conv_mat_h, planes=planes, mode='h')
+
+    return clip
+    
+def cround(x: float) -> int:
+    return math.floor(x + 0.5) if x > 0 else math.ceil(x - 0.5)
+    
+def scale(value, peak):
+    return cround(value * peak / 255) if peak != 1 else value / 255
+        
+# Taken from sfrom vsutil
+T = TypeVar('T')
+def fallback(value: Optional[T], fallback_value: T) -> T:
+    """Utility function that returns a value or a fallback if the value is ``None``.
+
+    >>> fallback(5, 6)
+    5
+    >>> fallback(None, 6)
+    6
+
+    :param value:           Argument that can be ``None``.
+    :param fallback_value:  Fallback value that is returned if `value` is ``None``.
+
+    :return:                The input `value` or `fallback_value` if `value` is ``None``.
+    """
+    return fallback_value if value is None else value
+
+
+# from vsutil
+def plane(clip: vs.VideoNode, planeno: int, /) -> vs.VideoNode:
+    """Extracts the plane with the given index from the input clip.
+
+    If given a one-plane clip and ``planeno=0``, returns `clip` (no-op).
+
+    >>> src = vs.core.std.BlankClip(format=vs.YUV420P8)
+    >>> V = plane(src, 2)
+
+    :param clip:     The clip to extract the plane from.
+    :param planeno:  The index of which plane to extract.
+
+    :return:         A grayscale clip that only contains the given plane.
+    """
+    if clip.format.num_planes == 1 and planeno == 0:
+        return clip
+    return core.std.ShufflePlanes(clip, planeno, vs.GRAY)
+
+def get_y(clip: vs.VideoNode, /) -> vs.VideoNode:
+    """Helper to get the luma plane of a clip.
+
+    If passed a single-plane ``vapoursynth.GRAY`` clip, :func:`plane` will assume it to `be` the luma plane
+    itself and returns the `clip` (no-op).
+
+    :param clip: Input clip.
+
+    :return:     Luma plane of the input `clip`. Will return the input `clip` if it is a single-plane grayscale clip.
+    """
+    if clip.format.color_family not in (vs.YUV, vs.GRAY):
+        raise ValueError('The clip must have a luma plane.')
+    return plane(clip, 0)

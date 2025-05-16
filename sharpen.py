@@ -810,7 +810,7 @@ def MinBlur(clp, r=1, planes=None):
         if clp.format.bits_per_sample == 16:
             s16 = clp
             RG4 = clp.fmtc.bitdepth(bits=12, planes=planes, dmode=1).ctmf.CTMF(radius=3, planes=planes).fmtc.bitdepth(bits=16, planes=planes)
-            RG4 = mvf.LimitFilter(s16, RG4, thr=0.0625, elast=2, planes=planes)
+            RG4 = LimitFilter(s16, RG4, thr=0.0625, elast=2, planes=planes)
         else:
             RG4 = clp.ctmf.CTMF(radius=3, planes=planes)
 
@@ -1054,3 +1054,207 @@ def UnsharpMask(clip: vs.VideoNode, strength: int = 64, radius: int = 3, thresho
     
     # Apply the sharpening expression using the selected Expr function
     return expr_func(clips=[clip, blurclip], expr=expressions)
+
+# Taken from mvsfunc
+################################################################################################################################
+## Utility function: LimitFilter()
+################################################################################################################################
+## Similar to the AviSynth function Dither_limit_dif16() and HQDeringmod_limit_dif16().
+## It acts as a post-processor, and is very useful to limit the difference of filtering while avoiding artifacts.
+## Commonly used cases:
+##     de-banding
+##     de-ringing
+##     de-noising
+##     sharpening
+##     combining high precision source with low precision filtering: mvf.LimitFilter(src, flt, thr=1.0, elast=2.0)
+################################################################################################################################
+## There are 2 implementations, default one with std.Expr, the other with std.Lut.
+## The Expr version supports all mode, while the Lut version doesn't support float input and ref clip.
+## Also the Lut version will truncate the filtering diff if it exceeds half the value range(128 for 8-bit, 32768 for 16-bit).
+## The Lut version might be faster than Expr version in some cases, for example 8-bit input and brighten_thr != thr.
+################################################################################################################################
+## Algorithm for Y/R/G/B plane (for chroma, replace "thr" and "brighten_thr" with "thrc")
+##     dif = flt - src
+##     dif_ref = flt - ref
+##     dif_abs = abs(dif_ref)
+##     thr_1 = brighten_thr if (dif > 0) else thr
+##     thr_2 = thr_1 * elast
+##
+##     if dif_abs <= thr_1:
+##         final = flt
+##     elif dif_abs >= thr_2:
+##         final = src
+##     else:
+##         final = src + dif * (thr_2 - dif_abs) / (thr_2 - thr_1)
+################################################################################################################################
+## Basic parameters
+##     flt {clip}: filtered clip, to compute the filtering diff
+##         can be of YUV/RGB/Gray color family, can be of 8-16 bit integer or 16/32 bit float
+##     src {clip}: source clip, to apply the filtering diff
+##         must be of the same format and dimension as "flt"
+##     ref {clip} (optional): reference clip, to compute the weight to be applied on filtering diff
+##         must be of the same format and dimension as "flt"
+##         default: None (use "src")
+##     thr {float}: threshold (8-bit scale) to limit filtering diff
+##         default: 1.0
+##     elast {float}: elasticity of the soft threshold
+##         default: 2.0
+##     planes {int[]}: specify which planes to process
+##         unprocessed planes will be copied from "flt"
+##         default: all planes will be processed, [0,1,2] for YUV/RGB input, [0] for Gray input
+################################################################################################################################
+## Advanced parameters
+##     brighten_thr {float}: threshold (8-bit scale) for filtering diff that brightening the image (Y/R/G/B plane)
+##         set a value different from "thr" is useful to limit the overshoot/undershoot/blurring introduced in sharpening/de-ringing
+##         default is the same as "thr"
+##     thrc {float}: threshold (8-bit scale) for chroma (U/V/Co/Cg plane)
+##         default is the same as "thr"
+##     force_expr {bool}
+##         - True: force to use the std.Expr implementation
+##         - False: use the std.Lut implementation if available
+##         default: True
+################################################################################################################################
+def LimitFilter(flt, src, ref=None, thr=None, elast=None, brighten_thr=None, thrc=None, force_expr=None, planes=None):
+    # input clip
+    if not isinstance(flt, vs.VideoNode):
+        raise type_error('"flt" must be a clip!')
+    if not isinstance(src, vs.VideoNode):
+        raise type_error('"src" must be a clip!')
+    if ref is not None and not isinstance(ref, vs.VideoNode):
+        raise type_error('"ref" must be a clip!')
+
+    # Get properties of input clip
+    sFormat = flt.format
+    if sFormat.id != src.format.id:
+        raise value_error('"flt" and "src" must be of the same format!')
+    if flt.width != src.width or flt.height != src.height:
+        raise value_error('"flt" and "src" must be of the same width and height!')
+
+    if ref is not None:
+        if sFormat.id != ref.format.id:
+            raise value_error('"flt" and "ref" must be of the same format!')
+        if flt.width != ref.width or flt.height != ref.height:
+            raise value_error('"flt" and "ref" must be of the same width and height!')
+
+    sColorFamily = sFormat.color_family
+    CheckColorFamily(sColorFamily)
+    sIsYUV = sColorFamily == vs.YUV
+
+    sSType = sFormat.sample_type
+    sbitPS = sFormat.bits_per_sample
+    sNumPlanes = sFormat.num_planes
+
+    # Parameters
+    if thr is None:
+        thr = 1.0
+    elif isinstance(thr, int) or isinstance(thr, float):
+        if thr < 0:
+            raise value_error('valid range of "thr" is [0, +inf)')
+    else:
+        raise type_error('"thr" must be an int or a float!')
+
+    if elast is None:
+        elast = 2.0
+    elif isinstance(elast, int) or isinstance(elast, float):
+        if elast < 1:
+            raise value_error('valid range of "elast" is [1, +inf)')
+    else:
+        raise type_error('"elast" must be an int or a float!')
+
+    if brighten_thr is None:
+        brighten_thr = thr
+    elif isinstance(brighten_thr, int) or isinstance(brighten_thr, float):
+        if brighten_thr < 0:
+            raise value_error('valid range of "brighten_thr" is [0, +inf)')
+    else:
+        raise type_error('"brighten_thr" must be an int or a float!')
+
+    if thrc is None:
+        thrc = thr
+    elif isinstance(thrc, int) or isinstance(thrc, float):
+        if thrc < 0:
+            raise value_error('valid range of "thrc" is [0, +inf)')
+    else:
+        raise type_error('"thrc" must be an int or a float!')
+
+    if force_expr is None:
+        force_expr = True
+    elif not isinstance(force_expr, int):
+        raise type_error('"force_expr" must be a bool!')
+    if ref is not None or sSType != vs.INTEGER:
+        force_expr = True
+
+    VSMaxPlaneNum = 3
+    # planes
+    process = [0 for i in range(VSMaxPlaneNum)]
+
+    if planes is None:
+        process = [1 for i in range(VSMaxPlaneNum)]
+    elif isinstance(planes, int):
+        if planes < 0 or planes >= VSMaxPlaneNum:
+            raise value_error(f'valid range of "planes" is [0, {VSMaxPlaneNum})!')
+        process[planes] = 1
+    elif isinstance(planes, Sequence):
+        for p in planes:
+            if not isinstance(p, int):
+                raise type_error('"planes" must be a (sequence of) int!')
+            elif p < 0 or p >= VSMaxPlaneNum:
+                raise value_error(f'valid range of "planes" is [0, {VSMaxPlaneNum})!')
+            process[p] = 1
+    else:
+        raise type_error('"planes" must be a (sequence of) int!')
+
+    # Process
+    if thr <= 0 and brighten_thr <= 0:
+        if sIsYUV:
+            if thrc <= 0:
+                return src
+        else:
+            return src
+    if thr >= 255 and brighten_thr >= 255:
+        if sIsYUV:
+            if thrc >= 255:
+                return flt
+        else:
+            return flt
+    if thr >= 128 or brighten_thr >= 128:
+        force_expr = True
+
+    if force_expr: # implementation with std.Expr
+        valueRange = (1 << sbitPS) - 1 if sSType == vs.INTEGER else 1
+        limitExprY = _limit_filter_expr(ref is not None, thr, elast, brighten_thr, valueRange)
+        limitExprC = _limit_filter_expr(ref is not None, thrc, elast, thrc, valueRange)
+        expr = []
+        EXPR = core.akarin.Expr if hasattr(core,'akarin') else core.std.Expr
+        for i in range(sNumPlanes):
+            if process[i]:
+                if i > 0 and (sIsYUV):
+                    expr.append(limitExprC)
+                else:
+                    expr.append(limitExprY)
+            else:
+                expr.append("")
+
+        if ref is None:
+            clip = EXPR([flt, src], expr)
+        else:
+            clip = EXPR([flt, src, ref], expr)
+    else: # implementation with std.MakeDiff, std.Lut and std.MergeDiff
+        diff = core.std.MakeDiff(flt, src, planes=planes)
+        if sIsYUV:
+            if process[0]:
+                diff = _limit_diff_lut(diff, thr, elast, brighten_thr, [0])
+            if process[1] or process[2]:
+                _planes = []
+                if process[1]:
+                    _planes.append(1)
+                if process[2]:
+                    _planes.append(2)
+                diff = _limit_diff_lut(diff, thrc, elast, thrc, _planes)
+        else:
+            diff = _limit_diff_lut(diff, thr, elast, brighten_thr, planes)
+        clip = core.std.MakeDiff(flt, diff, planes=planes)
+
+    # Output
+    return clip
+################################################################################################################################

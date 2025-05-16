@@ -4,8 +4,6 @@ from vapoursynth import core
 
 from typing import Sequence, Union, Optional
 
-PlanesType = Optional[Union[int, Sequence[int]]]
-
 # Taken from fvsfunc
 """
 VapourSynth port of Gebbi's GradFun3mod
@@ -750,7 +748,7 @@ def _limit_diff_lut(diff, thr, elast, largen_thr, planes):
 ################################################################################################################################
 
 def _GF3_smoothgrad_multistage(src: vs.VideoNode, ref: vs.VideoNode, radius: int,
-                               thr: float, elast: float, planes: PlanesType
+                               thr: float, elast: float, planes: Optional[Union[int, Sequence[int]]]
                                ) -> vs.VideoNode:
     ela_2 = max(elast * 0.83, 1.0)
     ela_3 = max(elast * 0.67, 1.0)
@@ -765,7 +763,7 @@ def _GF3_smoothgrad_multistage(src: vs.VideoNode, ref: vs.VideoNode, radius: int
 
 
 def _GF3_smoothgrad_multistage_3(src: vs.VideoNode, radius: int, thr: float,
-                                 elast: float, planes: PlanesType
+                                 elast: float, planes: Optional[Union[int, Sequence[int]]]
                                  ) -> vs.VideoNode:
     ref = SmoothGrad(src, radius=radius // 3, thr=thr * 0.8, elast=elast)
     last = BoxFilter(src, radius=radius, planes=planes)
@@ -775,7 +773,7 @@ def _GF3_smoothgrad_multistage_3(src: vs.VideoNode, radius: int, thr: float,
 
 
 def _GF3_dfttest(src: vs.VideoNode, ref: vs.VideoNode, radius: int,
-                 thr: float, elast: float, planes: PlanesType
+                 thr: float, elast: float, planes: Optional[Union[int, Sequence[int]]]
                  ) -> vs.VideoNode:
     hrad = max(radius * 3 // 4, 1)
     last = core.dfttest.DFTTest(src, sigma=hrad * thr * thr * 32, sbsize=hrad * 4,
@@ -786,7 +784,7 @@ def _GF3_dfttest(src: vs.VideoNode, ref: vs.VideoNode, radius: int,
 
 
 def _GF3_bilateral_multistage(src: vs.VideoNode, ref: vs.VideoNode, radius: int,
-                              thr: float, elast: float, planes: PlanesType
+                              thr: float, elast: float, planes: Optional[Union[int, Sequence[int]]]
                               ) -> vs.VideoNode:
     last = core.bilateral.Bilateral(src, ref=ref, sigmaS=radius / 2, sigmaR=thr / 255, planes=planes, algorithm=0)
 

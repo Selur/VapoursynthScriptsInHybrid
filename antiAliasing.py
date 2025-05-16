@@ -77,6 +77,63 @@ def daamod(c, nsize=None, nns=None, qual=None, pscrn=None, exp=None, opencl=Fals
     DD = R(shrpD, dblD, [rep])
     return core.std.MergeDiff(dbl, DD)
 
+# from muvsfunc
+def ediaa(a: vs.VideoNode) -> vs.VideoNode:
+    """Suggested by Mystery Keeper in "Denoise of tv-anime" thread
+
+    Read the document of Avisynth version for more details.
+
+    """
+    last = core.eedi2.EEDI2(a, field=1).std.Transpose()
+    last = core.eedi2.EEDI2(last, field=1).std.Transpose()
+    last = core.resize.Spline36(last, a.width, a.height, src_left=-0.5, src_top=-0.5)
+
+    return last
+
+def ediaaCuda(a: vs.VideoNode):
+    """
+    Suggested by Mystery Keeper in "Denoise of tv-anime" thread
+    Read the document of Avisynth version for more details.
+    requirement: https://github.com/AmusementClub/VapourSynth-EEDI2CUDA/releases
+    """
+
+    last = core.eedi2cuda.EEDI2(a, field=1).std.Transpose()
+    last = core.eedi2cuda.EEDI2(last, field=1).std.Transpose()
+    last = core.resize.Spline36(last, a.width, a.height, src_left=-0.5, src_top=-0.5)
+
+    return last
+    
+def maa(input: vs.VideoNode) -> vs.VideoNode:
+    """Anti-aliasing with edge masking by martino,
+    mask using "sobel" taken from Kintaro's useless filterscripts and modded by thetoof for spline36
+
+    Read the document of Avisynth version for more details.
+
+    """
+
+    w = input.width
+    h = input.height
+    bits = input.format.bits_per_sample
+
+    if input.format.color_family != vs.GRAY:
+        input_src = input # type: Optional[vs.VideoNode]
+        input = GetPlane(input, 0)
+    else:
+        input_src = None
+
+    mask = core.std.Convolution(input, [0, -1, 0, -1, 0, 1, 0, 1, 0], divisor=2, saturate=False).std.Binarize(scale(7, bits) + 1)
+    aa_clip = core.resize.Spline36(input, w * 2, h * 2)
+    aa_clip = core.sangnom.SangNom(aa_clip).std.Transpose()
+    aa_clip = core.sangnom.SangNom(aa_clip).std.Transpose()
+    aa_clip = core.resize.Spline36(aa_clip, w, h)
+    last = core.std.MaskedMerge(input, aa_clip, mask)
+
+    if input_src is None:
+        return last
+    else:
+        return core.std.ShufflePlanes([last, input_src], planes=list(range(input_src.format.num_planes)),
+            colorfamily=input_src.format.color_family)
+
 # Taken from old havsfunc
 def santiag(
     c: vs.VideoNode,
@@ -186,6 +243,23 @@ def santiag(
     if strh < 0 and strv < 0:
         c = c.resize.Spline36(fw, fh)
     return c
+    
+def nnedi3aa(a: vs.VideoNode, opencl: bool=False, device: Optional[int] = None,):
+    """Using nnedi3 (Emulgator):
+    Read the document of Avisynth version for more details.
+    """
+
+    if opencl:
+      myNNEDI3 = vs.core.nnedi3cl.NNEDI3CL
+      last = myNNEDI3(a, field=1, dh=True, device=device).std.Transpose()
+      last = myNNEDI3(last, field=1, dh=True, device=device).std.Transpose()
+    else:
+      myNNEDI3 = vs.core.znedi3.nnedi3 if hasattr(vs.core, 'znedi3') else vs.core.nnedi3.nnedi3
+      last = myNNEDI3(a, field=1, dh=True).std.Transpose()
+      last = myNNEDI3(last, field=1, dh=True).std.Transpose()
+      
+    last = vs.core.resize.Spline36(last, a.width, a.height, src_left=-0.5, src_top=-0.5)
+    return last;
     
 ########################
 # Ported version of aaf by MOmonster from avisynth
@@ -326,3 +400,30 @@ def fallback(value: Optional[T], fallback_value: T) -> T:
     :return:                The input `value` or `fallback_value` if `value` is ``None``.
     """
     return fallback_value if value is None else value
+    
+# Taken from muvsfunc
+def GetPlane(clip, plane=None):
+    # input clip
+    if not isinstance(clip, vs.VideoNode):
+        raise type_error('"clip" must be a clip!')
+
+    # Get properties of input clip
+    sFormat = clip.format
+    sNumPlanes = sFormat.num_planes
+
+    # Parameters
+    if plane is None:
+        plane = 0
+    elif not isinstance(plane, int):
+        raise type_error('"plane" must be an int!')
+    elif plane < 0 or plane > sNumPlanes:
+        raise value_error(f'valid range of "plane" is [0, {sNumPlanes})!')
+
+    # Process
+    return core.std.ShufflePlanes(clip, plane, vs.GRAY)
+    
+def cround(x: float) -> int:
+    return math.floor(x + 0.5) if x > 0 else math.ceil(x - 0.5)
+
+def scale(value, peak):
+    return cround(value * peak / 255) if peak != 1 else value / 255

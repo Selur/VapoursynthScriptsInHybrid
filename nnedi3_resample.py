@@ -566,3 +566,138 @@ def SigmoidDirect(src, thr=0.5, cont=6.5, planes=[0, 1, 2]):
     
     return core.std.Lut(src, planes=planes, function=get_lut)
 ## Gamma conversion functions from HAvsFunc-r18
+
+
+def SSIM_downsample(clip: vs.VideoNode, w: int, h: int, smooth: Union[float, VSFuncType] = 1,
+                    kernel: Optional[str] = None, use_fmtc: bool = False, gamma: bool = False,
+                    fulls: bool = False, fulld: bool = False, curve: str = '709', sigmoid: bool = False,
+                    epsilon: float = 1e-6, depth_args: Optional[Dict[str, Any]] = None,
+                    **resample_args: Any) -> vs.VideoNode:
+    """SSIM downsampler
+
+    SSIM downsampler is an image downscaling technique that aims to optimize for the perceptual quality of the downscaled results.
+    Image downscaling is considered as an optimization problem
+    where the difference between the input and output images is measured using famous Structural SIMilarity (SSIM) index.
+    The solution is derived in closed-form, which leads to the simple, efficient implementation.
+    The downscaled images retain perceptually important features and details,
+    resulting in an accurate and spatio-temporally consistent representation of the high resolution input.
+
+    This is an pseudo-implementation of SSIM downsampler with slight modification.
+    The pre-downsampling is performed by vszimg/fmtconv, and the behaviour of convolution at the border is uniform.
+
+    All the internal calculations are done at 32-bit float, except gamma correction is done at integer.
+
+    Args:
+        clip: The input clip.
+
+        w, h: The size of the output clip.
+
+        smooth: (int, float or function) The method to smooth the image.
+            If it's an int, it specifies the "radius" of the internel used boxfilter, i.e. the window has a size of (2*smooth+1)x(2*smooth+1).
+            If it's a float, it specifies the "sigma" of core.tcanny.TCanny, i.e. the standard deviation of gaussian blur.
+            If it's a function, it acs as a general smoother.
+            Default is 1. The 3x3 boxfilter will be performed.
+
+        kernel: (string) Resample kernel of vszimg/fmtconv.
+            Default is 'Bicubic'.
+
+        use_fmtc: (bool) Whether to use fmtconv for downsampling. If not, vszimg (core.resize.*) will be used.
+            Default is False.
+
+        depth_args: (dict) Additional arguments passed to mvf.Depth().
+            Default is {}.
+
+        gamma: (bool) Default is False.
+            Set to true to turn on gamma correction for the y channel.
+
+        fulls: (bool) Default is False.
+            Specifies if the luma is limited range (False) or full range (True)
+
+        fulld: (bool) Default is False.
+            Same as fulls, but for output.
+
+        curve: (string) Default is '709'.
+            Type of gamma mapping.
+
+        sigmoid: (bool) Default is False.
+            When True, applies a sigmoidal curve after the power-like curve (or before when converting from linear to gamma-corrected).
+            This helps reducing the dark halo artefacts around sharp edges caused by resizing in linear luminance.
+
+        resample_args: (dict) Additional arguments passed to vszimg/fmtconv in the form of keyword arguments.
+            Refer to the documentation of downsample() as an example.
+
+            Default is {}.
+
+    Ref:
+        [1] Oeztireli, A. C., & Gross, M. (2015). Perceptually based downscaling of images. ACM Transactions on Graphics (TOG), 34(4), 77.
+
+    """
+
+    funcName = 'SSIM_downsample'
+
+    if not isinstance(clip, vs.VideoNode):
+        raise TypeError(funcName + ': \"clip\" must be a clip!')
+
+    if depth_args is None:
+        depth_args = {}
+
+    if callable(smooth):
+        Filter = smooth
+    elif isinstance(smooth, int):
+        Filter = functools.partial(BoxFilter, radius=smooth+1)
+    elif isinstance(smooth, float):
+        Filter = functools.partial(core.tcanny.TCanny, sigma=smooth, mode=-1)
+    else:
+        raise TypeError(funcName + ': \"smooth\" must be a int, float or a function!')
+
+    if kernel is None:
+        kernel = 'Bicubic'
+
+    if gamma:
+        clip = GammaToLinear(Depth(clip, 16), fulls=fulls, fulld=fulld, curve=curve, sigmoid=sigmoid, planes=[0])
+
+    clip = Depth(clip, depth=32, sample=vs.FLOAT, **depth_args)
+
+    EXPR = core.akarin.Expr if hasattr(core,'akarin') else core.std.Expr
+    kernel = kernel.capitalize()
+    if use_fmtc:
+        l = core.fmtc.resample(clip, w, h, kernel=kernel, **resample_args)
+        l2 = core.fmtc.resample(EXPR([clip], ['x dup *']), w, h, kernel=kernel, **resample_args)
+    else: # use vszimg
+        l = eval(f'core.resize.{kernel}')(clip, w, h, **resample_args)
+        l2 = eval(f'core.resize.{kernel}')(EXPR([clip], ["x dup *"]), w, h, **resample_args)
+
+    m = Filter(l)
+    sl_plus_m_square = Filter(core.std.Expr([l], ['x dup *']))
+    sh_plus_m_square = Filter(l2)
+    m_square = EXPR([m], ['x dup *'])
+    r = EXPR([sl_plus_m_square, sh_plus_m_square, m_square], ['x z - {eps} < 0 y z - x z - / sqrt ?'.format(eps=epsilon)])
+    t = Filter(EXPR([r, m], ['x y *']))
+    m = Filter(m)
+    r = Filter(r)
+    d = EXPR([m, r, l, t], ['x y z * + a -'])
+
+    if gamma:
+        d = LinearToGamma(Depth(d, 16), fulls=fulls, fulld=fulld, curve=curve, sigmoid=sigmoid, planes=[0])
+
+    return d
+
+def Depth(src, bits, dither_type='error_diffusion', range=None, range_in=None):
+    src_f = src.format
+    src_cf = src_f.color_family
+    src_st = src_f.sample_type
+    src_bits = src_f.bits_per_sample
+    src_sw = src_f.subsampling_w
+    src_sh = src_f.subsampling_h
+    dst_st = vs.INTEGER if bits < 32 else vs.FLOAT
+
+    if isinstance(range, str):
+        range = RANGEDICT[range]
+
+    if isinstance(range_in, str):
+        range_in = RANGEDICT[range_in]
+
+    if (src_bits, range_in) == (bits, range):
+        return src
+    out_f = core.register_format(src_cf, dst_st, bits, src_sw, src_sh)
+    return core.resize.Point(src, format=out_f.id, dither_type=dither_type, range=range, range_in=range_in)

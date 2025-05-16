@@ -1,11 +1,9 @@
+
 import vapoursynth as vs
 from vapoursynth import core
 
-#import math
-from typing import Optional, Union, Sequence
-#from vsutil import get_depth, get_y, scale_value, fallback
-from vsutil import fallback, scale_value
-
+import math
+from typing import Optional, Union, Sequence, TypeVar
 
 def HQDeringmod(
     input: vs.VideoNode,
@@ -173,7 +171,7 @@ def HQDeringmod(
     EXPR = core.akarin.Expr if hasattr(core,'akarin') else core.std.Expr
     # Post-Process: Ringing Mask Generating
     if ringmask is None:
-        expr = f'x {scale_value(mthr, 8, bits)} < 0 x ?'
+        expr = f'x {scale(mthr, bits)} < 0 x ?'
         prewittm = EXPR(AvsPrewitt(input, planes=0), expr=expr if is_gray else [expr, ''])
         fmask = core.misc.Hysteresis(prewittm.std.Median(planes=0), prewittm, planes=0)
         if mrad > 0:
@@ -206,6 +204,43 @@ def HQDeringmod(
             return EXPR(ringmask, expr=['', repr(neutral)])
     else:
         return core.std.MaskedMerge(input, limitclp, ringmask, planes=planes, first_plane=True)
+        
+# Taken from mvsfunc
+def mdering(clip: vs.VideoNode, thr: float = 2) -> vs.VideoNode:
+    """A simple light and bright DCT ringing remover
+
+    It is a special instance of TMinBlur (r=1 and only filter the bright part) for higher performance.
+    Post-processing is needed to reduce degradation of flat and texture areas.
+
+    Args:
+        clip: Input clip.
+
+        thr: (float) Threshold in 8 bits scale.
+            Default is 2.
+
+    """
+
+    if clip.format.sample_type != vs.INTEGER:
+        raise TypeError(funcName + ': \"clip\" must be an integer clip!')
+
+    bits = clip.format.bits_per_sample
+    thr = scale(thr, bits)
+
+    rg11_1 = core.std.Convolution(clip, matrix=[1, 2, 1, 2, 4, 2, 1, 2, 1])
+    rg11_2 = core.std.Convolution(rg11_1, [1]*9)
+    rg4_1 = core.std.Median(clip)
+
+    if bits <= 12:
+        rg4_2 = core.ctmf.CTMF(clip, radius=2)
+    else:
+        rg4_2 = core.fmtc.bitdepth(clip, bits=12, dmode=1).ctmf.CTMF(radius=2).fmtc.bitdepth(bits=bits)
+        rg4_2 = LimitFilter(clip, rg4_2, thr=0.0625, elast=2)
+    EXPR = core.akarin.Expr if hasattr(core,'akarin') else core.std.Expr
+    minblur_1 = EXPR([clip, rg11_1, rg4_1], ['x y - x z - xor x x y - abs x z - abs < y z ? ?'])
+    minblur_2 = EXPR([clip, rg11_2, rg4_2], ['x y - x z - xor x x y - abs x z - abs < y z ? ?'])
+    dering = EXPR([clip, minblur_1, minblur_2], ['y z - abs {thr} <= y x <= and y x ?'.format(thr=thr)])
+
+    return dering
 
 # Taken from mvsfunc
 ################################################################################################################################
@@ -581,3 +616,27 @@ def mt_inflate_multi(src: vs.VideoNode, planes: Optional[Union[int, Sequence[int
     for _ in range(radius):
         src = src.std.Inflate(planes=planes)
     return src
+    
+    
+def cround(x: float) -> int:
+    return math.floor(x + 0.5) if x > 0 else math.ceil(x - 0.5)
+    
+def scale(value, peak):
+    return cround(value * peak / 255) if peak != 1 else value / 255
+        
+# Taken from sfrom vsutil
+T = TypeVar('T')
+def fallback(value: Optional[T], fallback_value: T) -> T:
+    """Utility function that returns a value or a fallback if the value is ``None``.
+
+    >>> fallback(5, 6)
+    5
+    >>> fallback(None, 6)
+    6
+
+    :param value:           Argument that can be ``None``.
+    :param fallback_value:  Fallback value that is returned if `value` is ``None``.
+
+    :return:                The input `value` or `fallback_value` if `value` is ``None``.
+    """
+    return fallback_value if value is None else value

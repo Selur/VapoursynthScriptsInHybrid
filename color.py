@@ -3,6 +3,7 @@ from vapoursynth import core
 
 import math
 from functools import partial
+from typing import Optional, Union, Sequence, Any, Dict
 
 # taken from adjust
 def Tweak(clip, hue=None, sat=None, bright=None, cont=None, coring=True):
@@ -196,7 +197,7 @@ def SmoothLevels(input, input_low=0, gamma=1.0, input_high=None, output_low=0, o
 
     if chroma <= 0 and not isGray:
         input_orig = input
-        input = mvf.GetPlane(input, 0)
+        input = GetPlane(input, 0)
     else:
         input_orig = None
 
@@ -699,6 +700,47 @@ def simplehdr10tosdr(clip, source_peak=1000, tFormat=vs.YUV420P8, tMatrix="709",
   return clip
   
   
+  
+# Taken from muvsfunc
+# Type aliases
+def SmoothGrad(input: vs.VideoNode, radius: int = 9, thr: float = 0.25,
+               ref: Optional[vs.VideoNode] = None, elast: float = 3.0,
+               planes: Optional[Union[int, Sequence[int]]] = None, **limit_filter_args: Any) -> vs.VideoNode:
+    '''Avisynth's SmoothGrad
+
+    SmoothGrad smooths the low gradients or flat areas of a 16-bit clip.
+    It proceeds by applying a huge blur filter and comparing the result with the input data for each pixel.
+    If the difference is below the specified threshold, the filtered version is taken into account,
+        otherwise the input pixel remains unchanged.
+
+    Args:
+        input: Input clip to be filtered.
+
+        radius: (int) Size of the averaged square. Its width is radius*2-1. Range is 2-9.
+
+        thr: (float) Threshold between reference data and filtered data, on an 8-bit scale.
+
+        ref: Reference clip for the filter output comparison. Specify here the input clip when you cascade several SmoothGrad calls.
+            When undefined, the input clip is taken as reference.
+
+        elast: (float) To avoid artifacts, the threshold has some kind of elasticity.
+            Value differences falling over this threshold are gradually attenuated, up to thr * elast > 1.
+
+        planes: (int []) Whether to process the corresponding plane. By default, every plane will be processed.
+            The unprocessed planes will be copied from the source clip, "input".
+
+        limit_filter_args: (dict) Additional arguments passed to LimitFilter in the form of keyword arguments.
+
+    '''
+    if planes is None:
+        planes = list(range(input.format.num_planes))
+    elif isinstance(planes, int):
+        planes = [planes]
+
+    # process
+    smooth = BoxFilter(input, radius, planes=planes)
+
+    return LimitFilter(smooth, input, ref, thr, elast, planes=planes, **limit_filter_args)
  
 def ClipRGB(clip: vs.VideoNode, min8: int = 16, max8: int = 235) -> vs.VideoNode:
     """
@@ -726,3 +768,627 @@ def ClipRGB(clip: vs.VideoNode, min8: int = 16, max8: int = 235) -> vs.VideoNode
     EXPR = core.akarin.Expr if hasattr(core,'akarin') else core.std.Expr
     expr = f'x {lo} max {hi} min'
     return EXPR(clip, [expr] * 3)
+
+# Taken from muvsfunc
+def GetPlane(clip, plane=None):
+    # input clip
+    if not isinstance(clip, vs.VideoNode):
+        raise type_error('"clip" must be a clip!')
+
+    # Get properties of input clip
+    sFormat = clip.format
+    sNumPlanes = sFormat.num_planes
+
+    # Parameters
+    if plane is None:
+        plane = 0
+    elif not isinstance(plane, int):
+        raise type_error('"plane" must be an int!')
+    elif plane < 0 or plane > sNumPlanes:
+        raise value_error(f'valid range of "plane" is [0, {sNumPlanes})!')
+
+    # Process
+    return core.std.ShufflePlanes(clip, plane, vs.GRAY)
+    
+# Taken from mvsfunc
+################################################################################################################################
+## Utility function: LimitFilter()
+################################################################################################################################
+## Similar to the AviSynth function Dither_limit_dif16() and HQDeringmod_limit_dif16().
+## It acts as a post-processor, and is very useful to limit the difference of filtering while avoiding artifacts.
+## Commonly used cases:
+##     de-banding
+##     de-ringing
+##     de-noising
+##     sharpening
+##     combining high precision source with low precision filtering: LimitFilter(src, flt, thr=1.0, elast=2.0)
+################################################################################################################################
+## There are 2 implementations, default one with std.Expr, the other with std.Lut.
+## The Expr version supports all mode, while the Lut version doesn't support float input and ref clip.
+## Also the Lut version will truncate the filtering diff if it exceeds half the value range(128 for 8-bit, 32768 for 16-bit).
+## The Lut version might be faster than Expr version in some cases, for example 8-bit input and brighten_thr != thr.
+################################################################################################################################
+## Algorithm for Y/R/G/B plane (for chroma, replace "thr" and "brighten_thr" with "thrc")
+##     dif = flt - src
+##     dif_ref = flt - ref
+##     dif_abs = abs(dif_ref)
+##     thr_1 = brighten_thr if (dif > 0) else thr
+##     thr_2 = thr_1 * elast
+##
+##     if dif_abs <= thr_1:
+##         final = flt
+##     elif dif_abs >= thr_2:
+##         final = src
+##     else:
+##         final = src + dif * (thr_2 - dif_abs) / (thr_2 - thr_1)
+################################################################################################################################
+## Basic parameters
+##     flt {clip}: filtered clip, to compute the filtering diff
+##         can be of YUV/RGB/Gray color family, can be of 8-16 bit integer or 16/32 bit float
+##     src {clip}: source clip, to apply the filtering diff
+##         must be of the same format and dimension as "flt"
+##     ref {clip} (optional): reference clip, to compute the weight to be applied on filtering diff
+##         must be of the same format and dimension as "flt"
+##         default: None (use "src")
+##     thr {float}: threshold (8-bit scale) to limit filtering diff
+##         default: 1.0
+##     elast {float}: elasticity of the soft threshold
+##         default: 2.0
+##     planes {int[]}: specify which planes to process
+##         unprocessed planes will be copied from "flt"
+##         default: all planes will be processed, [0,1,2] for YUV/RGB input, [0] for Gray input
+################################################################################################################################
+## Advanced parameters
+##     brighten_thr {float}: threshold (8-bit scale) for filtering diff that brightening the image (Y/R/G/B plane)
+##         set a value different from "thr" is useful to limit the overshoot/undershoot/blurring introduced in sharpening/de-ringing
+##         default is the same as "thr"
+##     thrc {float}: threshold (8-bit scale) for chroma (U/V/Co/Cg plane)
+##         default is the same as "thr"
+##     force_expr {bool}
+##         - True: force to use the std.Expr implementation
+##         - False: use the std.Lut implementation if available
+##         default: True
+################################################################################################################################
+def LimitFilter(flt, src, ref=None, thr=None, elast=None, brighten_thr=None, thrc=None, force_expr=None, planes=None):
+    # input clip
+    if not isinstance(flt, vs.VideoNode):
+        raise type_error('"flt" must be a clip!')
+    if not isinstance(src, vs.VideoNode):
+        raise type_error('"src" must be a clip!')
+    if ref is not None and not isinstance(ref, vs.VideoNode):
+        raise type_error('"ref" must be a clip!')
+
+    # Get properties of input clip
+    sFormat = flt.format
+    if sFormat.id != src.format.id:
+        raise value_error('"flt" and "src" must be of the same format!')
+    if flt.width != src.width or flt.height != src.height:
+        raise value_error('"flt" and "src" must be of the same width and height!')
+
+    if ref is not None:
+        if sFormat.id != ref.format.id:
+            raise value_error('"flt" and "ref" must be of the same format!')
+        if flt.width != ref.width or flt.height != ref.height:
+            raise value_error('"flt" and "ref" must be of the same width and height!')
+
+    sColorFamily = sFormat.color_family
+    CheckColorFamily(sColorFamily)
+    sIsYUV = sColorFamily == vs.YUV
+
+    sSType = sFormat.sample_type
+    sbitPS = sFormat.bits_per_sample
+    sNumPlanes = sFormat.num_planes
+
+    # Parameters
+    if thr is None:
+        thr = 1.0
+    elif isinstance(thr, int) or isinstance(thr, float):
+        if thr < 0:
+            raise value_error('valid range of "thr" is [0, +inf)')
+    else:
+        raise type_error('"thr" must be an int or a float!')
+
+    if elast is None:
+        elast = 2.0
+    elif isinstance(elast, int) or isinstance(elast, float):
+        if elast < 1:
+            raise value_error('valid range of "elast" is [1, +inf)')
+    else:
+        raise type_error('"elast" must be an int or a float!')
+
+    if brighten_thr is None:
+        brighten_thr = thr
+    elif isinstance(brighten_thr, int) or isinstance(brighten_thr, float):
+        if brighten_thr < 0:
+            raise value_error('valid range of "brighten_thr" is [0, +inf)')
+    else:
+        raise type_error('"brighten_thr" must be an int or a float!')
+
+    if thrc is None:
+        thrc = thr
+    elif isinstance(thrc, int) or isinstance(thrc, float):
+        if thrc < 0:
+            raise value_error('valid range of "thrc" is [0, +inf)')
+    else:
+        raise type_error('"thrc" must be an int or a float!')
+
+    if force_expr is None:
+        force_expr = True
+    elif not isinstance(force_expr, int):
+        raise type_error('"force_expr" must be a bool!')
+    if ref is not None or sSType != vs.INTEGER:
+        force_expr = True
+
+    VSMaxPlaneNum = 3
+    # planes
+    process = [0 for i in range(VSMaxPlaneNum)]
+
+    if planes is None:
+        process = [1 for i in range(VSMaxPlaneNum)]
+    elif isinstance(planes, int):
+        if planes < 0 or planes >= VSMaxPlaneNum:
+            raise value_error(f'valid range of "planes" is [0, {VSMaxPlaneNum})!')
+        process[planes] = 1
+    elif isinstance(planes, Sequence):
+        for p in planes:
+            if not isinstance(p, int):
+                raise type_error('"planes" must be a (sequence of) int!')
+            elif p < 0 or p >= VSMaxPlaneNum:
+                raise value_error(f'valid range of "planes" is [0, {VSMaxPlaneNum})!')
+            process[p] = 1
+    else:
+        raise type_error('"planes" must be a (sequence of) int!')
+
+    # Process
+    if thr <= 0 and brighten_thr <= 0:
+        if sIsYUV:
+            if thrc <= 0:
+                return src
+        else:
+            return src
+    if thr >= 255 and brighten_thr >= 255:
+        if sIsYUV:
+            if thrc >= 255:
+                return flt
+        else:
+            return flt
+    if thr >= 128 or brighten_thr >= 128:
+        force_expr = True
+
+    if force_expr: # implementation with std.Expr
+        valueRange = (1 << sbitPS) - 1 if sSType == vs.INTEGER else 1
+        limitExprY = _limit_filter_expr(ref is not None, thr, elast, brighten_thr, valueRange)
+        limitExprC = _limit_filter_expr(ref is not None, thrc, elast, thrc, valueRange)
+        expr = []
+        for i in range(sNumPlanes):
+            if process[i]:
+                if i > 0 and (sIsYUV):
+                    expr.append(limitExprC)
+                else:
+                    expr.append(limitExprY)
+            else:
+                expr.append("")
+        EXPR = core.akarin.Expr if hasattr(core,'akarin') else core.std.Expr
+        if ref is None:
+            clip = EXPR([flt, src], expr)
+        else:
+            clip = EXPR([flt, src, ref], expr)
+    else: # implementation with std.MakeDiff, std.Lut and std.MergeDiff
+        diff = core.std.MakeDiff(flt, src, planes=planes)
+        if sIsYUV:
+            if process[0]:
+                diff = _limit_diff_lut(diff, thr, elast, brighten_thr, [0])
+            if process[1] or process[2]:
+                _planes = []
+                if process[1]:
+                    _planes.append(1)
+                if process[2]:
+                    _planes.append(2)
+                diff = _limit_diff_lut(diff, thrc, elast, thrc, _planes)
+        else:
+            diff = _limit_diff_lut(diff, thr, elast, brighten_thr, planes)
+        clip = core.std.MakeDiff(flt, diff, planes=planes)
+
+    # Output
+    return clip
+################################################################################################################################
+
+
+################################################################################################################################
+def _limit_filter_expr(defref, thr, elast, largen_thr, value_range):
+    flt = " x "
+    src = " y "
+    ref = " z " if defref else src
+
+    dif = f" {flt} {src} - "
+    dif_ref = f" {flt} {ref} - "
+    dif_abs = dif_ref + " abs "
+
+    thr = thr * value_range / 255
+    largen_thr = largen_thr * value_range / 255
+
+    if thr <= 0 and largen_thr <= 0:
+        limitExpr = f" {src} "
+    elif thr >= value_range and largen_thr >= value_range:
+        limitExpr = ""
+    else:
+        if thr <= 0:
+            limitExpr = f" {src} "
+        elif thr >= value_range:
+            limitExpr = f" {flt} "
+        elif elast <= 1:
+            limitExpr = f" {dif_abs} {thr} <= {flt} {src} ? "
+        else:
+            thr_1 = thr
+            thr_2 = thr * elast
+            thr_slope = 1 / (thr_2 - thr_1)
+            # final = src + dif * (thr_2 - dif_abs) / (thr_2 - thr_1)
+            limitExpr = f" {src} {dif} {thr_2} {dif_abs} - * {thr_slope} * + "
+            limitExpr = f" {dif_abs} {thr_1} <= {flt} {dif_abs} {thr_2} >= {src} " + limitExpr + " ? ? "
+
+        if largen_thr != thr:
+            if largen_thr <= 0:
+                limitExprLargen = f" {src} "
+            elif largen_thr >= value_range:
+                limitExprLargen = f" {flt} "
+            elif elast <= 1:
+                limitExprLargen = f" {dif_abs} {largen_thr} <= {flt} {src} ? "
+            else:
+                thr_1 = largen_thr
+                thr_2 = largen_thr * elast
+                thr_slope = 1 / (thr_2 - thr_1)
+                # final = src + dif * (thr_2 - dif_abs) / (thr_2 - thr_1)
+                limitExprLargen = f" {src} {dif} {thr_2} {dif_abs} - * {thr_slope} * + "
+                limitExprLargen = f" {dif_abs} {thr_1} <= {flt} {dif_abs} {thr_2} >= {src} " + limitExprLargen + " ? ? "
+            limitExpr = f" {flt} {ref} > " + limitExprLargen + " " + limitExpr + " ? "
+
+    return limitExpr
+################################################################################################################################
+
+
+def BoxFilter(input: vs.VideoNode, radius: int = 16, radius_v: Optional[int] = None, planes: Optional[Union[int, Sequence[int]]] = None,
+              fmtc_conv: int = 0, radius_thr: Optional[int] = None,
+              resample_args: Optional[Dict[str, Any]] = None, keep_bits: bool = True,
+              depth_args: Optional[Dict[str, Any]] = None
+              ) -> vs.VideoNode:
+    '''Box filter
+
+    Performs a box filtering on the input clip.
+    Box filtering consists in averaging all the pixels in a square area whose center is the output pixel.
+    You can approximate a large gaussian filtering by cascading a few box filters.
+
+    Args:
+        input: Input clip to be filtered.
+
+        radius, radius_v: (int) Size of the averaged square. The size is (radius*2-1) * (radius*2-1).
+            If "radius_v" is None, it will be set to "radius".
+            Default is 16.
+
+        planes: (int []) Whether to process the corresponding plane. By default, every plane will be processed.
+            The unprocessed planes will be copied from the source clip, "input".
+
+        fmtc_conv: (0~2) Whether to use fmtc.resample for convolution.
+            It's recommended to input clip without chroma subsampling when using fmtc.resample, otherwise the output may be incorrect.
+            0: False. 1: True (except both "radius" and "radius_v" is strictly smaller than 4).
+                2: Auto, determined by radius_thr (exclusive).
+            Default is 0.
+
+        radius_thr: (int) Threshold of wheter to use fmtc.resample when "fmtc_conv" is 2.
+            Default is 11 for integer input and 21 for float input.
+            Only works when "fmtc_conv" is enabled.
+
+        resample_args: (dict) Additional parameters passed to core.fmtc.resample in the form of dict.
+            It's recommended to set "flt" to True for higher precision, like:
+                flt = muf.BoxFilter(src, resample_args=dict(flt=True))
+            Only works when "fmtc_conv" is enabled.
+            Default is {}.
+
+        keep_bits: (bool) Whether to keep the bitdepth of the output the same as input.
+            Only works when "fmtc_conv" is enabled and input is integer.
+
+        depth_args: (dict) Additional parameters passed to mvf.Depth in the form of dict.
+            Only works when "fmtc_conv" is enabled, input is integer and "keep_bits" is True.
+            Default is {}.
+
+    '''
+
+    funcName = 'BoxFilter'
+
+    if not isinstance(input, vs.VideoNode):
+        raise TypeError(funcName + ': \"input\" must be a clip!')
+
+    if planes is None:
+        planes = list(range(input.format.num_planes))
+    elif isinstance(planes, int):
+        planes = [planes]
+
+    if radius_v is None:
+        radius_v = radius
+
+    if radius == radius_v == 1:
+        return input
+
+    if radius_thr is None:
+        radius_thr = 21 if input.format.sample_type == vs.FLOAT else 11 # Values are measured from my experiment
+
+    if resample_args is None:
+        resample_args = {}
+
+    if depth_args is None:
+        depth_args = {}
+
+    planes2 = [(3 if i in planes else 2) for i in range(input.format.num_planes)]
+    width = radius * 2 - 1
+    width_v = radius_v * 2 - 1
+    kernel = [1 / width] * width
+    kernel_v = [1 / width_v] * width_v
+
+    # process
+    if input.format.sample_type == vs.FLOAT:
+        if core.version_number() < 33:
+            raise NotImplementedError(funcName + (': Please update your VapourSynth.'
+                'BoxBlur on float sample has not yet been implemented on current version.'))
+        elif radius == radius_v == 2 or radius == radius_v == 3:
+            return core.std.Convolution(input, [1] * ((radius * 2 - 1) * (radius * 2 - 1)), planes=planes, mode='s')
+
+        else:
+            if fmtc_conv == 1 or (fmtc_conv != 0 and radius > radius_thr): # Use fmtc.resample for convolution
+                flt = core.fmtc.resample(input, kernel='impulse', impulseh=kernel, impulsev=kernel_v, planes=planes2,
+                    cnorm=False, fh=-1, fv=-1, center=False, **resample_args)
+                return flt # No bitdepth conversion is required since fmtc.resample outputs the same bitdepth as input
+
+            elif core.version_number() >= 39:
+                return core.std.BoxBlur(input, hradius=radius-1, vradius=radius_v-1, planes=planes)
+
+            else: # BoxBlur on float sample has not been implemented
+                if radius > 1:
+                    input = core.std.Convolution(input, [1] * (radius * 2 - 1), planes=planes, mode='h')
+                if radius_v > 1:
+                    input = core.std.Convolution(input, [1] * (radius_v * 2 - 1), planes=planes, mode='v')
+                return input
+
+    else: # input.format.sample_type == vs.INTEGER
+        if radius == radius_v == 2 or radius == radius_v == 3:
+            return core.std.Convolution(input, [1] * ((radius * 2 - 1) * (radius * 2 - 1)), planes=planes, mode='s')
+
+        else:
+            if fmtc_conv == 1 or (fmtc_conv != 0 and radius > radius_thr): # Use fmtc.resample for convolution
+                flt = core.fmtc.resample(input, kernel='impulse', impulseh=kernel, impulsev=kernel_v, planes=planes2,
+                    cnorm=False, fh=-1, fv=-1, center=False, **resample_args)
+                if keep_bits and input.format.bits_per_sample != flt.format.bits_per_sample:
+                    flt = mvf.Depth(flt, depth=input.format.bits_per_sample, **depth_args)
+                return flt
+
+            elif hasattr(core.std, 'BoxBlur'):
+                return core.std.BoxBlur(input, hradius=radius-1, vradius=radius_v-1, planes=planes)
+
+            else: # BoxBlur was not found
+                if radius > 1:
+                    input = core.std.Convolution(input, [1] * (radius * 2 - 1), planes=planes, mode='h')
+                if radius_v > 1:
+                    input = core.std.Convolution(input, [1] * (radius_v * 2 - 1), planes=planes, mode='v')
+                return input
+                
+                
+################################################################################################################################
+## Main function: Depth()
+################################################################################################################################
+## Bit depth conversion with dithering (if needed).
+## It's a wrapper for fmtc.bitdepth and zDepth (core.resize/zimg).
+## Only constant format is supported, frame properties of the input clip is mostly ignored (only available with zDepth).
+################################################################################################################################
+## Basic parameters
+##     input {clip}: clip to be converted
+##         can be of YUV/RGB/Gray color family, can be of 8~16 bit integer or 16/32 bit float
+##     depth {int}: output bit depth, can be 1~16 bit integer or 16/32 bit float
+##         note that 1~7 bit content is still stored as 8 bit integer format
+##         default is the same as that of the input clip
+##     sample {int}: output sample type, can be 0 (vs.INTEGER) or 1 (vs.FLOAT)
+##         default is the same as that of the input clip
+##     fulls {bool}: define if input clip is of full range
+##         default: None, assume True for RGB/YCgCo input, assume False for Gray/YUV input
+##     fulld {bool}: define if output clip is of full range
+##         default is the same as "fulls"
+################################################################################################################################
+## Advanced parameters
+##     dither {int|str}: dithering algorithm applied for depth conversion
+##         - {int}: same as "dmode" in fmtc.bitdepth, will be automatically converted if using zDepth
+##         - {str}: same as "dither_type" in zDepth, will be automatically converted if using fmtc.bitdepth
+##         - default:
+##             - output depth is 32, and conversions without quantization error: 1 | "none"
+##             - otherwise: 3 | "error_diffusion"
+##     useZ {bool}: prefer zDepth or fmtc.bitdepth for depth conversion
+##         When 11,13~15 bit integer or 16 bit float is involved, zDepth is always used.
+##         - False: prefer fmtc.bitdepth
+##         - True: prefer zDepth
+##         default: False
+################################################################################################################################
+## Parameters of fmtc.bitdepth
+##     ampo, ampn, dyn, staticnoise, cpuopt, patsize, tpdfo, tpdfn, corplane:
+##         same as those in fmtc.bitdepth, ignored when useZ=True
+##         *NOTE* no positional arguments, only keyword arguments are accepted
+################################################################################################################################
+def Depth(input, depth=None, sample=None, fulls=None, fulld=None,
+    dither=None, useZ=None, **kwargs):
+    # input clip
+    clip = input
+
+    if not isinstance(input, vs.VideoNode):
+        raise type_error('"input" must be a clip!')
+
+    ## Default values for kwargs
+    if 'ampn' not in kwargs:
+        kwargs['ampn'] = None
+    if 'ampo' not in kwargs:
+        kwargs['ampo'] = None
+
+    # Get properties of input clip
+    sFormat = input.format
+
+    sColorFamily = sFormat.color_family
+    CheckColorFamily(sColorFamily)
+    sIsYUV = sColorFamily == vs.YUV
+    sIsGRAY = sColorFamily == vs.GRAY
+
+    sbitPS = sFormat.bits_per_sample
+    sSType = sFormat.sample_type
+
+    if fulls is None:
+        # If not set, assume limited range for YUV and Gray input
+        fulls = False if sIsYUV or sIsGRAY else True
+    elif not isinstance(fulls, int):
+        raise type_error('"fulls" must be a bool!')
+
+    # Get properties of output clip
+    lowDepth = False
+
+    if depth is None:
+        dbitPS = sbitPS
+    elif not isinstance(depth, int):
+        raise type_error('"depth" must be an int!')
+    else:
+        if depth < 8:
+            dbitPS = 8
+            lowDepth = True
+        else:
+            dbitPS = depth
+    if sample is None:
+        if depth is None:
+            dSType = sSType
+            depth = dbitPS
+        else:
+            dSType = vs.FLOAT if dbitPS >= 32 else vs.INTEGER
+    elif not isinstance(sample, int):
+        raise type_error('"sample" must be an int!')
+    elif sample != vs.INTEGER and sample != vs.FLOAT:
+        raise value_error('"sample" must be either 0 (vs.INTEGER) or 1 (vs.FLOAT)!')
+    else:
+        dSType = sample
+    if depth is None and sSType != vs.FLOAT and sample == vs.FLOAT:
+        dbitPS = 32
+    elif depth is None and sSType != vs.INTEGER and sample == vs.INTEGER:
+        dbitPS = 16
+    if dSType == vs.INTEGER and (dbitPS < 1 or dbitPS > 16):
+        raise value_error(f'{dbitPS}-bit integer output is not supported!')
+    if dSType == vs.FLOAT and (dbitPS != 16 and dbitPS != 32):
+        raise value_error(f'{dbitPS}-bit float output is not supported!')
+
+    if fulld is None:
+        fulld = fulls
+    elif not isinstance(fulld, int):
+        raise type_error('"fulld" must be a bool!')
+
+    # Low-depth support
+    if lowDepth:
+        if dither == "none" or dither == 1:
+            clip = _quantization_conversion(clip, sbitPS, depth, vs.INTEGER, fulls, fulld, False, False, 8, 0)
+            clip = _quantization_conversion(clip, depth, 8, vs.INTEGER, fulld, fulld, False, False, 8, 0)
+            return clip
+        else:
+            full = fulld
+            clip = _quantization_conversion(clip, sbitPS, depth, vs.INTEGER, fulls, full, False, False, 16, 1)
+            sSType = vs.INTEGER
+            sbitPS = 16
+            fulls = False
+            fulld = False
+
+    # Whether to use zDepth or fmtc.bitdepth for conversion
+    # When 11,13~15 bit integer or 16 bit float is involved, force using zDepth
+    if useZ is None:
+        useZ = False
+    elif not isinstance(useZ, int):
+        raise type_error('"useZ" must be a bool!')
+    if sSType == vs.INTEGER and (sbitPS == 13 or sbitPS == 15):
+        useZ = True
+    if dSType == vs.INTEGER and (dbitPS == 11 or 13 <= dbitPS <= 15):
+        useZ = True
+    if (sSType == vs.FLOAT and sbitPS < 32) or (dSType == vs.FLOAT and dbitPS < 32):
+        useZ = True
+
+    # Dithering type
+    if kwargs['ampn'] is not None and not isinstance(kwargs['ampn'], (int, float)):
+        raise type_error('"ampn" must be an int or a float!')
+
+    if dither is None:
+        if dbitPS == 32 or (dbitPS >= sbitPS and fulld == fulls and fulld == False):
+            dither = "none" if useZ else 1
+        else:
+            dither = "error_diffusion" if useZ else 3
+    elif not isinstance(dither, (int, str)):
+        raise type_error('"dither" must be an int or a str!')
+    else:
+        if isinstance(dither, str):
+            dither = dither.lower()
+            if dither != "none" and dither != "ordered" and dither != "random" and dither != "error_diffusion":
+                raise value_error('Unsupported "dither" specified!')
+        else:
+            if dither < 0 or dither > 9:
+                raise value_error('Unsupported "dither" specified!')
+        if useZ and isinstance(dither, int):
+            if dither == 0:
+                dither = "ordered"
+            elif dither == 1 or dither == 2:
+                if kwargs['ampn'] is not None and kwargs['ampn'] > 0:
+                    dither = "random"
+                else:
+                    dither = "none"
+            else:
+                dither = "error_diffusion"
+        elif not useZ and isinstance(dither, str):
+            if dither == "none":
+                dither = 1
+            elif dither == "ordered":
+                dither = 0
+            elif dither == "random":
+                if kwargs['ampn'] is None:
+                    dither = 1
+                    kwargs['ampn'] = 1
+                elif kwargs['ampn'] > 0:
+                    dither = 1
+                else:
+                    dither = 3
+            else:
+                dither = 3
+
+    if not useZ:
+        if kwargs['ampo'] is None:
+            kwargs['ampo'] = 1.5 if dither == 0 else 1
+        elif not isinstance(kwargs['ampo'], (int, float)):
+            raise type_error('"ampo" must be an int or a float!')
+
+    # Skip processing if not needed
+    if dSType == sSType and dbitPS == sbitPS and (sSType == vs.FLOAT or fulld == fulls) and not lowDepth:
+        return clip
+
+    # Apply conversion
+    if useZ:
+        clip = zDepth(clip, sample=dSType, depth=dbitPS, range=fulld, range_in=fulls, dither_type=dither)
+    else:
+        clip = core.fmtc.bitdepth(clip, bits=dbitPS, flt=dSType, fulls=fulls, fulld=fulld, dmode=dither, **kwargs)
+        clip = SetColorSpace(clip, ColorRange=0 if fulld else 1)
+
+    # Low-depth support
+    if lowDepth:
+        clip = _quantization_conversion(clip, depth, 8, vs.INTEGER, full, full, False, False, 8, 0)
+
+    # Output
+    return clip
+################################################################################################################################
+
+################################################################################################################################
+## Helper function: CheckColorFamily()
+################################################################################################################################
+def CheckColorFamily(color_family, valid_list=None, invalid_list=None):
+    if valid_list is None:
+        valid_list = ('RGB', 'YUV', 'GRAY')
+    if invalid_list is None:
+        invalid_list = ('COMPAT', 'UNDEFINED')
+    # check invalid list
+    for cf in invalid_list:
+        if color_family == getattr(vs, cf, None):
+            raise value_error(f'color family *{cf}* is not supported!')
+    # check valid list
+    if valid_list:
+        if color_family not in [getattr(vs, cf, None) for cf in valid_list]:
+            raise value_error(f'color family not supported, only {valid_list} are accepted')
+################################################################################################################################

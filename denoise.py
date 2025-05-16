@@ -5,11 +5,6 @@ import math
 
 from typing import Optional, Union, Sequence
 
-#from vsutil import Dither, depth, fallback, get_depth, get_y, join, plane, scale_value
-from vsutil import get_depth, scale_value
-
-PlanesType = Optional[Union[int, Sequence[int]]]
-
 # Taken from havsfunc
 def KNLMeansCL(
     clip: vs.VideoNode,
@@ -736,170 +731,6 @@ def mClean(clip, thSAD=400, chroma=True, sharp=10, rn=14, deband=0, depth=0, str
     output = core.std.Merge(c, output, 0.2+0.04*strength) if strength < 20 else output
     return core.std.MergeDiff(output, core.std.MakeDiff(output.warp.AWarpSharp2(128, 3, 1, depth2, 1), output.warp.AWarpSharp2(128, 2, 1, depth, 1))) if depth else output
 
-def cround(x: float) -> int:
-    return math.floor(x + 0.5) if x > 0 else math.ceil(x - 0.5)
-
-def scale(value, peak):
-    return cround(value * peak / 255) if peak != 1 else value / 255
-    
-def DitherLumaRebuild(src: vs.VideoNode, s0: float = 2.0, c: float = 0.0625, chroma: bool = True) -> vs.VideoNode:
-    '''Converts luma (and chroma) to PC levels, and optionally allows tweaking for pumping up the darks. (for the clip to be fed to motion search only)'''
-    if not isinstance(src, vs.VideoNode):
-        raise vs.Error('DitherLumaRebuild: this is not a clip')
-
-    if src.format.color_family == vs.RGB:
-        raise vs.Error('DitherLumaRebuild: RGB format is not supported')
-
-    is_gray = src.format.color_family == vs.GRAY
-    is_integer = src.format.sample_type == vs.INTEGER
-
-    bits = get_depth(src)
-    neutral = 1 << (bits - 1)
-
-    k = (s0 - 1) * c
-    t = f'x {scale_value(16, 8, bits)} - {scale_value(219, 8, bits)} / 0 max 1 min' if is_integer else 'x 0 max 1 min'
-    e = f'{k} {1 + c} {(1 + c) * c} {t} {c} + / - * {t} 1 {k} - * + ' + (f'{scale_value(256, 8, bits)} *' if is_integer else '')
-    EXPR = core.akarin.Expr if hasattr(core,'akarin') else core.std.Expr
-    return EXPR(src, expr=e if is_gray else [e, f'x {neutral} - 128 * 112 / {neutral} +' if chroma and is_integer else ''])
-    
-def AvsPrewitt(clip: vs.VideoNode, planes: Optional[Union[int, Sequence[int]]] = None) -> vs.VideoNode:
-    if not isinstance(clip, vs.VideoNode):
-        raise vs.Error('AvsPrewitt: this is not a clip')
-
-    plane_range = range(clip.format.num_planes)
-
-    if planes is None:
-        planes = list(plane_range)
-    elif isinstance(planes, int):
-        planes = [planes]
-    EXPR = core.akarin.Expr if hasattr(core,'akarin') else core.std.Expr
-    return EXPR(
-        [
-            clip.std.Convolution(matrix=[1, 1, 0, 1, 0, -1, 0, -1, -1], planes=planes, saturate=False),
-            clip.std.Convolution(matrix=[1, 1, 1, 0, 0, 0, -1, -1, -1], planes=planes, saturate=False),
-            clip.std.Convolution(matrix=[1, 0, -1, 1, 0, -1, 1, 0, -1], planes=planes, saturate=False),
-            clip.std.Convolution(matrix=[0, -1, -1, 1, 0, -1, 1, 1, 0], planes=planes, saturate=False),
-        ],
-        expr=['x y max z max a max' if i in planes else '' for i in plane_range],
-    )
-
-# Taken from muvsfunc
-def GetPlane(clip, plane=None):
-    # input clip
-    if not isinstance(clip, vs.VideoNode):
-        raise type_error('"clip" must be a clip!')
-
-    # Get properties of input clip
-    sFormat = clip.format
-    sNumPlanes = sFormat.num_planes
-
-    # Parameters
-    if plane is None:
-        plane = 0
-    elif not isinstance(plane, int):
-        raise type_error('"plane" must be an int!')
-    elif plane < 0 or plane > sNumPlanes:
-        raise value_error(f'valid range of "plane" is [0, {sNumPlanes})!')
-
-    # Process
-    return core.std.ShufflePlanes(clip, plane, vs.GRAY)
-    
-def Blur(clip: vs.VideoNode, amountH: float = 1.0, amountV: Optional[float] = None,
-         planes: PlanesType = None
-         ) -> vs.VideoNode:
-    """Avisynth's internel filter Blur()
-
-    Simple 3x3-kernel blurring filter.
-
-    In fact Blur(n) is just an alias for Sharpen(-n).
-
-    Args:
-        clip: Input clip.
-
-        amountH, amountV: (float) Blur uses the kernel is [(1-1/2^amount)/2, 1/2^amount, (1-1/2^amount)/2].
-            A value of 1.0 gets you a (1/4, 1/2, 1/4) for example.
-            Negative Blur actually sharpens the image.
-            The allowable range for Blur is from -1.0 to +1.58.
-            If \"amountV\" is not set manually, it will be set to \"amountH\".
-            Default is 1.0.
-
-        planes: (int []) Whether to process the corresponding plane. By default, every plane will be processed.
-            The unprocessed planes will be copied from the source clip, "clip".
-
-    """
-
-    funcName = 'Blur'
-
-    if not isinstance(clip, vs.VideoNode):
-        raise TypeError(funcName + ': \"clip\" is not a clip!')
-
-    if amountH < -1 or amountH > 1.5849625:
-        raise ValueError(funcName + ': \'amountH\' have not a correct value! [-1 ~ 1.58]')
-
-    if amountV is None:
-        amountV = amountH
-    else:
-        if amountV < -1 or amountV > 1.5849625:
-            raise ValueError(funcName + ': \'amountV\' have not a correct value! [-1 ~ 1.58]')
-
-    return Sharpen(clip, -amountH, -amountV, planes)
-    
-    
-def Sharpen(clip: vs.VideoNode, amountH: float = 1.0, amountV: Optional[float] = None,
-            planes: PlanesType = None
-            ) -> vs.VideoNode:
-    """Avisynth's internel filter Sharpen()
-
-    Simple 3x3-kernel sharpening filter.
-
-    Args:
-        clip: Input clip.
-
-        amountH, amountV: (float) Sharpen uses the kernel is [(1-2^amount)/2, 2^amount, (1-2^amount)/2].
-            A value of 1.0 gets you a (-1/2, 2, -1/2) for example.
-            Negative Sharpen actually blurs the image.
-            The allowable range for Sharpen is from -1.58 to +1.0.
-            If \"amountV\" is not set manually, it will be set to \"amountH\".
-            Default is 1.0.
-
-        planes: (int []) Whether to process the corresponding plane. By default, every plane will be processed.
-            The unprocessed planes will be copied from the source clip, "clip".
-
-    """
-
-    funcName = 'Sharpen'
-
-    if not isinstance(clip, vs.VideoNode):
-        raise TypeError(funcName + ': \"clip\" is not a clip!')
-
-    if amountH < -1.5849625 or amountH > 1:
-        raise ValueError(funcName + ': \'amountH\' have not a correct value! [-1.58 ~ 1]')
-
-    if amountV is None:
-        amountV = amountH
-    else:
-        if amountV < -1.5849625 or amountV > 1:
-            raise ValueError(funcName + ': \'amountV\' have not a correct value! [-1.58 ~ 1]')
-
-    if planes is None:
-        planes = list(range(clip.format.num_planes))
-
-    center_weight_v = math.floor(2 ** (amountV - 1) * 1023 + 0.5)
-    outer_weight_v = math.floor((0.25 - 2 ** (amountV - 2)) * 1023 + 0.5)
-    center_weight_h = math.floor(2 ** (amountH - 1) * 1023 + 0.5)
-    outer_weight_h = math.floor((0.25 - 2 ** (amountH - 2)) * 1023 + 0.5)
-
-    conv_mat_v = [outer_weight_v, center_weight_v, outer_weight_v]
-    conv_mat_h = [outer_weight_h, center_weight_h, outer_weight_h]
-
-    if math.fabs(amountH) >= 0.00002201361136: # log2(1+1/65536)
-        clip = core.std.Convolution(clip, conv_mat_v, planes=planes, mode='v')
-
-    if math.fabs(amountV) >= 0.00002201361136:
-        clip = core.std.Convolution(clip, conv_mat_h, planes=planes, mode='h')
-
-    return clip
-    
     
 # port of Avisynth EZdenoise 
 def EZDenoise(
@@ -961,3 +792,173 @@ def EZDenoise(
     denoised_clip = MDGMerge()
     
     return denoised_clip
+    
+    
+########################### HELPER FUNCTIONS ##########################
+    
+
+
+def cround(x: float) -> int:
+    return math.floor(x + 0.5) if x > 0 else math.ceil(x - 0.5)
+
+def scale(value, peak):
+    return cround(value * peak / 255) if peak != 1 else value / 255
+    
+def DitherLumaRebuild(src: vs.VideoNode, s0: float = 2.0, c: float = 0.0625, chroma: bool = True) -> vs.VideoNode:
+    '''Converts luma (and chroma) to PC levels, and optionally allows tweaking for pumping up the darks. (for the clip to be fed to motion search only)'''
+    if not isinstance(src, vs.VideoNode):
+        raise vs.Error('DitherLumaRebuild: this is not a clip')
+
+    if src.format.color_family == vs.RGB:
+        raise vs.Error('DitherLumaRebuild: RGB format is not supported')
+
+    is_gray = src.format.color_family == vs.GRAY
+    is_integer = src.format.sample_type == vs.INTEGER
+
+    bits = src.format.bits_per_sample
+    neutral = 1 << (bits - 1)
+
+    k = (s0 - 1) * c
+    t = f'x {scale(16, bits)} - {scale(219, bits)} / 0 max 1 min' if is_integer else 'x 0 max 1 min'
+    e = f'{k} {1 + c} {(1 + c) * c} {t} {c} + / - * {t} 1 {k} - * + ' + (f'{scale(256, bits)} *' if is_integer else '')
+    EXPR = core.akarin.Expr if hasattr(core,'akarin') else core.std.Expr
+    return EXPR(src, expr=e if is_gray else [e, f'x {neutral} - 128 * 112 / {neutral} +' if chroma and is_integer else ''])
+    
+def AvsPrewitt(clip: vs.VideoNode, planes: Optional[Union[int, Sequence[int]]] = None) -> vs.VideoNode:
+    if not isinstance(clip, vs.VideoNode):
+        raise vs.Error('AvsPrewitt: this is not a clip')
+
+    plane_range = range(clip.format.num_planes)
+
+    if planes is None:
+        planes = list(plane_range)
+    elif isinstance(planes, int):
+        planes = [planes]
+    EXPR = core.akarin.Expr if hasattr(core,'akarin') else core.std.Expr
+    return EXPR(
+        [
+            clip.std.Convolution(matrix=[1, 1, 0, 1, 0, -1, 0, -1, -1], planes=planes, saturate=False),
+            clip.std.Convolution(matrix=[1, 1, 1, 0, 0, 0, -1, -1, -1], planes=planes, saturate=False),
+            clip.std.Convolution(matrix=[1, 0, -1, 1, 0, -1, 1, 0, -1], planes=planes, saturate=False),
+            clip.std.Convolution(matrix=[0, -1, -1, 1, 0, -1, 1, 1, 0], planes=planes, saturate=False),
+        ],
+        expr=['x y max z max a max' if i in planes else '' for i in plane_range],
+    )
+
+# Taken from muvsfunc
+def GetPlane(clip, plane=None):
+    # input clip
+    if not isinstance(clip, vs.VideoNode):
+        raise type_error('"clip" must be a clip!')
+
+    # Get properties of input clip
+    sFormat = clip.format
+    sNumPlanes = sFormat.num_planes
+
+    # Parameters
+    if plane is None:
+        plane = 0
+    elif not isinstance(plane, int):
+        raise type_error('"plane" must be an int!')
+    elif plane < 0 or plane > sNumPlanes:
+        raise value_error(f'valid range of "plane" is [0, {sNumPlanes})!')
+
+    # Process
+    return core.std.ShufflePlanes(clip, plane, vs.GRAY)
+    
+def Blur(clip: vs.VideoNode, amountH: float = 1.0, amountV: Optional[float] = None,
+         planes: Optional[Union[int, Sequence[int]]] = None
+         ) -> vs.VideoNode:
+    """Avisynth's internel filter Blur()
+
+    Simple 3x3-kernel blurring filter.
+
+    In fact Blur(n) is just an alias for Sharpen(-n).
+
+    Args:
+        clip: Input clip.
+
+        amountH, amountV: (float) Blur uses the kernel is [(1-1/2^amount)/2, 1/2^amount, (1-1/2^amount)/2].
+            A value of 1.0 gets you a (1/4, 1/2, 1/4) for example.
+            Negative Blur actually sharpens the image.
+            The allowable range for Blur is from -1.0 to +1.58.
+            If \"amountV\" is not set manually, it will be set to \"amountH\".
+            Default is 1.0.
+
+        planes: (int []) Whether to process the corresponding plane. By default, every plane will be processed.
+            The unprocessed planes will be copied from the source clip, "clip".
+
+    """
+
+    funcName = 'Blur'
+
+    if not isinstance(clip, vs.VideoNode):
+        raise TypeError(funcName + ': \"clip\" is not a clip!')
+
+    if amountH < -1 or amountH > 1.5849625:
+        raise ValueError(funcName + ': \'amountH\' have not a correct value! [-1 ~ 1.58]')
+
+    if amountV is None:
+        amountV = amountH
+    else:
+        if amountV < -1 or amountV > 1.5849625:
+            raise ValueError(funcName + ': \'amountV\' have not a correct value! [-1 ~ 1.58]')
+
+    return Sharpen(clip, -amountH, -amountV, planes)
+    
+    
+def Sharpen(clip: vs.VideoNode, amountH: float = 1.0, amountV: Optional[float] = None,
+            planes: Optional[Union[int, Sequence[int]]] = None
+            ) -> vs.VideoNode:
+    """Avisynth's internel filter Sharpen()
+
+    Simple 3x3-kernel sharpening filter.
+
+    Args:
+        clip: Input clip.
+
+        amountH, amountV: (float) Sharpen uses the kernel is [(1-2^amount)/2, 2^amount, (1-2^amount)/2].
+            A value of 1.0 gets you a (-1/2, 2, -1/2) for example.
+            Negative Sharpen actually blurs the image.
+            The allowable range for Sharpen is from -1.58 to +1.0.
+            If \"amountV\" is not set manually, it will be set to \"amountH\".
+            Default is 1.0.
+
+        planes: (int []) Whether to process the corresponding plane. By default, every plane will be processed.
+            The unprocessed planes will be copied from the source clip, "clip".
+
+    """
+
+    funcName = 'Sharpen'
+
+    if not isinstance(clip, vs.VideoNode):
+        raise TypeError(funcName + ': \"clip\" is not a clip!')
+
+    if amountH < -1.5849625 or amountH > 1:
+        raise ValueError(funcName + ': \'amountH\' have not a correct value! [-1.58 ~ 1]')
+
+    if amountV is None:
+        amountV = amountH
+    else:
+        if amountV < -1.5849625 or amountV > 1:
+            raise ValueError(funcName + ': \'amountV\' have not a correct value! [-1.58 ~ 1]')
+
+    if planes is None:
+        planes = list(range(clip.format.num_planes))
+
+    center_weight_v = math.floor(2 ** (amountV - 1) * 1023 + 0.5)
+    outer_weight_v = math.floor((0.25 - 2 ** (amountV - 2)) * 1023 + 0.5)
+    center_weight_h = math.floor(2 ** (amountH - 1) * 1023 + 0.5)
+    outer_weight_h = math.floor((0.25 - 2 ** (amountH - 2)) * 1023 + 0.5)
+
+    conv_mat_v = [outer_weight_v, center_weight_v, outer_weight_v]
+    conv_mat_h = [outer_weight_h, center_weight_h, outer_weight_h]
+
+    if math.fabs(amountH) >= 0.00002201361136: # log2(1+1/65536)
+        clip = core.std.Convolution(clip, conv_mat_v, planes=planes, mode='v')
+
+    if math.fabs(amountV) >= 0.00002201361136:
+        clip = core.std.Convolution(clip, conv_mat_h, planes=planes, mode='h')
+
+    return clip
+    

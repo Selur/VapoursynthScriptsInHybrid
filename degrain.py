@@ -4,7 +4,6 @@ from vapoursynth import core
 import math
 
 from typing import Sequence, Union, Optional
-from vsutil import scale_value
 
 def STPresso(
     clp: vs.VideoNode,
@@ -50,22 +49,22 @@ def STPresso(
         planes = [planes]
 
     bits = clp.format.bits_per_sample
-    limit = scale_value(limit, 8, bits)
-    tthr = scale_value(tthr, 8, bits)
-    tlimit = scale_value(tlimit, 8, bits)
-    back = scale_value(back, 8, bits)
+    limit = scale(limit, bits)
+    tthr = scale(tthr, bits)
+    tlimit = scale(tlimit, bits)
+    back = scale(back, bits)
 
-    LIM = cround(limit * 100 / bias - 1) if limit > 0 else cround(scale_value(100 / bias, 8, bits))
-    TLIM = cround(tlimit * 100 / tbias - 1) if tlimit > 0 else cround(scale_value(100 / tbias, 8, bits))
+    LIM = cround(limit * 100 / bias - 1) if limit > 0 else cround(scale(100 / bias, bits))
+    TLIM = cround(tlimit * 100 / tbias - 1) if tlimit > 0 else cround(scale(100 / tbias, bits))
 
     if limit < 0:
         expr = f'x y - abs {LIM} < x x 1 x y - dup abs / * - ?'
     else:
-        expr = f'x y - abs {scale_value(1, 8, bits)} < x x {LIM} + y < x {limit} + x {LIM} - y > x {limit} - x {100 - bias} * y {bias} * + 100 / ? ? ?'
+        expr = f'x y - abs {scale(1, bits)} < x x {LIM} + y < x {limit} + x {LIM} - y > x {limit} - x {100 - bias} * y {bias} * + 100 / ? ? ?'
     if tlimit < 0:
         texpr = f'x y - abs {TLIM} < x x 1 x y - dup abs / * - ?'
     else:
-        texpr = f'x y - abs {scale_value(1, 8, bits)} < x x {TLIM} + y < x {tlimit} + x {TLIM} - y > x {tlimit} - x {100 - tbias} * y {tbias} * + 100 / ? ? ?'
+        texpr = f'x y - abs {scale(1, bits)} < x x {TLIM} + y < x {tlimit} + x {TLIM} - y > x {tlimit} - x {100 - tbias} * y {tbias} * + 100 / ? ? ?'
 
     if isinstance(RGmode, vs.VideoNode):
         bzz = RGmode
@@ -838,8 +837,8 @@ def DitherLumaRebuild(src: vs.VideoNode, s0: float = 2.0, c: float = 0.0625, chr
     neutral = 1 << (bits - 1)
 
     k = (s0 - 1) * c
-    t = f'x {scale_value(16, 8, bits)} - {scale_value(219, 8, bits)} / 0 max 1 min' if is_integer else 'x 0 max 1 min'
-    e = f'{k} {1 + c} {(1 + c) * c} {t} {c} + / - * {t} 1 {k} - * + ' + (f'{scale_value(256, 8, bits)} *' if is_integer else '')
+    t = f'x {scale(16, bits)} - {scale(219, bits)} / 0 max 1 min' if is_integer else 'x 0 max 1 min'
+    e = f'{k} {1 + c} {(1 + c) * c} {t} {c} + / - * {t} 1 {k} - * + ' + (f'{scale(256, bits)} *' if is_integer else '')
     EXPR = core.akarin.Expr if hasattr(core,'akarin') else core.std.Expr
     return EXPR(src, expr=e if is_gray else [e, f'x {neutral} - 128 * 112 / {neutral} +' if chroma and is_integer else ''])
     
@@ -1124,7 +1123,7 @@ def MinBlur(clp, r=1, planes=None):
         if clp.format.bits_per_sample == 16:
             s16 = clp
             RG4 = clp.fmtc.bitdepth(bits=12, planes=planes, dmode=1).ctmf.CTMF(radius=3, planes=planes).fmtc.bitdepth(bits=16, planes=planes)
-            RG4 = mvf.LimitFilter(s16, RG4, thr=0.0625, elast=2, planes=planes)
+            RG4 = LimitFilter(s16, RG4, thr=0.0625, elast=2, planes=planes)
         else:
             RG4 = clp.ctmf.CTMF(radius=3, planes=planes)
 
@@ -1263,4 +1262,3 @@ def mcdegrainsharp(clip, frames=2, bblur=0.3, csharp=0.3, bsrch=True, thsad=400,
         raise ValueError('"frames" must be 1, 2 or 3.')
 
     return last
-        

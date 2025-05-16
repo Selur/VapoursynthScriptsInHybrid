@@ -122,7 +122,8 @@ def m4(x: Union[float, int]) -> int:
 
 def scale(value, peak):
     return cround(value * peak / 255) if peak != 1 else value / 255
-    
+
+# from vsutil    
 def GetPlane(clip, plane=None):
     # input clip
     if not isinstance(clip, vs.VideoNode):

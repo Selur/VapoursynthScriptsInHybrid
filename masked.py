@@ -8,9 +8,8 @@ core = vs.core
 # draft=True is a lot faster, albeit less accurate
 # from https://blog.kageru.moe/legacy/edgemasks.html
 def retinex_edgemask(src: vs.VideoNode, sigma: int=1, draft: bool=False) -> vs.VideoNode:
-    import mvsfunc as mvf
-    src = mvf.Depth(src, 16)
-    luma = mvf.GetPlane(src, 0)
+    src = Depth(src, 16)
+    luma = GetPlane(src, 0)
     EXPR = core.akarin.Expr if hasattr(core,'akarin') else core.std.Expr
     if draft:
         ret = EXPR(luma, 'x 65535 / sqrt 65535 *')
@@ -157,3 +156,48 @@ def hue_mask(clip: vs.VideoNode, min_hue: Union[float, int], max_hue: Union[floa
     # Ensure mask is 8-bit grayscale
     return core.resize.Bicubic(mask, format=vs.GRAY8)
 
+
+# Taken from muvsfunc
+def GetPlane(clip, plane=None):
+    # input clip
+    if not isinstance(clip, vs.VideoNode):
+        raise type_error('"clip" must be a clip!')
+
+    # Get properties of input clip
+    sFormat = clip.format
+    sNumPlanes = sFormat.num_planes
+
+    # Parameters
+    if plane is None:
+        plane = 0
+    elif not isinstance(plane, int):
+        raise type_error('"plane" must be an int!')
+    elif plane < 0 or plane > sNumPlanes:
+        raise value_error(f'valid range of "plane" is [0, {sNumPlanes})!')
+
+    # Process
+    return core.std.ShufflePlanes(clip, plane, vs.GRAY)
+    
+    
+def Depth(src, bits, dither_type='error_diffusion', range=None, range_in=None):
+    src_f = src.format
+    src_cf = src_f.color_family
+    src_st = src_f.sample_type
+    src_bits = src_f.bits_per_sample
+    src_sw = src_f.subsampling_w
+    src_sh = src_f.subsampling_h
+    dst_st = vs.INTEGER if bits < 32 else vs.FLOAT
+
+    if isinstance(range, str):
+        range = RANGEDICT[range]
+
+    if isinstance(range_in, str):
+        range_in = RANGEDICT[range_in]
+
+    if (src_bits, range_in) == (bits, range):
+        return src
+    out_f = core.register_format(src_cf, dst_st, bits, src_sw, src_sh)
+    return core.resize.Point(src, format=out_f.id, dither_type=dither_type, range=range, range_in=range_in)
+
+
+RANGEDICT = {'limited': 0, 'full': 1}

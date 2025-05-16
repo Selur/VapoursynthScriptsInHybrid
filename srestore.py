@@ -634,10 +634,6 @@ def GetPlane(clip, plane=None):
 
     # Process
     return core.std.ShufflePlanes(clip, plane, vs.GRAY)
-    
-    
-def cround(x: float) -> int:
-    return math.floor(x + 0.5) if x > 0 else math.ceil(x - 0.5)
         
 def cround(x: float) -> int:
     return math.floor(x + 0.5) if x > 0 else math.ceil(x - 0.5)
