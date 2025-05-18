@@ -2,7 +2,7 @@ import vapoursynth as vs
 from vapoursynth import core
 
 import math
-from typing import Union, Optional, Sequence; TypeVar
+from typing import Union, Optional, Sequence, TypeVar
 
 def DeHalo_alpha(
     clp: vs.VideoNode,
