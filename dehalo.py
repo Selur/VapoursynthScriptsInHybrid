@@ -4,6 +4,8 @@ from vapoursynth import core
 import math
 from typing import Union, Optional, Sequence, TypeVar
 
+from vsutil import scale_value
+
 def DeHalo_alpha(
     clp: vs.VideoNode,
     rx: float = 2.0,
@@ -54,7 +56,7 @@ def DeHalo_alpha(
     ugly = EXPR([halos.std.Maximum(), halos.std.Minimum()], expr='x y -')
     so = EXPR(
         [ugly, are],
-        expr=f'y x - y 0.000001 + / {scale(255, bits)} * {scale(lowsens, bits)} - y {scale(256, bits)} + {scale(512, bits)} / {highsens / 100} + *',
+        expr=f'y x - y 0.000001 + / {scale_value(255, 8, bits)} * {scale_value(lowsens, 8, bits)} - y {scale_value(256, 8, bits)} + {scale_value(512, 8, bits)} / {highsens / 100} + *',
     )
     if clp.format.sample_type == vs.FLOAT:
         so = so.vszip.Limiter() if hasattr(core,'vszip') else so.std.Limiter()
@@ -131,7 +133,7 @@ def EdgeCleaner(c: vs.VideoNode, strength: int = 10, rep: bool = True, rmode: in
         main = core.rgvs.Repair(main, c, mode=rmode)
     EXPR = core.akarin.Expr if hasattr(core,'akarin') else core.std.Expr
     mask = (
-        EXPR(AvsPrewitt(c), expr=f'x {scale(4, bits)} < 0 x {scale_value(32, bits)} > {peak} x ? ?')
+        EXPR(AvsPrewitt(c), expr=f'x {scale_value(4, 8, bits)} < 0 x {scale_value(32, 8, bits)} > {peak} x ? ?')
         .std.InvertMask()
         .std.Convolution(matrix=[1, 1, 1, 1, 1, 1, 1, 1, 1])
     )
@@ -146,8 +148,8 @@ def EdgeCleaner(c: vs.VideoNode, strength: int = 10, rep: bool = True, rmode: in
         RG = core.zsmooth.RemoveGrain if hasattr(core,'zsmooth') else core.rgvs.RemoveGrain
         clean = RG(c, mode=17)
         diff = core.std.MakeDiff(c, clean)
-        mask = EXPR(AvsPrewitt(diff.std.Levels(min_in=scale(40, bits), max_in=scale(168, bits), gamma=0.35).RG(mode=7)),
-            expr=f'x {scale_value(4, bits)} < 0 x {scale(16, bits)} > {peak} x ? ?'
+        mask = EXPR(AvsPrewitt(diff.std.Levels(min_in=scale_value(40, 8, bits), max_in=scale_value(168, 8, bits), gamma=0.35).RG(mode=7)),
+            expr=f'x {scale_value(4, 8, bits)} < 0 x {scale_value(16, 8, bits)} > {peak} x ? ?'
         )
         final = core.std.MaskedMerge(final, c, mask)
 
@@ -243,7 +245,7 @@ def FineDehalo(
     vszip = hasattr(core,'vszip')
     # Keeps only the sharpest edges (line edges)
     EXPR = core.akarin.Expr if hasattr(core,'akarin') else core.std.Expr
-    strong = EXPR(edges, expr=f'x {scale(thmi, bits)} - {thma - thmi} / 255 *')
+    strong = EXPR(edges, expr=f'x {scale_value(thmi, 8, bits)} - {thma - thmi} / 255 *')
     if is_float:
         strong = strong.vszip.Limiter() if vszip else strong.std.Limiter()
 
@@ -257,7 +259,7 @@ def FineDehalo(
     # Therefore we have to produce a mask to exclude these zones from the halo removal.
 
     # Includes more edges than previously, but ignores simple details
-    light = EXPR(edges, expr=f'x {scale(thlimi, bits)} - {thlima - thlimi} / 255 *')
+    light = EXPR(edges, expr=f'x {scale_value(thlimi, 8, bits)} - {thlima - thlimi} / 255 *')
     if is_float:
         light = light.vszip.Limiter() if vszip else light.std.Limiter()
 
@@ -789,13 +791,13 @@ def BlindDeHalo3(clp: vs.VideoNode, rx: float = 3.0, ry: float = 3.0, strength: 
     strength *= 1 + sharpness * 0.25
     RR = (rx + ry) / 2
     ST = strength / 100
-    LD = scale(lodamp, bits)
+    LD = scale_value(lodamp, 8, bits)
     HD = hidamp ** 2
     TWK0 = 'x y - {i} /'.format(i=12 / ST / RR)
     TWK = 'x y - {i} / abs'.format(i=12 / ST / RR)
     TWK_HLIGHT = ('x y - abs {i} < {neutral} {TWK} {neutral} {TWK} - {TWK} {neutral} / * + {TWK0} {TWK} {LD} + / * '
         '{neutral} {TWK} - {j} / dup * {neutral} {TWK} - {j} / dup * {HD} + / * {neutral} + ?'.format(
-            i=1 << (bits-8), neutral=neutral, TWK=TWK, TWK0=TWK0, LD=LD, j=scale(20, bits), HD=HD))
+            i=1 << (bits-8), neutral=neutral, TWK=TWK, TWK0=TWK0, LD=LD, j=scale_value(20, 8, bits), HD=HD))
 
     i = clp if not interlaced else core.std.SeparateFields(clp, tff=True)
     oxi = i.width
@@ -811,7 +813,7 @@ def BlindDeHalo3(clp: vs.VideoNode, rx: float = 3.0, ry: float = 3.0, strength: 
     clean = core.std.MaskedMerge(i, clean, mm)
 
     if PPmode != 0:
-        LL = scale(PPlimit, bits)
+        LL = scale_value(PPlimit, 8, bits)
         LIM = 'x {LL} + y < x {LL} + x {LL} - y > x {LL} - y ? ?'.format(LL=LL)
 
         base = i if PPmode < 0 else clean
@@ -867,9 +869,6 @@ def GetPlane(clip, plane=None):
 def cround(x: float) -> int:
     return math.floor(x + 0.5) if x > 0 else math.ceil(x - 0.5)
 
-def scale(value, peak):
-    return cround(value * peak / 255) if peak != 1 else value / 255
-    
 def m4(value, mult=4.0):
     return 16 if value < 16 else int(round(value / mult) * mult)
     
@@ -927,12 +926,6 @@ def Sharpen(clip: vs.VideoNode, amountH: float = 1.0, amountV: Optional[float] =
         clip = core.std.Convolution(clip, conv_mat_h, planes=planes, mode='h')
 
     return clip
-    
-def cround(x: float) -> int:
-    return math.floor(x + 0.5) if x > 0 else math.ceil(x - 0.5)
-    
-def scale(value, peak):
-    return cround(value * peak / 255) if peak != 1 else value / 255
         
 # Taken from sfrom vsutil
 T = TypeVar('T')

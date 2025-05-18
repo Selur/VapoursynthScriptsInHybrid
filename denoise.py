@@ -3,7 +3,9 @@ from vapoursynth import core
 
 import math
 
-from typing import Optional, Union, Sequence
+from typing import Optional, Union, Sequence, TypeVar
+
+from vsutil import scale_value, types
 
 # Taken from havsfunc
 def KNLMeansCL(
@@ -243,9 +245,9 @@ def MCTemporalDenoise(i, radius=None, pfMode=3, sigma=None, twopass=None, useTTm
         raise vs.Error("MCTemporalDenoise: 'p' must be the same format as input")
 
     isGray = (i.format.color_family == vs.GRAY)
-
-    neutral = 1 << (i.format.bits_per_sample - 1)
-    peak = (1 << i.format.bits_per_sample) - 1
+    bits = i.format.bits_per_sample
+    neutral = 1 << (bits - 1)
+    peak = (1 << bits) - 1
 
     ### DEFAULTS
     try:
@@ -792,15 +794,85 @@ def EZDenoise(
     denoised_clip = MDGMerge()
     
     return denoised_clip
-    
+        
     
 ########################### HELPER FUNCTIONS ##########################
     
+def scale_value(value: Union[int, float],
+                input_depth: int,
+                output_depth: int,
+                range_in: Union[int, types.Range] = 0,
+                range: Optional[Union[int, types.Range]] = None,
+                scale_offsets: bool = False,
+                chroma: bool = False,
+                ) -> Union[int, float]:
+    """Scales a given numeric value between bit depths, sample types, and/or ranges.
 
+    >>> scale_value(16, 8, 32, range_in=Range.LIMITED)
+    0.0730593607305936
+    >>> scale_value(16, 8, 32, range_in=Range.LIMITED, scale_offsets=True)
+    0.0
+    >>> scale_value(16, 8, 32, range_in=Range.LIMITED, scale_offsets=True, chroma=True)
+    -0.5
+
+    :param value:          Numeric value to be scaled.
+    :param input_depth:    Bit depth of the `value` parameter. Use ``32`` for float sample type.
+    :param output_depth:   Bit depth to scale the input `value` to.
+    :param range_in:       Pixel range of the input `value`. No clamping is performed. See :class:`Range`.
+    :param range:          Pixel range of the output `value`. No clamping is performed. See :class:`Range`.
+    :param scale_offsets:  Whether or not to apply YUV offsets to float chroma and/or TV range integer values.
+        (When scaling a TV range value of ``16`` to float, setting this to ``True`` will return ``0.0``
+        rather than ``0.073059...``)
+    :param chroma:        Whether or not to treat values as chroma instead of luma.
+
+    :return:              Scaled numeric value.
+    """
+    range_in = types.resolve_enum(types.Range, range_in, 'range_in', scale_value)
+    range = types.resolve_enum(types.Range, range, 'range', scale_value)
+    range = fallback(range, range_in)
+
+    if input_depth == 32:
+        range_in = 1
+
+    if output_depth == 32:
+        range = 1
+
+    def peak_pixel_value(bits: int, range_: Union[int, types.Range], chroma_: bool) -> int:
+        """
+        _
+        """
+        if bits == 32:
+            return 1
+        if range_:
+            return (1 << bits) - 1
+        return (224 if chroma_ else 219) << (bits - 8)
+
+    input_peak = peak_pixel_value(input_depth, range_in, chroma)
+
+    output_peak = peak_pixel_value(output_depth, range, chroma)
+
+    if input_depth == output_depth and range_in == range:
+        return value
+
+    if scale_offsets:
+        if output_depth == 32 and chroma:
+            value -= 128 << (input_depth - 8)
+        elif range and not range_in:
+            value -= 16 << (input_depth - 8)
+
+    value *= output_peak / input_peak
+
+    if scale_offsets:
+        if input_depth == 32 and chroma:
+            value += 128 << (output_depth - 8)
+        elif range_in and not range:
+            value += 16 << (output_depth - 8)
+
+    return value
 
 def cround(x: float) -> int:
     return math.floor(x + 0.5) if x > 0 else math.ceil(x - 0.5)
-
+    
 def scale(value, peak):
     return cround(value * peak / 255) if peak != 1 else value / 255
     
@@ -819,8 +891,8 @@ def DitherLumaRebuild(src: vs.VideoNode, s0: float = 2.0, c: float = 0.0625, chr
     neutral = 1 << (bits - 1)
 
     k = (s0 - 1) * c
-    t = f'x {scale(16, bits)} - {scale(219, bits)} / 0 max 1 min' if is_integer else 'x 0 max 1 min'
-    e = f'{k} {1 + c} {(1 + c) * c} {t} {c} + / - * {t} 1 {k} - * + ' + (f'{scale(256, bits)} *' if is_integer else '')
+    t = f'x {scale_value(16, 8, bits)} - {scale_value(219, 8, bits)} / 0 max 1 min' if is_integer else 'x 0 max 1 min'
+    e = f'{k} {1 + c} {(1 + c) * c} {t} {c} + / - * {t} 1 {k} - * + ' + (f'{scale_value(256, 8, bits)} *' if is_integer else '')
     EXPR = core.akarin.Expr if hasattr(core,'akarin') else core.std.Expr
     return EXPR(src, expr=e if is_gray else [e, f'x {neutral} - 128 * 112 / {neutral} +' if chroma and is_integer else ''])
     
@@ -961,4 +1033,19 @@ def Sharpen(clip: vs.VideoNode, amountH: float = 1.0, amountV: Optional[float] =
         clip = core.std.Convolution(clip, conv_mat_h, planes=planes, mode='h')
 
     return clip
-    
+
+T = TypeVar('T')
+def fallback(value: Optional[T], fallback_value: T) -> T:
+    """Utility function that returns a value or a fallback if the value is ``None``.
+
+    >>> fallback(5, 6)
+    5
+    >>> fallback(None, 6)
+    6
+
+    :param value:           Argument that can be ``None``.
+    :param fallback_value:  Fallback value that is returned if `value` is ``None``.
+
+    :return:                The input `value` or `fallback_value` if `value` is ``None``.
+    """
+    return fallback_value if value is None else value

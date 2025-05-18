@@ -138,7 +138,7 @@ def sRestoreMUVs(
         bmask = EXPR([qmask1, qmask2], expr=[f'x {neutral} - dup * dup y {neutral} - dup * + / {peak} *', ''])
         expr = (
             'x 2 * y < x {i} < and 0 y 2 * x < y {i} < and {peak} x x y + / {j} * {k} + ? ?'
-            .format(i=scale(4, bits), peak=peak, j=scale(200, bits), k=scale(28, bits))
+            .format(i=scale_value(4, 8, bits), peak=peak, j=scale_value(200, 8, bits), k=scale_value(28, 8, bits))
         )
         dmask = EXPR([diffm, diffm.std.Trim(first=2)], expr=[expr, ''])
         pmask = EXPR([dmask, bmask], expr=[f'y 0 > y {peak} < and x 0 = x {peak} = or and x y ?', ''])

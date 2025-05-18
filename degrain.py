@@ -6,6 +6,8 @@ import math
 
 from typing import Sequence, Union, Optional
 
+from vsutil import scale_value
+
 def STPresso(
     clp: vs.VideoNode,
     limit: int = 3,
@@ -50,22 +52,22 @@ def STPresso(
         planes = [planes]
 
     bits = clp.format.bits_per_sample
-    limit = scale(limit, bits)
-    tthr = scale(tthr, bits)
-    tlimit = scale(tlimit, bits)
-    back = scale(back, bits)
+    limit = scale_value(limit, 8, bits)
+    tthr = scale_value(tthr, 8, bits)
+    tlimit = scale_value(tlimit, 8, bits)
+    back = scale_value(back, 8, bits)
 
-    LIM = cround(limit * 100 / bias - 1) if limit > 0 else cround(scale(100 / bias, bits))
-    TLIM = cround(tlimit * 100 / tbias - 1) if tlimit > 0 else cround(scale(100 / tbias, bits))
+    LIM = cround(limit * 100 / bias - 1) if limit > 0 else cround(scale_value(100 / bias, 8, bits))
+    TLIM = cround(tlimit * 100 / tbias - 1) if tlimit > 0 else cround(scale_value(100 / tbias, 8, bits))
 
     if limit < 0:
         expr = f'x y - abs {LIM} < x x 1 x y - dup abs / * - ?'
     else:
-        expr = f'x y - abs {scale(1, bits)} < x x {LIM} + y < x {limit} + x {LIM} - y > x {limit} - x {100 - bias} * y {bias} * + 100 / ? ? ?'
+        expr = f'x y - abs {scale_value(1, 8, bits)} < x x {LIM} + y < x {limit} + x {LIM} - y > x {limit} - x {100 - bias} * y {bias} * + 100 / ? ? ?'
     if tlimit < 0:
         texpr = f'x y - abs {TLIM} < x x 1 x y - dup abs / * - ?'
     else:
-        texpr = f'x y - abs {scale(1, bits)} < x x {TLIM} + y < x {tlimit} + x {TLIM} - y > x {tlimit} - x {100 - tbias} * y {tbias} * + 100 / ? ? ?'
+        texpr = f'x y - abs {scale_value(1, 8, bits)} < x x {TLIM} + y < x {tlimit} + x {TLIM} - y > x {tlimit} - x {100 - tbias} * y {tbias} * + 100 / ? ? ?'
 
     if isinstance(RGmode, vs.VideoNode):
         bzz = RGmode
@@ -821,10 +823,7 @@ def cround(x: float) -> int:
 
 def m4(x: Union[float, int]) -> int:
     return 16 if x < 16 else cround(x / 4) * 4
-        
-def scale(value, peak):
-    return cround(value * peak / 255) if peak != 1 else value / 255
-    
+   
     
 def DitherLumaRebuild(src: vs.VideoNode, s0: float = 2.0, c: float = 0.0625, chroma: bool = True) -> vs.VideoNode:
     '''Converts luma (and chroma) to PC levels, and optionally allows tweaking for pumping up the darks. (for the clip to be fed to motion search only)'''
@@ -841,8 +840,8 @@ def DitherLumaRebuild(src: vs.VideoNode, s0: float = 2.0, c: float = 0.0625, chr
     neutral = 1 << (bits - 1)
 
     k = (s0 - 1) * c
-    t = f'x {scale(16, bits)} - {scale(219, bits)} / 0 max 1 min' if is_integer else 'x 0 max 1 min'
-    e = f'{k} {1 + c} {(1 + c) * c} {t} {c} + / - * {t} 1 {k} - * + ' + (f'{scale(256, bits)} *' if is_integer else '')
+    t = f'x {scale_value(16, 8, bits)} - {scale_value(219, 8, bits)} / 0 max 1 min' if is_integer else 'x 0 max 1 min'
+    e = f'{k} {1 + c} {(1 + c) * c} {t} {c} + / - * {t} 1 {k} - * + ' + (f'{scale_value(256, 8, bits)} *' if is_integer else '')
     EXPR = core.akarin.Expr if hasattr(core,'akarin') else core.std.Expr
     return EXPR(src, expr=e if is_gray else [e, f'x {neutral} - 128 * 112 / {neutral} +' if chroma and is_integer else ''])
     
