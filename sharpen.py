@@ -668,6 +668,7 @@ def DetailSharpen(clip, z=4, sstr=1.5, power=4, ldmp=1, mode=1, med=False):
         blur = blur.std.Median()
 
     expr = 'x y = x dup {} dup dup abs {} / {} pow swap2 abs {} + / * {} * + ?'
+    EXPR = core.akarin.Expr if hasattr(core,'akarin') else core.std.Expr
     tmp = EXPR([tmp, blur], [expr.format(xy, z, 1/power, ldmp, sstr*z*i)])
 
     return core.std.ShufflePlanes([tmp, clip], [0, 1, 2], color) if color in [vs.YUV] else tmp
