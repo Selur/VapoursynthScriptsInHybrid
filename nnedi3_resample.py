@@ -2,6 +2,7 @@ import vapoursynth as vs
 from vapoursynth import core
 import mvsfunc as mvf
 import math
+from typing import Union, Optional, Callable, Dict, Any
 
 
 __version__ = '2'
@@ -568,7 +569,7 @@ def SigmoidDirect(src, thr=0.5, cont=6.5, planes=[0, 1, 2]):
 ## Gamma conversion functions from HAvsFunc-r18
 
 
-def SSIM_downsample(clip: vs.VideoNode, w: int, h: int, smooth: Union[float, VSFuncType] = 1,
+def SSIM_downsample(clip: vs.VideoNode, w: int, h: int, smooth: Union[float, Union[vs.Func, Callable[..., vs.VideoNode]]] = 1,
                     kernel: Optional[str] = None, use_fmtc: bool = False, gamma: bool = False,
                     fulls: bool = False, fulld: bool = False, curve: str = '709', sigmoid: bool = False,
                     epsilon: float = 1e-6, depth_args: Optional[Dict[str, Any]] = None,

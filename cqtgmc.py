@@ -82,10 +82,11 @@ def CQTGMC(clip: vs.VideoNode, Sharpness: float=0.25, thSAD1: int=192, thSAD2: i
     
     bComp1 = core.mv.Compensate(clip=weaved, super=csuper, vectors=bVec1, thsad=thSAD4)
     fComp1 = core.mv.Compensate(clip=weaved, super=csuper, vectors=fVec1, thsad=thSAD4)
-    tMax = core.std.Expr(clips=[weaved, bComp1], expr=['x y max'])
-    tMax = core.std.Expr(clips=[tMax, fComp1], expr=['x y max'])
-    tMin = core.std.Expr(clips=[weaved, bComp1], expr=['x y min'])
-    tMin = core.std.Expr(clips=[tMin, fComp1], expr=['x y min'])
+    EXPR = core.akarin.Expr if hasattr(core,'akarin') else core.std.Expr
+    tMax = EXPR(clips=[weaved, bComp1], expr=['x y max'])
+    tMax = EXPR(clips=[tMax, fComp1], expr=['x y max'])
+    tMin = EXPR(clips=[weaved, bComp1], expr=['x y min'])
+    tMin = EXPR(clips=[tMin, fComp1], expr=['x y min'])
     
     degrained = core.mv.Degrain1(clip=weaved, super=csuper, mvbw=bVec1, mvfw=fVec1, thsad=thSAD1)
     sharpen = core.std.MergeDiff(degrained, core.std.MakeDiff(degrained, RG(degrained, mode=20)))
@@ -121,7 +122,8 @@ def mt_clamp(
         planes = [planes]
 
     expr = [f'x y {overshoot} + < y {overshoot} + x ? z {undershoot} - > z {undershoot} - x ?' if i in planes else '' for i in plane_range]
-    return core.std.Expr(clips=[clip, bright_limit, dark_limit], expr=expr)
+    EXPR = core.akarin.Expr if hasattr(core,'akarin') else core.std.Expr
+    return EXPR(clips=[clip, bright_limit, dark_limit], expr=expr)
 
 
 def Padding(input: vs.VideoNode, top: int=0, bottom: int=0, left: int=0, right: int=0, color: Optional[Sequence[int]] = None) -> vs.VideoNode:
