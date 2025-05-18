@@ -65,7 +65,7 @@ def Tweak(clip, hue=None, sat=None, bright=None, cont=None, coring=True):
         else:
             expression = "x {} * {} + 0.0 max 1.0 min".format(cont, bright)
 
-            clip = EXPR(expr=[expression, "", ""])
+            clip = EXPR(clip, expr=[expression, "", ""])
 
     return clip
 
