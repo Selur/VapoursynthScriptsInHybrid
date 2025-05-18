@@ -1,3 +1,4 @@
+
 import vapoursynth as vs
 from vapoursynth import core
 
@@ -820,6 +821,9 @@ def cround(x: float) -> int:
 
 def m4(x: Union[float, int]) -> int:
     return 16 if x < 16 else cround(x / 4) * 4
+        
+def scale(value, peak):
+    return cround(value * peak / 255) if peak != 1 else value / 255
     
     
 def DitherLumaRebuild(src: vs.VideoNode, s0: float = 2.0, c: float = 0.0625, chroma: bool = True) -> vs.VideoNode:
