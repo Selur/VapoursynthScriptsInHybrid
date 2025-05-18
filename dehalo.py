@@ -214,7 +214,7 @@ def FineDehalo(
 
     is_float = src.format.sample_type == vs.FLOAT
 
-    bits = get_depth(src)
+    bits = src.format.bits_per_sample
 
     if src.format.color_family != vs.GRAY:
         src_orig = src
