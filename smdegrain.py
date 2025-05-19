@@ -143,7 +143,7 @@ def SMDegrain(input, tr=2, thSAD=300, thSADC=None, RefineMotion=False, contrasha
             else:
               DFTTest = core.dfttest.DFTTest
               filtered = DFTTest(inputP, tbsize=1, slocation=[0.0,4.0, 0.2,9.0, 1.0,15.0], planes=planes)
-            pref = EXPR(core.std.MaskedMerge(filtered, inputP, GetPlane(inputP, 0), expr=[expr]), planes=planes)
+            pref = core.std.MaskedMerge(filtered, inputP, EXPR(GetPlane(inputP, 0), expr=[expr]), planes=planes)            
         elif prefilter >= 4:
             pref = KNLMeansCL(inputP, d=1, a=1, h=7)
         else:
