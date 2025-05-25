@@ -722,11 +722,11 @@ def mClean(clip, thSAD=400, chroma=True, sharp=10, rn=14, deband=0, depth=0, str
 
     # If selected, combining ReNoise
     noise_diff = core.std.MakeDiff(clean2, cy)
+    EXPR = core.akarin.Expr if hasattr(core,'akarin') else core.std.Expr
     if rn:
         import color
         expr = "x {a} < 0 x {b} > {p} 0 x {c} - {p} {a} {d} - / * - ? ?".format(a=32*i, b=45*i, c=35*i, d=65*i, p=peak)
         clean1 = core.std.Merge(clean2, core.std.MergeDiff(clean2, color.Tweak(TM(noise_diff), cont=1.008+0.00016*rn)), 0.3+rn*0.035)
-        EXPR = core.akarin.Expr if hasattr(core,'akarin') else core.std.Expr
         clean2 = core.std.MaskedMerge(clean2, clean1, EXPR([EXPR([clean, clean.std.Invert()], 'x y min')], [expr]))
 
     # Combining spatial detail enhancement with spatial noise reduction using prepared mask
