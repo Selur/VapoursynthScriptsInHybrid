@@ -1137,6 +1137,9 @@ def BoxFilter(input: vs.VideoNode, radius: int = 16, radius_v: Optional[int] = N
                     cnorm=False, fh=-1, fv=-1, center=False, **resample_args)
                 return flt # No bitdepth conversion is required since fmtc.resample outputs the same bitdepth as input
 
+            elif hasattr(core, 'vszip'):
+                return core.vszip.BoxBlur(input, hradius=radius-1, vradius=radius_v-1, planes=planes)
+
             elif core.version_number() >= 39:
                 return core.std.BoxBlur(input, hradius=radius-1, vradius=radius_v-1, planes=planes)
 
@@ -1158,6 +1161,9 @@ def BoxFilter(input: vs.VideoNode, radius: int = 16, radius_v: Optional[int] = N
                 if keep_bits and input.format.bits_per_sample != flt.format.bits_per_sample:
                     flt = mvf.Depth(flt, depth=input.format.bits_per_sample, **depth_args)
                 return flt
+
+            elif hasattr(core, 'vszip'):
+                return core.vszip.BoxBlur(input, hradius=radius-1, vradius=radius_v-1, planes=planes)
 
             elif hasattr(core.std, 'BoxBlur'):
                 return core.std.BoxBlur(input, hradius=radius-1, vradius=radius_v-1, planes=planes)

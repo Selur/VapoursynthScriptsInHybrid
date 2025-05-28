@@ -1040,7 +1040,11 @@ def UnsharpMask(clip: vs.VideoNode, strength: int = 64, radius: int = 3, thresho
     strength = strength / 128
 
     # Create a blurred version of the clip using a fast box blur
-    blurclip = clip.std.BoxBlur(hradius=radius, vradius=radius, planes=[0])
+    
+    if hasattr(core,'vszip'):
+      blurclip = clip.vszip.BoxBlur(hradius=radius, vradius=radius, planes=[0])
+    else:
+      blurclip = clip.std.BoxBlur(hradius=radius, vradius=radius, planes=[0])
 
     # Define the sharpening expression:
     # - If the absolute difference between original and blurred pixel exceeds threshold,
