@@ -54,9 +54,9 @@ def addingDups(clip: vs.VideoNode, insert_at: int) -> vs.VideoNode:
     if insert_at <= 0 or insert_at >= clip.num_frames:
         return clip
 
-    pre = core.std.Trim(clip, 0, insert_at)                # Frames before insertion point
-    dup = core.std.Trim(clip, insert_at - 1, insert_at)    # Duplicate of previous frame
-    post = core.std.Trim(clip, insert_at, clip.num_frames) # Frames after insertion
+    pre = core.std.Trim(clip, 0, insert_at - 1)           # Frames before insertion
+    dup = core.std.Trim(clip, insert_at - 1, insert_at - 1)  # Duplicate of previous frame
+    post = core.std.Trim(clip, insert_at, None)           # Frames after insertion
 
     return core.std.Splice([pre, dup, post], mismatch=True)
 
