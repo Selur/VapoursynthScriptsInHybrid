@@ -1258,7 +1258,7 @@ def QTGMC_KeepOnlyBobShimmerFixes(Input: vs.VideoNode, Ref: vs.VideoNode, Rep: i
     diff = core.std.MakeDiff(Ref, Input)
 
     coordinates = [0, 1, 0, 0, 0, 0, 1, 0]
-
+    has_zsmooth = hasattr(core, 'zsmooth')
     # Areas of positive difference
     choke1 = diff.std.Minimum(planes=planes, coordinates=coordinates)
     if ed > 2:
@@ -1268,7 +1268,7 @@ def QTGMC_KeepOnlyBobShimmerFixes(Input: vs.VideoNode, Ref: vs.VideoNode, Rep: i
     if ed % 3 != 0:
         choke1 = choke1.std.Deflate(planes=planes)
     if ed in [2, 5]:
-        choke1 = choke1.std.Median(planes=planes)
+        choke1 = choke1.zsmooth.Median(planes=planes) if has_zsmooth else choke1.std.Median(planes=planes)
     choke1 = choke1.std.Maximum(planes=planes, coordinates=coordinates)
     if ed > 1:
         choke1 = choke1.std.Maximum(planes=planes, coordinates=coordinates)
@@ -1292,7 +1292,7 @@ def QTGMC_KeepOnlyBobShimmerFixes(Input: vs.VideoNode, Ref: vs.VideoNode, Rep: i
     if ed % 3 != 0:
         choke2 = choke2.std.Inflate(planes=planes)
     if ed in [2, 5]:
-        choke2 = choke2.std.Median(planes=planes)
+        choke2 = choke2.zsmooth.Median(planes=planes) if has_zsmooth else choke2.std.Median(planes=planes)
     choke2 = choke2.std.Minimum(planes=planes, coordinates=coordinates)
     if ed > 1:
         choke2 = choke2.std.Minimum(planes=planes, coordinates=coordinates)

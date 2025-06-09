@@ -201,3 +201,4 @@ def Depth(src, bits, dither_type='error_diffusion', range=None, range_in=None):
 
 
 RANGEDICT = {'limited': 0, 'full': 1}
+ 

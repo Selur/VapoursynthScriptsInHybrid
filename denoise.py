@@ -550,10 +550,13 @@ def MCTemporalDenoise(i, radius=None, pfMode=3, sigma=None, twopass=None, useTTm
     ### STABILIZING
     if stabilize:
         # mM = core.std.Merge(GetPlane(SAD_f1m, 0), GetPlane(SAD_b1m, 0)).std.Lut(function=lambda x: min(cround(x ** 1.6), peak))
-        mE = AvsPrewitt(GetPlane(smP, 0)).std.Lut(function=lambda x: min(cround(x ** 1.8), peak)).std.Median().std.Inflate()
+        mE = AvsPrewitt(GetPlane(smP, 0)).std.Lut(function=lambda x: min(cround(x ** 1.8), peak))
+        has_zsmooth = hasattr(core,'zsmooth');
+        mE = mE.zsmooth.Median() if has_zsmooth else mE.std.Median()
+        mE = mE.std.Inflate()
         # mF = core.std.Expr([mM, mE], expr=['x y max']).std.Convolution(matrix=[1, 1, 1, 1, 1, 1, 1, 1, 1])
         mF = mE.std.Convolution(matrix=[1, 1, 1, 1, 1, 1, 1, 1, 1])
-        if hasattr(core,'zsmooth'):
+        if has_zsmooth:
           TTc = smP.zsmooth.TTempSmooth(maxr=maxr, mdiff=[255], strength=TTstr, planes=planes)
         else:
           TTc = smP.ttmpsm.TTempSmooth(maxr=maxr, mdiff=[255], strength=TTstr, planes=planes)
@@ -665,7 +668,13 @@ def mClean(clip, thSAD=400, chroma=True, sharp=10, rn=14, deband=0, depth=0, str
         sharp = 50
 
     # Denoise preparation
-    c = core.vcm.Median(clip, plane=[0, 1, 1]) if chroma else clip
+    if chroma:
+      if hasattr(core,'zsmooth'):
+        c = core.vcm.Median(clip, radius=2, plane=[0, 1, 1])
+      else:
+        c = core.vcm.Median(clip, plane=[0, 1, 1])
+    else:
+      c = clip
 
     # Temporal luma noise filter
     if not (isFLOAT or icalc):
@@ -1054,3 +1063,40 @@ def fallback(value: Optional[T], fallback_value: T) -> T:
     :return:                The input `value` or `fallback_value` if `value` is ``None``.
     """
     return fallback_value if value is None else value
+    
+    
+# MinBlur   by Didée (http://avisynth.nl/index.php/MinBlur)
+# Nifty Gauss/Median combination
+def MinBlur(clp: vs.VideoNode, r: int=1, planes: Optional[Union[int, Sequence[int]]] = None) -> vs.VideoNode:
+    if not isinstance(clp, vs.VideoNode):
+        raise vs.Error('MinBlur: This is not a clip')
+
+    if planes is None:
+        planes = list(range(clp.format.num_planes))
+    elif isinstance(planes, int):
+        planes = [planes]
+
+    matrix1 = [1, 2, 1, 2, 4, 2, 1, 2, 1]
+    matrix2 = [1, 1, 1, 1, 1, 1, 1, 1, 1]
+    has_zsmooth = hasattr(core,'zsmooth')
+    if r <= 0:
+        RG11 = sbr(clp, planes=planes)
+        RG4 = clp.zsmooth.Median(planes=planes) if has_zsmooth else clp.std.Median(planes=planes)
+    elif r == 1:
+        RG11 = clp.std.Convolution(matrix=matrix1, planes=planes)
+        RG4 = clp.zsmooth.Median(planes=planes) if has_zsmooth else clp.std.Median(planes=planes)
+    elif r == 2:
+        RG11 = clp.std.Convolution(matrix=matrix1, planes=planes).std.Convolution(matrix=matrix2, planes=planes)
+        RG4 = clp.ctmf.CTMF(radius=2, planes=planes)
+    else:
+        RG11 = clp.std.Convolution(matrix=matrix1, planes=planes).std.Convolution(matrix=matrix2, planes=planes).std.Convolution(matrix=matrix2, planes=planes)
+        if clp.format.bits_per_sample == 16:
+            s16 = clp
+            RG4 = clp.fmtc.bitdepth(bits=12, planes=planes, dmode=1).ctmf.CTMF(radius=3, planes=planes).fmtc.bitdepth(bits=16, planes=planes)
+            RG4 = LimitFilter(s16, RG4, thr=0.0625, elast=2, planes=planes)
+        else:
+            RG4 = clp.ctmf.CTMF(radius=3, planes=planes)
+
+    expr = 'x y - x z - * 0 < x x y - abs x z - abs < y z ? ?'
+    EXPR = core.akarin.Expr if hasattr(core,'akarin') else core.std.Expr
+    return EXPR([clp, RG11, RG4], expr=[expr if i in planes else '' for i in range(clp.format.num_planes)])

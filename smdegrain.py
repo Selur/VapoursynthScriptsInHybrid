@@ -359,29 +359,26 @@ def scale(value, peak):
     return cround(value * peak / 255) if peak != 1 else value / 255
     
     
-def MinBlur(clp: vs.VideoNode, r: int = 1, planes: Optional[Union[int, Sequence[int]]] = None) -> vs.VideoNode:
-    '''Nifty Gauss/Median combination'''
-    from mvsfunc import LimitFilter
-
+# MinBlur   by Didée (http://avisynth.nl/index.php/MinBlur)
+# Nifty Gauss/Median combination
+def MinBlur(clp: vs.VideoNode, r: int=1, planes: Optional[Union[int, Sequence[int]]] = None) -> vs.VideoNode:
     if not isinstance(clp, vs.VideoNode):
-        raise vs.Error('MinBlur: this is not a clip')
-
-    plane_range = range(clp.format.num_planes)
+        raise vs.Error('MinBlur: This is not a clip')
 
     if planes is None:
-        planes = list(plane_range)
+        planes = list(range(clp.format.num_planes))
     elif isinstance(planes, int):
         planes = [planes]
 
     matrix1 = [1, 2, 1, 2, 4, 2, 1, 2, 1]
     matrix2 = [1, 1, 1, 1, 1, 1, 1, 1, 1]
-
+    has_zsmooth = hasattr(core,'zsmooth')
     if r <= 0:
         RG11 = sbr(clp, planes=planes)
-        RG4 = clp.std.Median(planes=planes)
+        RG4 = clp.zsmooth.Median(planes=planes) if has_zsmooth else clp.std.Median(planes=planes)
     elif r == 1:
         RG11 = clp.std.Convolution(matrix=matrix1, planes=planes)
-        RG4 = clp.std.Median(planes=planes)
+        RG4 = clp.zsmooth.Median(planes=planes) if has_zsmooth else clp.std.Median(planes=planes)
     elif r == 2:
         RG11 = clp.std.Convolution(matrix=matrix1, planes=planes).std.Convolution(matrix=matrix2, planes=planes)
         RG4 = clp.ctmf.CTMF(radius=2, planes=planes)
@@ -389,13 +386,14 @@ def MinBlur(clp: vs.VideoNode, r: int = 1, planes: Optional[Union[int, Sequence[
         RG11 = clp.std.Convolution(matrix=matrix1, planes=planes).std.Convolution(matrix=matrix2, planes=planes).std.Convolution(matrix=matrix2, planes=planes)
         if clp.format.bits_per_sample == 16:
             s16 = clp
-            RG4 = depth(clp, 12, dither_type=Dither.NONE).ctmf.CTMF(radius=3, planes=planes)
-            RG4 = LimitFilter(s16, depth(RG4, 16), thr=0.0625, elast=2, planes=planes)
+            RG4 = clp.fmtc.bitdepth(bits=12, planes=planes, dmode=1).ctmf.CTMF(radius=3, planes=planes).fmtc.bitdepth(bits=16, planes=planes)
+            RG4 = LimitFilter(s16, RG4, thr=0.0625, elast=2, planes=planes)
         else:
             RG4 = clp.ctmf.CTMF(radius=3, planes=planes)
+
+    expr = 'x y - x z - * 0 < x x y - abs x z - abs < y z ? ?'
     EXPR = core.akarin.Expr if hasattr(core,'akarin') else core.std.Expr
-    return EXPR([clp, RG11, RG4], expr=['x y - x z - * 0 < x x y - abs x z - abs < y z ? ?' if i in planes else '' for i in plane_range])
-    
+    return EXPR([clp, RG11, RG4], expr=[expr if i in planes else '' for i in range(clp.format.num_planes)])
     
 def DitherLumaRebuild(src, s0=2., c=0.0625, chroma=True):
     # Converts luma (and chroma) to PC levels, and optionally allows tweaking for pumping up the darks. (for the clip to be fed to motion search only)

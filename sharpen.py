@@ -372,9 +372,9 @@ def LSFmod(input, strength=None, Smode=None, Smethod=None, kernel=11, preblur=No
         dest_x = ox
     if dest_y is None:
         dest_y = oy
-
+    has_zsmooth = hasattr(core,'zsmooth')
     if kernel == 4:
-        RemoveGrain = partial(core.std.Median)
+        RemoveGrain = partial(core.zsmooth.Median) if has_zsmooth else partial(core.std.Median)
     elif kernel in [11, 12]:
         RemoveGrain = partial(core.std.Convolution, matrix=[1, 2, 1, 2, 4, 2, 1, 2, 1])
     elif kernel == 19:
@@ -382,7 +382,7 @@ def LSFmod(input, strength=None, Smode=None, Smethod=None, kernel=11, preblur=No
     elif kernel == 20:
         RemoveGrain = partial(core.std.Convolution, matrix=[1, 1, 1, 1, 1, 1, 1, 1, 1])
     else:
-        RG = core.zsmooth.RemoveGrain if hasattr(core,'zsmooth') else core.rgvs.RemoveGrain
+        RG = core.zsmooth.RemoveGrain if has_zsmooth else core.rgvs.RemoveGrain
         RemoveGrain = partial(RG, mode=[kernel])
 
     if soft == -1:
@@ -576,7 +576,8 @@ def FineSharp(clip, mode=1, sstr=2.5, cstr=None, xstr=0, lstr=1.5, pstr=1.28, ld
     mid = 0 if isFLOAT else 1 << (bd - 1)
     i = 0.00392 if isFLOAT else 1 << (bd - 8)
     xy = 'x y - {} /'.format(i) if bd != 8 else 'x y -'
-    if hasattr(core,'zsmooth'):
+    has_zsmooth = hasattr(core,'zsmooth')
+    if has_zsmooth:
       R = core.zsmooth.Repair
     else:
       R = core.rgsf.Repair if isFLOAT else core.rgvs.Repair
@@ -605,11 +606,11 @@ def FineSharp(clip, mode=1, sstr=2.5, cstr=None, xstr=0, lstr=1.5, pstr=1.28, ld
     tmp = core.std.ShufflePlanes(clip, [0], vs.GRAY) if color in [vs.YUV] else clip
     EXPR = core.akarin.Expr if hasattr(core,'akarin') else core.std.Expr
     if abs(mode) == 1:
-        c2 = core.std.Convolution(tmp, matrix=mat1).std.Median()
+        c2 = core.std.Convolution(tmp, matrix=mat1).zsmooth.Median() if has_zsmooth else core.std.Convolution(tmp, matrix=mat1).std.Median()
     else:
-        c2 = core.std.Median(tmp).std.Convolution(matrix=mat1)
+        c2 = core.zsmooth.Median(tmp).std.Convolution(matrix=mat1) if has_zsmooth else core.std.Median(tmp).std.Convolution(matrix=mat1)
     if abs(mode) == 3:
-        c2 = c2.std.Median()
+        c2 = c2.zsmooth.Median() if has_zsmooth else c2.std.Median()
     
     if sstr >= 0.01:
         expr = 'x y = x dup {} dup dup dup abs {} / {} pow swap3 abs {} + / swap dup * dup {} + / * * {} * + ?'
@@ -665,7 +666,7 @@ def DetailSharpen(clip, z=4, sstr=1.5, power=4, ldmp=1, mode=1, med=False):
     else:
         blur = core.std.Convolution(tmp, matrix=[1, 2, 1, 2, 4, 2, 1, 2, 1])
     if med:
-        blur = blur.std.Median()
+        blur = blur.zsmooth.Median() if hasattr(core,'zsmooth') else blur.std.Median()
 
     expr = 'x y = x dup {} dup dup abs {} / {} pow swap2 abs {} + / * {} * + ?'
     EXPR = core.akarin.Expr if hasattr(core,'akarin') else core.std.Expr
@@ -785,7 +786,7 @@ def GetPlane(clip, plane=None):
     
 # MinBlur   by Didée (http://avisynth.nl/index.php/MinBlur)
 # Nifty Gauss/Median combination
-def MinBlur(clp, r=1, planes=None):
+def MinBlur(clp: vs.VideoNode, r: int=1, planes: Optional[Union[int, Sequence[int]]] = None) -> vs.VideoNode:
     if not isinstance(clp, vs.VideoNode):
         raise vs.Error('MinBlur: This is not a clip')
 
@@ -796,13 +797,13 @@ def MinBlur(clp, r=1, planes=None):
 
     matrix1 = [1, 2, 1, 2, 4, 2, 1, 2, 1]
     matrix2 = [1, 1, 1, 1, 1, 1, 1, 1, 1]
-
+    has_zsmooth = hasattr(core,'zsmooth')
     if r <= 0:
         RG11 = sbr(clp, planes=planes)
-        RG4 = clp.std.Median(planes=planes)
+        RG4 = clp.zsmooth.Median(planes=planes) if has_zsmooth else clp.std.Median(planes=planes)
     elif r == 1:
         RG11 = clp.std.Convolution(matrix=matrix1, planes=planes)
-        RG4 = clp.std.Median(planes=planes)
+        RG4 = clp.zsmooth.Median(planes=planes) if has_zsmooth else clp.std.Median(planes=planes)
     elif r == 2:
         RG11 = clp.std.Convolution(matrix=matrix1, planes=planes).std.Convolution(matrix=matrix2, planes=planes)
         RG4 = clp.ctmf.CTMF(radius=2, planes=planes)
@@ -818,6 +819,7 @@ def MinBlur(clp, r=1, planes=None):
     expr = 'x y - x z - * 0 < x x y - abs x z - abs < y z ? ?'
     EXPR = core.akarin.Expr if hasattr(core,'akarin') else core.std.Expr
     return EXPR([clp, RG11, RG4], expr=[expr if i in planes else '' for i in range(clp.format.num_planes)])
+    
     
     
 def sbr(c: vs.VideoNode, r: int = 1, planes: Optional[Union[int, Sequence[int]]] = None) -> vs.VideoNode:

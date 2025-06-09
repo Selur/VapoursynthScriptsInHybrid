@@ -130,11 +130,12 @@ def HQDeringmod(
     # Post-Process: Contra-Sharpening
     matrix1 = [1, 2, 1, 2, 4, 2, 1, 2, 1]
     matrix2 = [1, 1, 1, 1, 1, 1, 1, 1, 1]
+    has_zsmooth = hasattr(core,'zsmooth')
     EXPR = core.akarin.Expr if hasattr(core,'akarin') else core.std.Expr
     if sharp <= 0:
         sclp = smoothed
     else:
-        pre = smoothed.std.Median(planes=planes)
+        pre = smoothed.zsmooth.Median(planes=planes) if has_zsmooth else smoothed.std.Median(planes=planes)
         if sharp == 1:
             method = pre.std.Convolution(matrix=matrix1, planes=planes)
         elif sharp == 2:
@@ -158,7 +159,7 @@ def HQDeringmod(
     if drrep <= 0:
         repclp = sclp
     else:
-      if hasattr(core,'zsmooth'):
+      if has_zsmooth:
         repclp = core.zsmooth.Repair(input, sclp, mode=[drrep if i in planes else 0 for i in plane_range])
       else:
         repclp = core.rgvs.Repair(input, sclp, mode=[drrep if i in planes else 0 for i in plane_range])
@@ -173,7 +174,7 @@ def HQDeringmod(
     if ringmask is None:
         expr = f'x {scale(mthr, bits)} < 0 x ?'
         prewittm = EXPR(AvsPrewitt(input, planes=0), expr=expr if is_gray else [expr, ''])
-        fmask = core.misc.Hysteresis(prewittm.std.Median(planes=0), prewittm, planes=0)
+        fmask = core.misc.Hysteresis(prewittm.zsmooth.Median(planes=0), prewittm, planes=0) if has_zsmooth else core.misc.Hysteresis(prewittm.std.Median(planes=0), prewittm, planes=0)
         if mrad > 0:
             omask = mt_expand_multi(fmask, planes=0, sw=mrad, sh=mrad)
         else:
@@ -449,7 +450,7 @@ def LimitFilter(flt, src, ref=None, thr=None, elast=None, brighten_thr=None, thr
 
 # MinBlur   by Didée (http://avisynth.nl/index.php/MinBlur)
 # Nifty Gauss/Median combination
-def MinBlur(clp, r=1, planes=None):
+def MinBlur(clp: vs.VideoNode, r: int=1, planes: Optional[Union[int, Sequence[int]]] = None) -> vs.VideoNode:
     if not isinstance(clp, vs.VideoNode):
         raise vs.Error('MinBlur: This is not a clip')
 
@@ -460,13 +461,13 @@ def MinBlur(clp, r=1, planes=None):
 
     matrix1 = [1, 2, 1, 2, 4, 2, 1, 2, 1]
     matrix2 = [1, 1, 1, 1, 1, 1, 1, 1, 1]
-
+    has_zsmooth = hasattr(core,'zsmooth')
     if r <= 0:
         RG11 = sbr(clp, planes=planes)
-        RG4 = clp.std.Median(planes=planes)
+        RG4 = clp.zsmooth.Median(planes=planes) if has_zsmooth else clp.std.Median(planes=planes)
     elif r == 1:
         RG11 = clp.std.Convolution(matrix=matrix1, planes=planes)
-        RG4 = clp.std.Median(planes=planes)
+        RG4 = clp.zsmooth.Median(planes=planes) if has_zsmooth else clp.std.Median(planes=planes)
     elif r == 2:
         RG11 = clp.std.Convolution(matrix=matrix1, planes=planes).std.Convolution(matrix=matrix2, planes=planes)
         RG4 = clp.ctmf.CTMF(radius=2, planes=planes)

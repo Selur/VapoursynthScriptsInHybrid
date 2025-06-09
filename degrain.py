@@ -73,6 +73,9 @@ def STPresso(
         bzz = RGmode
     else:
         if RGmode == 4:
+          if hasattr(core,'zsmooth'):
+            bzz = clp.zsmooth.Median(planes=planes)
+          else:
             bzz = clp.std.Median(planes=planes)
         elif RGmode in [11, 12]:
             bzz = clp.std.Convolution(matrix=[1, 2, 1, 2, 4, 2, 1, 2, 1], planes=planes)
@@ -1100,7 +1103,7 @@ def LimitFilter(flt, src, ref=None, thr=None, elast=None, brighten_thr=None, thr
 
 # MinBlur   by Didée (http://avisynth.nl/index.php/MinBlur)
 # Nifty Gauss/Median combination
-def MinBlur(clp, r=1, planes=None):
+def MinBlur(clp: vs.VideoNode, r: int=1, planes: Optional[Union[int, Sequence[int]]] = None) -> vs.VideoNode:
     if not isinstance(clp, vs.VideoNode):
         raise vs.Error('MinBlur: This is not a clip')
 
@@ -1111,13 +1114,13 @@ def MinBlur(clp, r=1, planes=None):
 
     matrix1 = [1, 2, 1, 2, 4, 2, 1, 2, 1]
     matrix2 = [1, 1, 1, 1, 1, 1, 1, 1, 1]
-
+    has_zsmooth = hasattr(core,'zsmooth')
     if r <= 0:
         RG11 = sbr(clp, planes=planes)
-        RG4 = clp.std.Median(planes=planes)
+        RG4 = clp.zsmooth.Median(planes=planes) if has_zsmooth else clp.std.Median(planes=planes)
     elif r == 1:
         RG11 = clp.std.Convolution(matrix=matrix1, planes=planes)
-        RG4 = clp.std.Median(planes=planes)
+        RG4 = clp.zsmooth.Median(planes=planes) if has_zsmooth else clp.std.Median(planes=planes)
     elif r == 2:
         RG11 = clp.std.Convolution(matrix=matrix1, planes=planes).std.Convolution(matrix=matrix2, planes=planes)
         RG4 = clp.ctmf.CTMF(radius=2, planes=planes)

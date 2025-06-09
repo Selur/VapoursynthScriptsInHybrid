@@ -205,7 +205,7 @@ def vs_temporalfix(clip, strength=400, tr=6, exclude=None, debug=False):
     p2 = motionmask[0:2] + motionmask[:-2] # shift + 2
     EXPR = core.akarin.Expr if hasattr(core,'akarin') else core.std.Expr
     motionmask = EXPR([motionmask, m1, m2, m3, p1, p2], expr=["x y + z 0.75 * + a 0.5 * + b 0.75 * + c 0.5 * +"]) # fades the mask in/out over a few frames
-    motionmask = core.std.Median(motionmask)
+    motionmask = core.zsmooth.Median(motionmask) if hasattr(core,'zsmooth') else core.std.Median(motionmask)
     motionmask = core.resize.Point(motionmask, width=pre_stabilize.width, height=pre_stabilize.height)
     BOX = core.vszip.BoxBlur if hasattr(core,'vszip') else core.std.BoxBlur
     motionmask = BOX(motionmask, hradius=4, vradius=4, hpasses=2, vpasses=2)
@@ -306,7 +306,7 @@ def vs_temporalfix(clip, strength=400, tr=6, exclude=None, debug=False):
     # mask to find areas where denoising may have removed some texture
     edgemask = core.std.ShufflePlanes(clip, planes=0, colorfamily=vs.GRAY)
     edgemask = core.tcanny.TCanny(edgemask, op=3, mode=1, sigma=0.1, scale=5.0, t_h=8.0, t_l=1.0, opt=1)
-    edgemask = core.std.Median(edgemask, planes=0)
+    edgemask = core.zsmooth.Median(edgemask, planes=0) if hasattr(core,'zsmooth') else core.std.Median(edgemask, planes=0)
     edgemask = core.std.Invert(edgemask)
 
     # add missing texture back in
@@ -317,7 +317,7 @@ def vs_temporalfix(clip, strength=400, tr=6, exclude=None, debug=False):
     # mask flat areas with block matching artifacts/wrong motion and add original back
     edgemask2 = core.std.ShufflePlanes(pre_stabilize, planes=0, colorfamily=vs.GRAY)
     edgemask2 = core.tcanny.TCanny(edgemask2, op=3, mode=1, sigma=0.1, scale=5.0, t_h=8.0, t_l=1.0, opt=1)
-    edgemask2 = core.std.Median(edgemask2, planes=0)
+    edgemask2 = core.zsmooth.Median(edgemask2, planes=0) if hasattr(core,'zsmooth') else core.std.Median(edgemask2, planes=0)
     edgemask2 = core.std.Invert(edgemask2)
     edgemasks_diff = core.std.MakeDiff(edgemask, edgemask2)
     edgemasks_diff = core.std.Levels(edgemasks_diff, max_in=32768 - 1, max_out=65535 - 1)
@@ -463,19 +463,38 @@ def ContraSharpening(clip, src, radius=None, rep=24, planes=[0, 1, 2]):
     return core.std.MergeDiff(clip, ssDD, planes)  # apply the limited difference (sharpening is just inverse blurring)
 
 
-def MinBlur(clip, planes=[0, 1, 2]):
-    # simplified function from G41Fun https://github.com/Vapoursynth-Plugins-Gitify/G41Fun
-    # original avisynth function by Didée https://avisynth.nl/index.php/MinBlur
-    # Nifty Gauss/Median combination
+# MinBlur   by Didée (http://avisynth.nl/index.php/MinBlur)
+# Nifty Gauss/Median combination
+def MinBlur(clp: vs.VideoNode, r: int=1, planes: Optional[Union[int, Sequence[int]]] = None) -> vs.VideoNode:
+    if not isinstance(clp, vs.VideoNode):
+        raise vs.Error('MinBlur: This is not a clip')
 
-    if clip.format.num_planes == 1:
-        planes = [0]
-    if isinstance(planes, int):
+    if planes is None:
+        planes = list(range(clp.format.num_planes))
+    elif isinstance(planes, int):
         planes = [planes]
-    mat1 = [1, 2, 1, 2, 4, 2, 1, 2, 1]
-    mat2 = [1, 1, 1, 1, 1, 1, 1, 1, 1]
-    RG11 = core.std.Convolution(clip, matrix=mat1, planes=planes).std.Convolution(matrix=mat2, planes=planes)
-    RG4 = core.ctmf.CTMF(clip, radius=2, planes=planes)
-    expr = "x y - x z - * 0 < x dup y - abs x z - abs < y z ? ?"
+
+    matrix1 = [1, 2, 1, 2, 4, 2, 1, 2, 1]
+    matrix2 = [1, 1, 1, 1, 1, 1, 1, 1, 1]
+    has_zsmooth = hasattr(core,'zsmooth')
+    if r <= 0:
+        RG11 = sbr(clp, planes=planes)
+        RG4 = clp.zsmooth.Median(planes=planes) if has_zsmooth else clp.std.Median(planes=planes)
+    elif r == 1:
+        RG11 = clp.std.Convolution(matrix=matrix1, planes=planes)
+        RG4 = clp.zsmooth.Median(planes=planes) if has_zsmooth else clp.std.Median(planes=planes)
+    elif r == 2:
+        RG11 = clp.std.Convolution(matrix=matrix1, planes=planes).std.Convolution(matrix=matrix2, planes=planes)
+        RG4 = clp.ctmf.CTMF(radius=2, planes=planes)
+    else:
+        RG11 = clp.std.Convolution(matrix=matrix1, planes=planes).std.Convolution(matrix=matrix2, planes=planes).std.Convolution(matrix=matrix2, planes=planes)
+        if clp.format.bits_per_sample == 16:
+            s16 = clp
+            RG4 = clp.fmtc.bitdepth(bits=12, planes=planes, dmode=1).ctmf.CTMF(radius=3, planes=planes).fmtc.bitdepth(bits=16, planes=planes)
+            RG4 = LimitFilter(s16, RG4, thr=0.0625, elast=2, planes=planes)
+        else:
+            RG4 = clp.ctmf.CTMF(radius=3, planes=planes)
+
+    expr = 'x y - x z - * 0 < x x y - abs x z - abs < y z ? ?'
     EXPR = core.akarin.Expr if hasattr(core,'akarin') else core.std.Expr
-    return EXPR([clip, RG11, RG4], [expr if i in planes else "" for i in range(clip.format.num_planes)])
+    return EXPR([clp, RG11, RG4], expr=[expr if i in planes else '' for i in range(clp.format.num_planes)])

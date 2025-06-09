@@ -220,7 +220,10 @@ def SmoothLevels(input, input_low=0, gamma=1.0, input_high=None, output_low=0, o
         raise vs.Error('SmoothLevels: Mfactor must be greater than 0')
 
     if RGmode == 4:
-        RemoveGrain = partial(core.std.Median)
+        if hasattr(core,'zsmooth'):
+          RemoveGrain = partial(core.zsmooth.Median)
+        else:
+          RemoveGrain = partial(core.std.Median)
     elif RGmode in [11, 12]:
         RemoveGrain = partial(core.std.Convolution, matrix=[1, 2, 1, 2, 4, 2, 1, 2, 1])
     elif RGmode == 19:
