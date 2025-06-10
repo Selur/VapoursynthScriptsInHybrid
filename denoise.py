@@ -670,7 +670,7 @@ def mClean(clip, thSAD=400, chroma=True, sharp=10, rn=14, deband=0, depth=0, str
     # Denoise preparation
     if chroma:
       if hasattr(core,'zsmooth'):
-        c = core.vcm.Median(clip, radius=2, plane=[0, 1, 1])
+        c = core.zsmooth.Median(clip, radius=2, planes=[1,2])
       else:
         c = core.vcm.Median(clip, plane=[0, 1, 1])
     else:
