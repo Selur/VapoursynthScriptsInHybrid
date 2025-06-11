@@ -4,7 +4,7 @@
 # or tepete on the "Enhance Everything!" Discord Server
 
 import vapoursynth as vs
-
+from typing import Union, Optional, Sequence
 core = vs.core
 
 
@@ -452,7 +452,7 @@ def ContraSharpening(clip, src, radius=None, rep=24, planes=[0, 1, 2]):
     else:
       R = core.rgvs.Repair
 
-    s = MinBlur(clip, planes)  # damp down remaining spots of the denoised clip
+    s = MinBlur(clip, planes=planes)  # damp down remaining spots of the denoised clip
     RG11 = core.std.Convolution(s, matrix=mat1, planes=planes).std.Convolution(matrix=mat2, planes=planes)
     ssD = core.std.MakeDiff(s, RG11, planes)  # the difference of a simple kernel blur
     allD = core.std.MakeDiff(src, clip, planes)  # the difference achieved by the denoising
