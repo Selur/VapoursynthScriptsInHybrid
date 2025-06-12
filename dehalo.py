@@ -148,7 +148,7 @@ def EdgeCleaner(c: vs.VideoNode, strength: int = 10, rep: bool = True, rmode: in
         RG = core.zsmooth.RemoveGrain if hasattr(core,'zsmooth') else core.rgvs.RemoveGrain
         clean = RG(c, mode=17)
         diff = core.std.MakeDiff(c, clean)
-        mask = EXPR(AvsPrewitt(diff.std.Levels(min_in=scale_value(40, 8, bits), max_in=scale_value(168, 8, bits), gamma=0.35).RG(mode=7)),
+        mask = EXPR(AvsPrewitt(RG(diff.std.Levels(min_in=scale_value(40, 8, bits), max_in=scale_value(168, 8, bits), gamma=0.35), mode=7)),
             expr=f'x {scale_value(4, 8, bits)} < 0 x {scale_value(16, 8, bits)} > {peak} x ? ?'
         )
         final = core.std.MaskedMerge(final, c, mask)
@@ -873,6 +873,46 @@ def cround(x: float) -> int:
 
 def m4(value, mult=4.0):
     return 16 if value < 16 else int(round(value / mult) * mult)
+    
+def Blur(clip: vs.VideoNode, amountH: float = 1.0, amountV: Optional[float] = None,
+         planes: Optional[Union[int, Sequence[int]]] = None
+         ) -> vs.VideoNode:
+    """Avisynth's internel filter Blur()
+
+    Simple 3x3-kernel blurring filter.
+
+    In fact Blur(n) is just an alias for Sharpen(-n).
+
+    Args:
+        clip: Input clip.
+
+        amountH, amountV: (float) Blur uses the kernel is [(1-1/2^amount)/2, 1/2^amount, (1-1/2^amount)/2].
+            A value of 1.0 gets you a (1/4, 1/2, 1/4) for example.
+            Negative Blur actually sharpens the image.
+            The allowable range for Blur is from -1.0 to +1.58.
+            If \"amountV\" is not set manually, it will be set to \"amountH\".
+            Default is 1.0.
+
+        planes: (int []) Whether to process the corresponding plane. By default, every plane will be processed.
+            The unprocessed planes will be copied from the source clip, "clip".
+
+    """
+
+    funcName = 'Blur'
+
+    if not isinstance(clip, vs.VideoNode):
+        raise TypeError(funcName + ': \"clip\" is not a clip!')
+
+    if amountH < -1 or amountH > 1.5849625:
+        raise ValueError(funcName + ': \'amountH\' have not a correct value! [-1 ~ 1.58]')
+
+    if amountV is None:
+        amountV = amountH
+    else:
+        if amountV < -1 or amountV > 1.5849625:
+            raise ValueError(funcName + ': \'amountV\' have not a correct value! [-1 ~ 1.58]')
+
+    return Sharpen(clip, -amountH, -amountV, planes)
     
 def Sharpen(clip: vs.VideoNode, amountH: float = 1.0, amountV: Optional[float] = None,
             planes: Optional[Union[int, Sequence[int]]] = None
