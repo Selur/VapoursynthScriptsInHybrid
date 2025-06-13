@@ -157,6 +157,138 @@ def hue_mask(clip: vs.VideoNode, min_hue: Union[float, int], max_hue: Union[floa
     return core.resize.Bicubic(mask, format=vs.GRAY8)
 
 
+def FinegrainMask(clip: vs.VideoNode, mode: str="RemoveGrain") -> vs.VideoNode:
+    """
+    Create a fine detail mask using RemoveGrain for smoothing and difference detection.
+
+    Parameters:
+    clip      : Input clip (must be YUV or GRAY, int or float).
+    mode      : Smoothing mode to use.
+
+    Returns:
+    A binary mask highlighting fine detail areas.
+    """
+
+    # Check format and get bit depth
+    isFLOAT = clip.format.sample_type == vs.FLOAT
+    if isFLOAT:
+        peak = 1.0
+    else:
+        peak = (1 << clip.format.bits_per_sample) - 1
+
+    # Extract luma if needed
+    luma = core.std.ShufflePlanes(clip, planes=0, colorfamily=vs.GRAY)
+
+    if mode == "RemoveGrain":
+      rgMode = 22
+      # Smooth with RemoveGrain
+      if hasattr(core, 'zsmooth'):
+        smoothed = core.zsmooth.RemoveGrain(clip=luma, mode=rgMode)
+      elif hasattr(core, 'rgsf') and isFLOAT:  
+        smoothed =  core.rgsf.RemoveGrain(clip=luma, mode=rgMode)
+      else:
+        smoothed =  core.rgvs.RemoveGrain(clip=luma, mode=rgMode)
+    elif mode == "Bilinear":
+      scale = 0.1
+      smoothed = bilinear_denoise(clip=luma, scale=scale, rg=True)
+    elif mode == "mClean":
+      import denoise
+      def processWithMClean(clip: vs.VideoNode) -> vs.VideoNode:
+        original_format = clip.format
+        is_rgb = original_format.color_family == vs.RGB
+
+        # For YUV clips, decide color matrix based on resolution
+        matrix = 1 if clip.width < 1280 else 2  # 1=BT.601, 2=BT.709
+
+        if is_rgb:
+            # RGB to YUV: use matrix_s
+            clip = core.resize.Bicubic(clip, format=vs.YUV444P16, matrix_s=matrix)
+        else:
+            # Already YUV — convert to 444P16 only
+            if clip.format.id != vs.YUV444P16:
+                clip = core.resize.Bicubic(clip, format=vs.YUV444P16)
+
+        # Apply mClean
+        thresh = 400
+        strength = 20
+        clip = denoise.mClean(clip=clip, thSAD=thresh, rn=0, strength=strength)
+
+        if is_rgb:
+            # YUV back to RGB: use matrix_in
+            clip = core.resize.Bicubic(clip, format=original_format.id, matrix_in=matrix)
+
+        return clip
+      smoothed = processWithMClean(clip)
+      smoothed = core.std.ShufflePlanes(smoothed, planes=0, colorfamily=vs.GRAY)
+      return core.std.MakeDiff(luma, smoothed)
+    else:
+      raise ValueError(f"FinedetailMask: mode, unknown mode '{mode}'.")
+
+    # Make difference
+    diff = core.std.MakeDiff(luma, smoothed)
+
+    # Use Expr to compute absolute diff from mid-gray
+    expr = f"x {peak/2} - abs" if isinstance(peak, float) else f"x {int(peak)//2} - abs"
+    if hasattr(core, 'akarin'):
+      mask = core.akarin.Expr([diff], expr=expr)
+    else:
+      mask = core.std.Expr([diff], expr=expr)
+    
+    return mask
+    
+def bilinear_denoise(clip: vs.VideoNode, scale: float = 0.5, rg: bool=False) -> vs.VideoNode:
+    """
+    Perform simple bilinear denoising by downscaling and upscaling.
+    
+    Parameters:
+        clip   (vs.VideoNode): Input clip.
+        scale         (float): Downscale factor (0 < scale < 1).
+        
+    Returns:
+        vs.VideoNode: Denoised clip.
+    """
+    if not (0 < scale < 1):
+        raise ValueError("Scale must be between 0 and 1 (non-inclusive)")
+
+    fmt = clip.format
+    if fmt is None:
+        raise ValueError("Clip must have a defined format")
+
+    is_rgb = fmt.color_family == vs.RGB
+
+    # Determine modulo requirements
+    mod_w = 1 if is_rgb else 2 ** fmt.subsampling_w
+    mod_h = 1 if is_rgb else 2 ** fmt.subsampling_h
+
+    # Original resolution
+    w, h = clip.width, clip.height
+
+    def safe_mod(value, mod):
+        return max(mod, (value // mod) * mod)
+
+    # Downscaled resolution with safety
+    low_w = safe_mod(int(w * scale), mod_w)
+    low_h = safe_mod(int(h * scale), mod_h)
+    low_w = max(mod_w, low_w)
+    low_h = max(mod_h, low_h)
+
+    # Downscale and upscale
+    down = core.resize.Bilinear(clip, low_w, low_h)
+    up = core.resize.Bilinear(down, w, h)
+    
+    if rg:
+      rgMode = 17
+      if hasattr(core, 'zsmooth'):
+        smoothed = core.zsmooth.RemoveGrain(clip=up, mode=rgMode)
+      elif hasattr(core, 'rgsf') and isFLOAT:  
+        smoothed = core.rgsf.RemoveGrain(clip=up, mode=rgMode)
+      else:
+        smoothed = core.rgvs.RemoveGrain(clip=up, mode=rgMode)
+      
+
+    return up
+
+
 # Taken from muvsfunc
 def GetPlane(clip, plane=None):
     # input clip
