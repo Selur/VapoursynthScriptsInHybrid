@@ -109,8 +109,9 @@ def SMDegrain(input, tr=2, thSAD=300, thSADC=None, RefineMotion=False, contrasha
         raise vs.Error("SMDegrain: 'mfilter' must be the same format as input")
     if RefineMotion and blksize < 8:
         raise vs.Error('SMDegrain: For RefineMotion you need a blksize of at least 8')
-    if not chroma and plane != 0:
-        raise vs.Error('SMDegrain: Denoising chroma with luma only vectors is bugged in mvtools and thus unsupported')
+    # not sure whether this is still true, so I disabled it
+    #if not chroma and plane != 0:
+    #    raise vs.Error('SMDegrain: Denoising chroma with luma only vectors is bugged in mvtools and thus unsupported')
 
     # RefineMotion Variables
     if RefineMotion:
