@@ -1123,12 +1123,12 @@ def MinBlur(clp: vs.VideoNode, r: int=1, planes: Optional[Union[int, Sequence[in
         RG4 = clp.zsmooth.Median(planes=planes) if has_zsmooth else clp.std.Median(planes=planes)
     elif r == 2:
         RG11 = clp.std.Convolution(matrix=matrix1, planes=planes).std.Convolution(matrix=matrix2, planes=planes)
-        RG4 = clp.ctmf.CTMF(radius=2, planes=planes)
+        RG4 = clp.ctmf.CTMF(radius=2, planes=planes, opt=2)
     else:
         RG11 = clp.std.Convolution(matrix=matrix1, planes=planes).std.Convolution(matrix=matrix2, planes=planes).std.Convolution(matrix=matrix2, planes=planes)
         if clp.format.bits_per_sample == 16:
             s16 = clp
-            RG4 = clp.fmtc.bitdepth(bits=12, planes=planes, dmode=1).ctmf.CTMF(radius=3, planes=planes).fmtc.bitdepth(bits=16, planes=planes)
+            RG4 = clp.fmtc.bitdepth(bits=12, planes=planes, dmode=1).ctmf.CTMF(radius=3, planes=planes, opt=2).fmtc.bitdepth(bits=16, planes=planes)
             RG4 = LimitFilter(s16, RG4, thr=0.0625, elast=2, planes=planes)
         else:
             RG4 = clp.ctmf.CTMF(radius=3, planes=planes)

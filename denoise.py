@@ -1095,7 +1095,7 @@ def MinBlur(clp: vs.VideoNode, r: int=1, planes: Optional[Union[int, Sequence[in
             RG4 = clp.fmtc.bitdepth(bits=12, planes=planes, dmode=1).ctmf.CTMF(radius=3, planes=planes).fmtc.bitdepth(bits=16, planes=planes)
             RG4 = LimitFilter(s16, RG4, thr=0.0625, elast=2, planes=planes)
         else:
-            RG4 = clp.ctmf.CTMF(radius=3, planes=planes)
+            RG4 = clp.ctmf.CTMF(radius=3, planes=planes, opt=2)
 
     expr = 'x y - x z - * 0 < x x y - abs x z - abs < y z ? ?'
     EXPR = core.akarin.Expr if hasattr(core,'akarin') else core.std.Expr
