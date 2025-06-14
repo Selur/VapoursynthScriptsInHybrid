@@ -193,34 +193,71 @@ def FinegrainMask(clip: vs.VideoNode, mode: str="RemoveGrain") -> vs.VideoNode:
       smoothed = bilinear_denoise(clip=luma, scale=scale, rg=True)
     elif mode == "mClean":
       import denoise
-      def processWithMClean(clip: vs.VideoNode) -> vs.VideoNode:
-        original_format = clip.format
-        is_rgb = original_format.color_family == vs.RGB
 
-        # For YUV clips, decide color matrix based on resolution
-        matrix = 1 if clip.width < 1280 else 2  # 1=BT.601, 2=BT.709
+      def processWithMClean(clip: vs.VideoNode) -> tuple[vs.VideoNode, int]:
+          original_format = clip.format
+          is_rgb = original_format.color_family == vs.RGB
 
-        if is_rgb:
-            # RGB to YUV: use matrix_s
-            clip = core.resize.Bicubic(clip, format=vs.YUV444P16, matrix_s=matrix)
-        else:
-            # Already YUV — convert to 444P16 only
-            if clip.format.id != vs.YUV444P16:
-                clip = core.resize.Bicubic(clip, format=vs.YUV444P16)
+          # Bitdepth und Sample-Typ ermitteln
+          bits = original_format.bits_per_sample
+          sample_type = original_format.sample_type
 
-        # Apply mClean
-        thresh = 400
-        strength = 20
-        clip = denoise.mClean(clip=clip, thSAD=thresh, rn=0, strength=strength)
+          # GRAY-Format-Tabelle
+          gray_format_map = {
+              (vs.INTEGER, 8): vs.GRAY8,
+              (vs.INTEGER, 10): vs.GRAY10,
+              (vs.INTEGER, 12): vs.GRAY12,
+              (vs.INTEGER, 14): vs.GRAY14,
+              (vs.INTEGER, 16): vs.GRAY16,
+              (vs.FLOAT, 16): vs.GRAYH,
+              (vs.FLOAT, 32): vs.GRAYS,
+          }
 
-        if is_rgb:
-            # YUV back to RGB: use matrix_in
-            clip = core.resize.Bicubic(clip, format=original_format.id, matrix_in=matrix)
+          # YUV444-Format-Tabelle
+          yuv444_format_map = {
+              (vs.INTEGER, 8): vs.YUV444P8,
+              (vs.INTEGER, 10): vs.YUV444P10,
+              (vs.INTEGER, 12): vs.YUV444P12,
+              (vs.INTEGER, 14): vs.YUV444P14,
+              (vs.INTEGER, 16): vs.YUV444P16,
+              (vs.FLOAT, 16): vs.YUV444PH,
+              (vs.FLOAT, 32): vs.YUV444PS,
+          }
 
-        return clip
-      smoothed = processWithMClean(clip)
+          # Ziel-GRAY und YUV-Format bestimmen
+          target_gray_format = gray_format_map.get((sample_type, bits))
+          target_yuv444_format = yuv444_format_map.get((sample_type, bits))
+          if target_gray_format is None or target_yuv444_format is None:
+              raise ValueError(f"Unsupported format: sample_type={sample_type}, bits={bits}")
+
+          # Matrix wählen für RGB → YUV
+          matrix = 1 if clip.width < 1280 else 2
+
+          if is_rgb:
+              clip = core.resize.Bicubic(clip, format=target_yuv444_format, matrix_s=matrix)
+          else:
+              # Nur konvertieren, wenn Format nicht schon YUV444 mit korrekter Bitdepth
+              if not (clip.format.color_family == vs.YUV and clip.format.subsampling_w == 0 and clip.format.subsampling_h == 0 and
+                      clip.format.bits_per_sample == bits and clip.format.sample_type == sample_type):
+                  clip = core.resize.Bicubic(clip, format=target_yuv444_format)
+
+          # mClean anwenden
+          thresh = 400
+          strength = 20
+          clip = denoise.mClean(clip=clip, thSAD=thresh, rn=0, strength=strength)
+
+          if is_rgb:
+              clip = core.resize.Bicubic(clip, format=original_format.id, matrix_in=matrix)
+
+          return clip, target_gray_format
+
+      smoothed, target_gray_format = processWithMClean(clip)
       smoothed = core.std.ShufflePlanes(smoothed, planes=0, colorfamily=vs.GRAY)
+      smoothed = core.resize.Bicubic(smoothed, format=target_gray_format)
+
+      luma = core.resize.Bicubic(luma, format=target_gray_format)
       return core.std.MakeDiff(luma, smoothed)
+
     else:
       raise ValueError(f"FinedetailMask: mode, unknown mode '{mode}'.")
 
