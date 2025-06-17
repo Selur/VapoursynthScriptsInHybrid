@@ -365,7 +365,9 @@ def Depth(src, bits, dither_type='error_diffusion', range=None, range_in=None):
 
     if (src_bits, range_in) == (bits, range):
         return src
-    out_f = core.register_format(src_cf, dst_st, bits, src_sw, src_sh)
+    _is_api4: bool = hasattr(vs, "__api_version__") and vs.__api_version__.api_major == 4
+    query_video_format = core.query_video_format if _is_api4 else core.register_format
+    out_f = query_video_format(src_cf, dst_st, bits, src_sw, src_sh)
     return core.resize.Point(src, format=out_f.id, dither_type=dither_type, range=range, range_in=range_in)
 
 
