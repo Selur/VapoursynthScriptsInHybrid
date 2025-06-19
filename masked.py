@@ -89,6 +89,7 @@ def RobertsEdges(clip, low=0, high=255):
     low = scale8(low, maxvalue)
     high = scale8(high, maxvalue)
     edges = core.std.Convolution(clip, matrix=[0,0,0,0,2,-1,0,-1,0], divisor=2, saturate=False)
+    EXPR = core.akarin.Expr if hasattr(core,'akarin') else core.std.Expr
     return EXPR(edges, ['x {high} >= {maxvalue} x {low} <= 0 x ? ?'
                                  .format(low=low, high=high, maxvalue=maxvalue), ''])
 
