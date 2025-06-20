@@ -457,8 +457,15 @@ def KNLMeansCL(
         raise vs.Error('KNLMeansCL: this wrapper is intended to be used only for YUV format')
 
     use_cuda = hasattr(core, 'nlm_cuda')
+    use_ispc = hasattr(core, 'nlm_ispc')
     subsampled = clip.format.subsampling_w > 0 or clip.format.subsampling_h > 0
-
+    if use_ispc:
+        nlmeans = clip.nlm_ispc.NLMeans
+        if subsampled:
+          clip = nlmeans(d=d, a=a, s=s, h=h, channels='Y', wmode=wmode, wref=wref)
+          return nlmeans(d=d, a=a, s=s, h=h, channels='UV', wmode=wmode, wref=wref)
+        else:
+          return nlmeans(d=d, a=a, s=s, h=h, channels='YUV', wmode=wmode, wref=wref)
     if use_cuda:
         nlmeans = clip.nlm_cuda.NLMeans
         if subsampled:

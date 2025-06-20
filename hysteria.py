@@ -112,7 +112,10 @@ def Hysteria(clip, strength=1.0, usemask=True, lowthresh=6, highthresh=20, luma_
     cleanmask = EXPR(cleanmask, ['x {high} >= {maxvalue} x {low} <= 0 x ? ?'
                               .format(low=highthresh, high=highthresh, maxvalue=max_bitval)])
 
-    themask = core.misc.Hysteresis(cleanmask, noisymask)
+    if hasattr(core,'hysteresis'):
+      themask = core.hysteresis.Hysteresis(cleanmask, noisymask)
+    else:
+      themask = core.misc.Hysteresis(cleanmask, noisymask)
     themask = core.std.Inflate(themask)
 
     # blur replacement

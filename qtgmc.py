@@ -804,11 +804,16 @@ def QTGMC(
               dnWindow = noiseWindow.dfttest.DFTTest(sigma=Sigma * 4, tbsize=noiseTD, planes=CNplanes)   
           else:
             dnWindow = noiseWindow.dfttest.DFTTest(sigma=Sigma * 4, tbsize=noiseTD, planes=CNplanes)
-        elif Denoiser in ['knlm', 'knlmeanscl', 'nlm_cuda']:
+        elif Denoiser in ['knlm', 'knlmeanscl', 'nlm_cuda', 'nlm_ispc']:
             if ChromaNoise and not is_gray:
                 dnWindow = KNLMeansCL(noiseWindow, d=NoiseTR, h=Sigma)
             else:
-                nlmeans_func = noiseWindow.nlm_cuda.NLMeans if hasattr(core, 'nlm_cuda') else noiseWindow.knlm.KNLMeansCL
+                if hasattr(core, 'nlm_ispc'):  
+                  nlmeans_func = noiseWindow.nlm_ispc.NLMeans
+                elif hasattr(core, 'nlm_cuda'):
+                  nlmeans_func = noiseWindow.nlm_cuda.NLMeans
+                else:
+                  nlmeans_func = noiseWindow.knlm.KNLMeansCL
                 dnWindow = nlmeans_func(d=NoiseTR, h=Sigma)
         else:
             fft3d_func = noiseWindow.neo_fft3d.FFT3D if hasattr(core, 'neo_fft3d') else noiseWindow.fft3dfilter.FFT3DFilter
@@ -1663,16 +1668,23 @@ def KNLMeansCL(
     if clip.format.color_family != vs.YUV:
         raise vs.Error('KNLMeansCL: this wrapper is intended to be used only for YUV format')
 
+    use_ispc = hasattr(core, 'nlm_ispc')
     use_cuda = hasattr(core, 'nlm_cuda')
     subsampled = clip.format.subsampling_w > 0 or clip.format.subsampling_h > 0
-
-    if use_cuda:
+    if use_ispc:
+        nlmeans = clip.nlm_ispc.NLMeans
+        if subsampled:
+          clip = nlmeans(d=d, a=a, s=s, h=h, channels='Y', wmode=wmode, wref=wref)
+          return nlmeans(d=d, a=a, s=s, h=h, channels='UV', wmode=wmode, wref=wref)
+        else:
+          return nlmeans(d=d, a=a, s=s, h=h, channels='YUV', wmode=wmode, wref=wref)
+    elif use_cuda:
         nlmeans = clip.nlm_cuda.NLMeans
         if subsampled:
-          clip = nlmeans(d=d, a=a, s=s, h=h, channels='Y', wmode=wmode, wref=wref, device_id=device_id)
-          return nlmeans(d=d, a=a, s=s, h=h, channels='UV', wmode=wmode, wref=wref, device_id=device_id)
+          clip = nlmeans(d=d, a=a, s=s, h=h, channels='Y', wmode=wmode, wref=wref)
+          return nlmeans(d=d, a=a, s=s, h=h, channels='UV', wmode=wmode, wref=wref)
         else:
-          return nlmeans(d=d, a=a, s=s, h=h, channels='YUV', wmode=wmode, wref=wref, device_id=device_id)
+          return nlmeans(d=d, a=a, s=s, h=h, channels='YUV', wmode=wmode, wref=wref)
     else:
       nlmeans = clip.knlm.KNLMeansCL
       if subsampled:
