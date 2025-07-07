@@ -544,3 +544,14 @@ def get_motion_vectors(super_search, refine, search_params, refine_params, tr, i
                 vectors[f'fv{i}'] = core.mv.Recalculate(refine, vectors[f'fv{i}'], **refine_params)
     
     return vectors
+    
+def Weave(clip: vs.VideoNode, tff: Optional[bool] = None) -> vs.VideoNode:
+    if not isinstance(clip, vs.VideoNode):
+        raise vs.Error('Weave: this is not a clip')
+
+    if tff is None:
+        with clip.get_frame(0) as f:
+            if f.props.get('_Field') not in [1, 2]:
+                raise vs.Error('Weave: tff was not specified and field order could not be determined from frame properties')
+
+    return clip.std.DoubleWeave(tff=tff)[::2]
