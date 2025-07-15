@@ -273,7 +273,42 @@ def FinegrainMask(clip: vs.VideoNode, mode: str="RemoveGrain") -> vs.VideoNode:
       mask = core.std.Expr([diff], expr=expr)
     
     return mask
-    
+   
+# experimental
+def make_color_mask(clip: vs.VideoNode,
+                    target_color: tuple,
+                    tolerance: int = 30) -> vs.VideoNode:
+    """
+    Generate a binary mask where pixels close to a given RGB color are white (255), others black.
+    Works consistently across float and integer RGB formats.
+    """
+    if clip.format.color_family != vs.RGB:
+        clip = core.resize.Bicubic(clip, format=vs.RGBS)  # Always use float RGB internally
+
+    # Extract float RGB channels (0–1.0)
+    r, g, b = [core.std.ShufflePlanes(clip, i, vs.GRAY) for i in range(3)]
+
+    # Convert 8-bit target color to float [0–1]
+    target_f = [c / 255 for c in target_color]
+    tol = tolerance
+
+    # Compute squared color distance in float (but scaled as if in 8-bit space)
+    EXR = core.akarin.Expr if hasattr(core, 'akarin') else core.std.Expr
+    dr = EXPR([r], f"x {target_f[0]} - 255 * dup *")  # scale diff to 8-bit range
+    dg = EXPR([g], f"x {target_f[1]} - 255 * dup *")
+    db = EXPR([b], f"x {target_f[2]} - 255 * dup *")
+
+    dist_sq = EXPR([dr, dg, db], "x y + z +")
+
+    # Threshold in 8-bit distance²
+    thresh_sq = tol ** 2
+    mask = EXPR([dist_sq], f"x {thresh_sq} < 255 0 ?")
+
+    # Output GRAY8
+    return core.resize.Bicubic(mask, format=vs.GRAY8)
+
+
+   
 def bilinear_denoise(clip: vs.VideoNode, scale: float = 0.5, rg: bool=False) -> vs.VideoNode:
     """
     Perform simple bilinear denoising by downscaling and upscaling.
