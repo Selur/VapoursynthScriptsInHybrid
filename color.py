@@ -380,7 +380,7 @@ def HighBitDepthHistogram(clip: vs.VideoNode, method: str = "Classic") -> vs.Vid
     # Step 4: Crop to get just the histogram overlay
     if method == "Classic":
         histClip = core.std.Crop(histClip, bottom=clip.height)
-    else:
+    elif method != "Luma":
         histClip = core.std.Crop(histClip, left=clip.width)
 
     # Step 5: Convert histogram back to original format
