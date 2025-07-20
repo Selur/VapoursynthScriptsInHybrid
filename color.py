@@ -178,6 +178,13 @@ def Tweak(clip, hue=None, sat=None, bright=None, cont=None, coring=True):
 ###
 ###
 #########################################################################################
+
+def sine_expr(expr: str) -> str:
+    return f'{expr} pi * 0.5 * sin'
+
+def scale(val: int, peak: Union[int, float]) -> Union[int, float]:
+    return val * peak / 255 if peak != 1.0 else val / 255
+    
 def SmoothLevels(input, input_low=0, gamma=1.0, input_high=None, output_low=0, output_high=None, chroma=50, limiter=0, Lmode=0, DarkSTR=100, BrightSTR=100, Ecenter=None, protect=-1, Ecurve=0,
                  Smode=-2, Mfactor=2, RGmode=12, useDB=False):
     if not isinstance(input, vs.VideoNode):
