@@ -185,72 +185,92 @@ def sine_expr(expr: str) -> str:
 def scale(val: int, peak: Union[int, float]) -> Union[int, float]:
     return val * peak / 255 if peak != 1.0 else val / 255
     
-def SmoothLevels(input, input_low=0, gamma=1.0, input_high=None, output_low=0, output_high=None, chroma=50, limiter=0, Lmode=0, DarkSTR=100, BrightSTR=100, Ecenter=None, protect=-1, Ecurve=0,
-                 Smode=-2, Mfactor=2, RGmode=12, useDB=False):
+def SmoothLevels(
+    input: vs.VideoNode,
+    input_low: Union[int, float] = 0,
+    gamma: float = 1.0,
+    input_high: Optional[Union[int, float]] = None,
+    output_low: Union[int, float] = 0,
+    output_high: Optional[Union[int, float]] = None,
+    chroma: int = 50,
+    limiter: int = 0,
+    Lmode: int = 0,
+    DarkSTR: int = 100,
+    BrightSTR: int = 100,
+    Ecenter: Optional[Union[int, float]] = None,
+    protect: Union[int, float] = -1,
+    Ecurve: int = 0,
+    Smode: int = -2,
+    Mfactor: Union[int, float] = 2,
+    RGmode: int = 12,
+    useDB: bool = False
+) -> vs.VideoNode:
+    """Optimized SmoothLevels function with performance improvements."""
+    
+    # Initial validation and format setup
     if not isinstance(input, vs.VideoNode):
         raise vs.Error('SmoothLevels: this is not a clip')
-
+    
     if input.format.color_family == vs.RGB:
         raise vs.Error('SmoothLevels: RGB format is not supported')
 
-    isGray = (input.format.color_family == vs.GRAY)
-
-    if input.format.sample_type == vs.INTEGER:
-        neutral = [1 << (input.format.bits_per_sample - 1)] * 2
-        peak = (1 << input.format.bits_per_sample) - 1
-    else:
-        neutral = [0.5, 0.0]
-        peak = 1.0
-
-    if chroma <= 0 and not isGray:
-        input_orig = input
-        input = GetPlane(input, 0)
-    else:
-        input_orig = None
-
-    if input_high is None:
-        input_high = peak
-
-    if output_high is None:
-        output_high = peak
-
-    if Ecenter is None:
-        Ecenter = neutral[0]
-
+    core = vs.core
+    EXPR = core.akarin.Expr if hasattr(core, 'akarin') else core.std.Expr
+    
+    # Precompute format-dependent values
+    bits = input.format.bits_per_sample
+    is_float = input.format.sample_type == vs.FLOAT
+    is_gray = input.format.color_family == vs.GRAY
+    neutral = [0.5, 0.0] if is_float else [1 << (bits - 1)] * 2
+    peak = 1.0 if is_float else (1 << bits) - 1
+    
+    # Set default values
+    input_high = peak if input_high is None else input_high
+    output_high = peak if output_high is None else output_high
+    Ecenter = neutral[0] if Ecenter is None else Ecenter
+    
+    # Parameter validation
     if gamma <= 0:
         raise vs.Error('SmoothLevels: gamma must be greater than 0.0')
-
     if Ecenter <= 0 or Ecenter >= peak:
-        raise vs.Error('SmoothLevels: Ecenter must be greater than 0 and less than maximum value of input format')
-
+        raise vs.Error('SmoothLevels: Ecenter must be within valid range')
     if Mfactor <= 0:
         raise vs.Error('SmoothLevels: Mfactor must be greater than 0')
 
-    if RGmode == 4:
-        if hasattr(core,'zsmooth'):
-          RemoveGrain = partial(core.zsmooth.Median)
-        else:
-          RemoveGrain = partial(core.std.Median)
-    elif RGmode in [11, 12]:
-        RemoveGrain = partial(core.std.Convolution, matrix=[1, 2, 1, 2, 4, 2, 1, 2, 1])
-    elif RGmode == 19:
-        RemoveGrain = partial(core.std.Convolution, matrix=[1, 1, 1, 1, 0, 1, 1, 1, 1])
-    elif RGmode == 20:
-        RemoveGrain = partial(core.std.Convolution, matrix=[1, 1, 1, 1, 1, 1, 1, 1, 1])
+    # Handle chroma processing
+    if chroma <= 0 and not is_gray:
+        input_orig = input
+        input = core.std.ShufflePlanes(input, planes=0, colorfamily=vs.GRAY)
     else:
-        RG = core.zsmooth.RemoveGrain if hasattr(core,'zsmooth') else core.rgvs.RemoveGrain
+        input_orig = None
+
+    # RemoveGrain mode selection
+    RG_MAP = {
+        4: core.zsmooth.Median if hasattr(core, 'zsmooth') else core.std.Median,
+        11: partial(core.std.Convolution, matrix=[1, 2, 1, 2, 4, 2, 1, 2, 1]),
+        12: partial(core.std.Convolution, matrix=[1, 2, 1, 2, 4, 2, 1, 2, 1]),
+        19: partial(core.std.Convolution, matrix=[1, 1, 1, 1, 0, 1, 1, 1, 1]),
+        20: partial(core.std.Convolution, matrix=[1, 1, 1, 1, 1, 1, 1, 1, 1])
+    }
+    
+    RemoveGrain = RG_MAP.get(RGmode)
+    if RemoveGrain is None:
+        RG = core.zsmooth.RemoveGrain if hasattr(core, 'zsmooth') else core.rgvs.RemoveGrain
         RemoveGrain = partial(RG, mode=[RGmode])
 
-    ### EXPRESSION
-    exprY = f'x {input_low} - {input_high - input_low + (input_high == input_low)} / {1 / gamma} pow {output_high - output_low} * {output_low} +'
-
-    if chroma > 0 and not isGray:
-        scaleC = ((output_high - output_low) / (input_high - input_low + (input_high == input_low)) + 100 / chroma - 1) / (100 / chroma)
+    # Build expressions
+    denom = input_high - input_low + (1 if input_high == input_low else 0)
+    exprY = f'x {input_low} - {denom} / {1/gamma} pow {output_high - output_low} * {output_low} +'
+    
+    if chroma > 0 and not is_gray:
+        scaleC = ((output_high - output_low) / denom + 100/chroma - 1) / (100/chroma)
         exprC = f'x {neutral[1]} - {scaleC} * {neutral[1]} +'
 
+    # Strength calculations
     Dstr = DarkSTR / 100
     Bstr = BrightSTR / 100
 
+    # Luma expression
     if Lmode <= 0:
         exprL = '1'
     elif Ecurve <= 0:
@@ -259,80 +279,78 @@ def SmoothLevels(input, input_low=0, gamma=1.0, input_high=None, output_low=0, o
             var_b = f'{peak} x - {peak} {Ecenter} - /'
             exprL = f'x {Ecenter} < ' + sine_expr(var_d) + f' {Dstr} pow x {Ecenter} > ' + sine_expr(var_b) + f' {Bstr} pow 1 ? ?'
         elif Lmode == 2:
-            var_d = f'x {peak} /'
-            exprL = sine_expr(var_d) + f' {Dstr} pow'
+            exprL = sine_expr(f'x {peak} /') + f' {Dstr} pow'
         else:
-            var_b = f'{peak} x - {peak} /'
-            exprL = sine_expr(var_b) + f' {Bstr} pow'
+            exprL = sine_expr(f'{peak} x - {peak} /') + f' {Bstr} pow'
     else:
         if Lmode == 1:
-            exprL = f'x {Ecenter} < x {Ecenter} / abs {Dstr} pow x {Ecenter} > 1 x {Ecenter} - {peak - Ecenter} / abs - {Bstr} pow 1 ? ?'
+            exprL = f'x {Ecenter} < x {Ecenter} / abs {Dstr} pow x {Ecenter} > 1 x {Ecenter} - {peak-Ecenter} / abs - {Bstr} pow 1 ? ?'
         elif Lmode == 2:
             exprL = f'1 x {peak} - {peak} / abs - {Dstr} pow'
         else:
             exprL = f'x {peak} - {peak} / abs {Bstr} pow'
 
+    # Protect expression
     if protect <= -1:
         exprP = '1'
     elif Ecurve <= 0:
-        var_p = f'x {protect} - {scale(16, peak)} /'
-        exprP = f'x {protect} <= 0 x {protect + scale(16, peak)} >= 1 ' + sine_expr(var_p) + f' ? ?'
+        scale_val = scale(16, peak)
+        var_p = f'x {protect} - {scale_val} /'
+        exprP = f'x {protect} <= 0 x {protect+scale_val} >= 1 ' + sine_expr(var_p) + f' ? ?'
     else:
-        exprP = f'x {protect} <= 0 x {protect + scale(16, peak)} >= 1 x {protect} - {scale(16, peak)} / abs ? ?'
+        scale_val = scale(16, peak)
+        exprP = f'x {protect} <= 0 x {protect+scale_val} >= 1 x {protect} - {scale_val} / abs ? ?'
 
-    ### PROCESS
-    EXPR = core.akarin.Expr if hasattr(core,'akarin') else core.std.Expr
-    if limiter == 1 or limiter >= 3:
-        limitI = EXPR(input, expr=[f'x {input_low} max {input_high} min'])
-    else:
-        limitI = input
-
-    expr = exprL + ' ' + exprP + ' * ' + exprY + ' x - * x +'
-    level = EXPR(limitI, expr=[expr] if chroma <= 0 or isGray else [expr, exprC])
-    diff = EXPR([limitI, level], expr=[f'x y - {Mfactor} * {neutral[1]} +'])
+    # Processing pipeline
+    limitI = EXPR(input, expr=[f'x {input_low} max {input_high} min']) if limiter in (1, 3) else input
+    
+    full_expr = exprL + ' ' + exprP + ' * ' + exprY + ' x - * x +'
+    level = EXPR(limitI, expr=[full_expr] if chroma <= 0 or is_gray else [full_expr, exprC])
+    
+    diff_expr = f'x y - {Mfactor} * {neutral[1]} +'
+    merge_expr = f'x y {neutral[1]} - {Mfactor} / -'
+    
+    diff = EXPR([limitI, level], expr=[diff_expr])
     process = RemoveGrain(diff)
+    
     if useDB:
-        if hasattr(core, 'neo_f3kdb'):
-          process = EXPR(process, expr=[f'x {neutral[1]} - {Mfactor} / {neutral[1]} +']).neo_f3kdb.Deband(grainy=0, grainc=0, output_depth=input.format.bits_per_sample)
-        else:
-          process = EXPR(process, expr=[f'x {neutral[1]} - {Mfactor} / {neutral[1]} +']).f3kdb.Deband(grainy=0, grainc=0, output_depth=input.format.bits_per_sample)
+        deband_func = core.neo_f3kdb.Deband if hasattr(core, 'neo_f3kdb') else core.f3kdb.Deband
+        deband_expr = f'x {neutral[1]} - {Mfactor} / {neutral[1]} +'
+        process = deband_func(EXPR(process, expr=[deband_expr]), grainy=0, grainc=0, output_depth=bits)
         smth = core.std.MakeDiff(limitI, process)
     else:
-        smth = EXPR([limitI, process], expr=[f'x y {neutral[1]} - {Mfactor} / -'])
+        smth = EXPR([limitI, process], expr=[merge_expr])
 
-    level2 = EXPR([limitI, diff], expr=[f'x y {neutral[1]} - {Mfactor} / -'])
-    diff2 = EXPR([level2, level], expr=[f'x y - {Mfactor} * {neutral[1]} +'])
+    level2 = EXPR([limitI, diff], expr=[merge_expr])
+    diff2 = EXPR([level2, level], expr=[diff_expr])
     process2 = RemoveGrain(diff2)
+    
     if useDB:
-        if hasattr(core, 'neo_f3kdb'):
-          process2 = EXPR(process2, expr=[f'x {neutral[1]} - {Mfactor} / {neutral[1]} +']).neo_f3kdb.Deband(grainy=0, grainc=0, output_depth=input.format.bits_per_sample)
-        else:
-          process2 = EXPR(process2, expr=[f'x {neutral[1]} - {Mfactor} / {neutral[1]} +']).f3kdb.Deband(grainy=0, grainc=0, output_depth=input.format.bits_per_sample) 
+        process2 = deband_func(EXPR(process2, expr=[deband_expr]), grainy=0, grainc=0, output_depth=bits)
         smth2 = core.std.MakeDiff(smth, process2)
     else:
-        smth2 = EXPR([smth, process2], expr=[f'x y {neutral[1]} - {Mfactor} / -'])
+        smth2 = EXPR([smth, process2], expr=[merge_expr])
 
-    mask1 = EXPR([limitI, level], expr=[f'x y - abs {neutral[0] / Mfactor} >= {peak} 0 ?'])
-    mask2 = EXPR([limitI, level], expr=[f'x y - abs {peak / Mfactor} >= {peak} 0 ?'])
+    # Mask creation
+    mask1 = EXPR([limitI, level], expr=[f'x y - abs {neutral[0]/Mfactor} >= {peak} 0 ?'])
+    mask2 = EXPR([limitI, level], expr=[f'x y - abs {peak/Mfactor} >= {peak} 0 ?'])
 
-    if Smode >= 2:
-        Slevel = smth2
-    elif Smode == 1:
-        Slevel = smth
-    elif Smode == -1:
-        Slevel = core.std.MaskedMerge(smth, level, mask1)
-    elif Smode <= -2:
-        Slevel = core.std.MaskedMerge(core.std.MaskedMerge(smth, smth2, mask1), level, mask2)
-    else:
-        Slevel = level
+    # Final merge based on Smode
+    smode_handlers = {
+        -2: lambda: core.std.MaskedMerge(core.std.MaskedMerge(smth, smth2, mask1), level, mask2),
+        -1: lambda: core.std.MaskedMerge(smth, level, mask1),
+        1: lambda: smth,
+        2: lambda: smth2
+    }
+    Slevel = smode_handlers.get(Smode, lambda: level)()
 
-    if limiter >= 2:
-        limitO = EXPR(Slevel, expr=[f'x {output_low} max {output_high} min'])
-    else:
-        limitO = Slevel
+    # Output limiting
+    limitO = EXPR(Slevel, expr=[f'x {output_low} max {output_high} min']) if limiter >= 2 else Slevel
 
+    # Restore chroma if needed
     if input_orig is not None:
         limitO = core.std.ShufflePlanes([limitO, input_orig], planes=[0, 1, 2], colorfamily=input_orig.format.color_family)
+
     return limitO
 
 ####### HighBitDepthHistogram
