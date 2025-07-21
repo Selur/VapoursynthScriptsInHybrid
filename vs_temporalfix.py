@@ -8,7 +8,7 @@ from typing import Union, Optional, Sequence
 core = vs.core
 
 
-def AverageColorFix(clip, ref, radius=4, passes=4):
+def AverageColorFix(clip: vs.VideoNode, ref: vs.VideoNode, radius: int = 4, passes: int = 4) -> vs.VideoNode:
     # modified from https://github.com/pifroggi/vs_colorfix
     BOX = core.vszip.BoxBlur if hasattr(core,'vszip') else core.std.BoxBlur
     blurred_reference = BOX(ref, hradius=radius, hpasses=passes, vradius=radius, vpasses=passes)
@@ -17,7 +17,7 @@ def AverageColorFix(clip, ref, radius=4, passes=4):
     return core.std.MergeDiff(clip, diff_clip)
 
 
-def AverageColorFixFast(clip, ref, downscale_factor=8):
+def AverageColorFixFast(clip: vs.VideoNode, ref: vs.VideoNode, downscale_factor: int = 8) -> vs.VideoNode:
     # faster but faint blocky artifacts
     downscaled_reference = core.resize.Bilinear(ref, width=clip.width / downscale_factor, height=clip.height / downscale_factor)
     downscaled_clip = core.resize.Bilinear(clip, width=clip.width / downscale_factor, height=clip.height / downscale_factor)
@@ -26,7 +26,7 @@ def AverageColorFixFast(clip, ref, downscale_factor=8):
     return core.std.MergeDiff(clip, diff_clip)
 
 
-def TweakDarks(src, s0=2.0, c=0.0625, chroma=True):
+def TweakDarks(src: vs.VideoNode, s0: float = 2.0, c: float = 0.0625, chroma: bool = True) -> vs.VideoNode:
     # simplified DitherLumaRebuild function that works on full range
     # DitherLumaRebuild function from G41Fun https://github.com/Vapoursynth-Plugins-Gitify/G41Fun
     # originally created by cretindesalpes https://forum.doom9.org/showthread.php?p=1548318
@@ -45,7 +45,7 @@ def TweakDarks(src, s0=2.0, c=0.0625, chroma=True):
     return EXPR([src], [e] if src.format.num_planes == 1 else [e, expr if chroma else ""])
 
 
-def ExcludeRegions(clip, replacement, exclude=None):
+def ExcludeRegions(clip: vs.VideoNode, replacement: vs.VideoNode, exclude: str = None) -> vs.VideoNode:
     # simplified ReplaceFrames function from fvsfunc https://github.com/Irrational-Encoding-Wizardry/fvsfunc
     # which is a port of ReplaceFramesSimple by James D. Lin http://avisynth.nl/index.php/RemapFrames
     import re
@@ -80,7 +80,7 @@ def ExcludeRegions(clip, replacement, exclude=None):
     return out
 
 
-def DegrainPrefilter(clip, thsad=250):
+def DegrainPrefilter(clip: vs.VideoNode, thsad: int = 250):
     # based on SpotLess function from G41Fun https://github.com/Vapoursynth-Plugins-Gitify/G41Fun
     # which was modified from lostfunc https://github.com/theChaosCoder/lostfunc/blob/v1/lostfunc.py#L10
     # which was a port of Didée's original avisynth function https://forum.doom9.org/showthread.php?p=1402690
@@ -121,7 +121,8 @@ def DegrainPrefilter(clip, thsad=250):
     return clip.mv.Degrain6(sup, bv1, fv1, bv2, fv2, bv3, fv3, bv4, fv4, bv5, fv5, bv6, fv6, thsad=thsad, plane=0)
 
 
-def vs_temporalfix(clip, strength=400, tr=6, exclude=None, debug=False):
+
+def vs_temporalfix(clip: vs.VideoNode, strength: int = 400, tr: int = 6, exclude: str | None = None, debug: bool = False) -> vs.VideoNode:
     # based on SMDegrain function from G41Fun https://github.com/Vapoursynth-Plugins-Gitify/G41Fun
     # which is a modification of SMDegrain from havsfunc https://github.com/HomeOfVapourSynthEvolution/havsfunc/blob/r31/havsfunc.py#L3186
     # which is a port of SMDegrain from avisynth https://forum.videohelp.com/threads/369142
@@ -349,7 +350,36 @@ def vs_temporalfix(clip, strength=400, tr=6, exclude=None, debug=False):
 
 
 # fmt: off
-def Analyze(super, blksize=None, blksizev=None, levels=None, search=None, searchparam=None, pelsearch=None, lambda_=None, chroma=None, tr=None, truemotion=None, lsad=None, plevel=None, global_=None, pnew=None, pzero=None, pglobal=None, overlap=None, overlapv=None, divide=None, badsad=None, badrange=None, meander=None, trymany=None, fields=False, TFF=None, search_coarse=None, dct=None):
+def Analyze(
+    super: vs.VideoNode,
+    blksize: Optional[int] = None,
+    blksizev: Optional[int] = None,
+    levels: Optional[int] = None,
+    search: Optional[int] = None,
+    searchparam: Optional[int] = None,
+    pelsearch: Optional[int] = None,
+    lambda_: Optional[int] = None,
+    chroma: Optional[bool] = None,
+    tr: Optional[int] = None,
+    truemotion: Optional[bool] = None,
+    lsad: Optional[int] = None,
+    plevel: Optional[int] = None,
+    global_: Optional[bool] = None,
+    pnew: Optional[int] = None,
+    pzero: Optional[int] = None,
+    pglobal: Optional[int] = None,
+    overlap: Optional[int] = None,
+    overlapv: Optional[int] = None,
+    divide: Optional[int] = None,
+    badsad: Optional[int] = None,
+    badrange: Optional[int] = None,
+    meander: Optional[bool] = None,
+    trymany: Optional[bool] = None,
+    fields: bool = False,
+    TFF: Optional[bool] = None,
+    search_coarse: Optional[int] = None,
+    dct: Optional[int] = None
+) -> vs.VideoNode:
     #function from mvmulti: https://github.com/IFeelBloated/vapoursynth-mvtools-sf/blob/r9/src/mvmulti.py
     def getvecs(isb, delta):
         return core.mvsf.Analyze(super, isb=isb, blksize=blksize, blksizev=blksizev, levels=levels, search=search, searchparam=searchparam, pelsearch=pelsearch, lambda_=lambda_, chroma=chroma, delta=delta, truemotion=truemotion, lsad=lsad, plevel=plevel, global_=global_, pnew=pnew, pzero=pzero, pglobal=pglobal, overlap=overlap, overlapv=overlapv, divide=divide, badsad=badsad, badrange=badrange, meander=meander, trymany=trymany, fields=fields, tff=TFF, search_coarse=search_coarse, dct=dct)
@@ -357,9 +387,29 @@ def Analyze(super, blksize=None, blksizev=None, levels=None, search=None, search
     fv = [getvecs(False, i) for i in range(1, tr + 1)]
     return core.std.Interleave(bv + fv)
 
-def Recalculate(super, vectors, thsad=200.0, smooth=1, blksize=8, blksizev=None, search=4, searchparam=2, lambda_=None, chroma=True, truemotion=True, pnew=None, overlap=0, overlapv=None, divide=0, meander=True, fields=False, tff=None, dct=0, tr=3):
+def Recalculate(
+    super: vs.VideoNode,
+    vectors: vs.VideoNode,
+    thsad: float = 200.0,
+    smooth: int = 1,
+    blksize: int = 8,
+    blksizev: Optional[int] = None,
+    search: int = 4,
+    searchparam: int = 2,
+    lambda_: Optional[int] = None,
+    chroma: bool = True,
+    truemotion: bool = True,
+    pnew: Optional[int] = None,
+    overlap: int = 0,
+    overlapv: Optional[int] = None,
+    divide: int = 0,
+    meander: bool = True,
+    fields: bool = False,
+    tff: Optional[bool] = None,
+    dct: int = 0,
+    tr: int = 3
+) -> vs.VideoNode:
     #function from mvmulti: https://github.com/IFeelBloated/vapoursynth-mvtools-sf/blob/r9/src/mvmulti.py
-    core         = vs.core
     def refine(delta):
         analyzed = core.std.SelectEvery(vectors, 2*tr, delta)
         refined  = core.mvsf.Recalculate(super, analyzed, thsad=thsad, smooth=smooth, blksize=blksize, blksizev=blksizev, search=search, searchparam=searchparam, lambda_=lambda_, chroma=chroma, truemotion=truemotion, pnew=pnew, overlap=overlap, overlapv=overlapv, divide=divide, meander=meander, fields=fields, tff=tff, dct=dct)
@@ -368,7 +418,8 @@ def Recalculate(super, vectors, thsad=200.0, smooth=1, blksize=8, blksizev=None,
     vmulti       = core.std.Interleave(vmulti)
     return vmulti
 
-def DegrainN(clip, super, mvmulti, tr=3, thsad=400.0, plane=4, limit=1.0, thscd1=400.0, thscd2=130.0):
+
+def DegrainN(clip: vs.VideoNode, super: vs.VideoNode, mvmulti: vs.VideoNode, tr: int = 3, thsad: float = 400.0, plane: int = 4, limit: float = 1.0, thscd1: float = 400.0,  thscd2: float = 130.0) -> vs.VideoNode:
     #function from mvmulti: https://github.com/IFeelBloated/vapoursynth-mvtools-sf/blob/r9/src/mvmulti.py
     core         = vs.core
     def bvn(n):
@@ -431,7 +482,7 @@ def DegrainN(clip, super, mvmulti, tr=3, thsad=400.0, plane=4, limit=1.0, thscd1
 # fmt: on
 
 
-def ContraSharpening(clip, src, radius=None, rep=24, planes=[0, 1, 2]):
+def ContraSharpening(clip: vs.VideoNode, src: vs.VideoNode, radius: Optional[int] = None, rep: int = 24, planes: Union[int, Sequence[int]] = [0, 1, 2]) -> vs.VideoNode:
     if radius is None:
         radius = 2 if clip.width > 960 else 1
     if clip.format.num_planes == 1:
@@ -448,6 +499,7 @@ def ContraSharpening(clip, src, radius=None, rep=24, planes=[0, 1, 2]):
     RG11 = clip.std.Convolution(matrix=mat1, planes=planes)
     RG4 = clip.zsmooth.Median(planes=planes) if hasattr(core,'zsmooth') else clip.std.Median(planes=planes)
 
+    EXPR = core.akarin.Expr if hasattr(core,'akarin') else core.std.Expr
     expr = 'x y - x z - * 0 < x x y - abs x z - abs < y z ? ?'
     s = EXPR([clip, RG11, RG4], expr=[expr if i in planes else '' for i in range(num)])
 
@@ -456,6 +508,7 @@ def ContraSharpening(clip, src, radius=None, rep=24, planes=[0, 1, 2]):
     ssDD = REPAIR(ssD, allD, [rep if i in planes else 0 for i in range(num)])  # limit the difference to the max of what the denoising removed locally
     
     expr = "x {} - abs y {} - abs < x y ?".format(mid, mid)  # abs(diff) after limiting may not be bigger than before
+    
     ssDD = EXPR([ssDD, ssD], [expr if i in planes else "" for i in range(num)])
     return core.std.MergeDiff(clip, ssDD, planes)  # apply the limited difference (sharpening is just inverse blurring)
 
