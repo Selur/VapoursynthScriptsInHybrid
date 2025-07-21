@@ -432,9 +432,6 @@ def DegrainN(clip, super, mvmulti, tr=3, thsad=400.0, plane=4, limit=1.0, thscd1
 
 
 def ContraSharpening(clip, src, radius=None, rep=24, planes=[0, 1, 2]):
-    # simplified function from G41Fun https://github.com/Vapoursynth-Plugins-Gitify/G41Fun
-    # original avisynth function by Didée at the VERY GRAINY thread https://forum.doom9.org/showthread.php?p=1076491
-
     if radius is None:
         radius = 2 if clip.width > 960 else 1
     if clip.format.num_planes == 1:
@@ -443,58 +440,23 @@ def ContraSharpening(clip, src, radius=None, rep=24, planes=[0, 1, 2]):
         planes = [planes]
 
     mat1 = [1, 2, 1, 2, 4, 2, 1, 2, 1]
-    mat2 = [1, 1, 1, 1, 1, 1, 1, 1, 1]
     bd = clip.format.bits_per_sample
     mid = 1 << (bd - 1)
     num = clip.format.num_planes
-    if hasattr(core,'zsmooth'):
-      R = core.zsmooth.Repair
-    else:
-      R = core.rgvs.Repair
+    REPAIR = core.zsmooth.Repair if hasattr(core,'zsmooth') else core.rgvs.Repair
+    
+    RG11 = clip.std.Convolution(matrix=mat1, planes=planes)
+    RG4 = clip.zsmooth.Median(planes=planes) if hasattr(core,'zsmooth') else clip.std.Median(planes=planes)
 
-    s = MinBlur(clip, planes=planes)  # damp down remaining spots of the denoised clip
-    RG11 = core.std.Convolution(s, matrix=mat1, planes=planes).std.Convolution(matrix=mat2, planes=planes)
+    expr = 'x y - x z - * 0 < x x y - abs x z - abs < y z ? ?'
+    s = EXPR([clip, RG11, RG4], expr=[expr if i in planes else '' for i in range(num)])
+
     ssD = core.std.MakeDiff(s, RG11, planes)  # the difference of a simple kernel blur
     allD = core.std.MakeDiff(src, clip, planes)  # the difference achieved by the denoising
-    ssDD = R(ssD, allD, [rep if i in planes else 0 for i in range(num)])  # limit the difference to the max of what the denoising removed locally
+    ssDD = REPAIR(ssD, allD, [rep if i in planes else 0 for i in range(num)])  # limit the difference to the max of what the denoising removed locally
+    
     expr = "x {} - abs y {} - abs < x y ?".format(mid, mid)  # abs(diff) after limiting may not be bigger than before
-    EXPR = core.akarin.Expr if hasattr(core,'akarin') else core.std.Expr
     ssDD = EXPR([ssDD, ssD], [expr if i in planes else "" for i in range(num)])
     return core.std.MergeDiff(clip, ssDD, planes)  # apply the limited difference (sharpening is just inverse blurring)
 
-
-# MinBlur   by Didée (http://avisynth.nl/index.php/MinBlur)
-# Nifty Gauss/Median combination
-def MinBlur(clp: vs.VideoNode, r: int=1, planes: Optional[Union[int, Sequence[int]]] = None) -> vs.VideoNode:
-    if not isinstance(clp, vs.VideoNode):
-        raise vs.Error('MinBlur: This is not a clip')
-
-    if planes is None:
-        planes = list(range(clp.format.num_planes))
-    elif isinstance(planes, int):
-        planes = [planes]
-
-    matrix1 = [1, 2, 1, 2, 4, 2, 1, 2, 1]
-    matrix2 = [1, 1, 1, 1, 1, 1, 1, 1, 1]
-    has_zsmooth = hasattr(core,'zsmooth')
-    if r <= 0:
-        RG11 = sbr(clp, planes=planes)
-        RG4 = clp.zsmooth.Median(planes=planes) if has_zsmooth else clp.std.Median(planes=planes)
-    elif r == 1:
-        RG11 = clp.std.Convolution(matrix=matrix1, planes=planes)
-        RG4 = clp.zsmooth.Median(planes=planes) if has_zsmooth else clp.std.Median(planes=planes)
-    elif r == 2:
-        RG11 = clp.std.Convolution(matrix=matrix1, planes=planes).std.Convolution(matrix=matrix2, planes=planes)
-        RG4 = clp.ctmf.CTMF(radius=2, planes=planes)
-    else:
-        RG11 = clp.std.Convolution(matrix=matrix1, planes=planes).std.Convolution(matrix=matrix2, planes=planes).std.Convolution(matrix=matrix2, planes=planes)
-        if clp.format.bits_per_sample == 16:
-            s16 = clp
-            RG4 = clp.fmtc.bitdepth(bits=12, planes=planes, dmode=1).ctmf.CTMF(radius=3, planes=planes).fmtc.bitdepth(bits=16, planes=planes)
-            RG4 = LimitFilter(s16, RG4, thr=0.0625, elast=2, planes=planes)
-        else:
-            RG4 = clp.ctmf.CTMF(radius=3, planes=planes, opt=2)
-
-    expr = 'x y - x z - * 0 < x x y - abs x z - abs < y z ? ?'
-    EXPR = core.akarin.Expr if hasattr(core,'akarin') else core.std.Expr
-    return EXPR([clp, RG11, RG4], expr=[expr if i in planes else '' for i in range(clp.format.num_planes)])
+    
