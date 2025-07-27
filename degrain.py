@@ -99,8 +99,7 @@ def STPresso(
         fc1 = core.mv.Compensate(bzz, mvSuper, fv1)
 
         interleave = core.std.Interleave([fc1, bzz, bc1])
-        #FX = core.zsmooth.FluxSmoothT if hasattr(core,'zsmooth') else core.flux.SmoothT
-        FX = core.flux.SmoothT
+        FX = core.zsmooth.FluxSmoothT if hasattr(core,'zsmooth') else core.flux.SmoothT
         smooth = FX(interleave, temporal_threshold=tthr, planes=planes)
         smooth = smooth.std.SelectEvery(cycle=3, offsets=1)
 
