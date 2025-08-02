@@ -24,7 +24,7 @@ class get_core:
           self.BMBasic         = self.core.bm3d.VBasic
           self.BMFinal         = self.core.bm3d.VFinal
           self.Aggregate       = self.core.bm3d.VAggregate
-          self.DFTTest         = __import__('dfttest2').DFTTest if hasattr(self.core, 'dfttest2_nvrtc') else self.core.dfttest.DFTTest
+          self.DFTTest         = self.core.dfttest.DFTTest
           self.KNLMeansCL      = self.core.knlm.KNLMeansCL
           self.NNEDI           = self.core.nnedi3cl.NNEDI3CL if hasattr(self.core, 'nnedi3cl') else self.core.znedi3.nnedi3 if hasattr(self.core, 'znedi3') else self.core.nnedi3.nnedi3
           self.Resample        = self.core.fmtc.resample
