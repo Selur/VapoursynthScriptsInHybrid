@@ -1,5 +1,5 @@
 # Original: https://github.com/IFeelBloated/Oyster/blob/master/Oyster.py
-# modified by Selur, to support Akarin, znedi3, nnedi3cl, dfttest2_nvrtc if present
+# modified by Selur, to support Akarin, znedi3, nnedi3cl if present
 
 import vapoursynth as vs
 import math
