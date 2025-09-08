@@ -8,35 +8,35 @@ import vapoursynth as vs
 core = vs.core
 
 def BoxBlur(clip, planes=None, hradius=1, hpasses=1, vradius=1, vpasses=1):
-    # optional plugin for slight speed boosts
+    # optional plugin for slight speed boost.
     if hasattr(core, "vszip"):
         return core.vszip.BoxBlur(clip, planes=planes, hradius=hradius, hpasses=hpasses, vradius=vradius, vpasses=vpasses)
     else:
         return core.std.BoxBlur(clip, planes=planes, hradius=hradius, hpasses=hpasses, vradius=vradius, vpasses=vpasses)
 
 def Expression(clips, expr, format=None):
-    # optional plugin for slight speed boosts.
+    # optional plugin for slight speed boost.
     if hasattr(core, "akarin"):
         return core.akarin.Expr(clips, expr, format=format)
     else:
         return core.std.Expr(clips, expr, format=format)
 
 def TemporalMedian(clip, radius=1, planes=None):
-    # fallback plugins because zsmooth does not support non AVX2 CPUs.
+    # fallback plugin because zsmooth does not support non AVX2 CPUs.
     if hasattr(core, "zsmooth"):
         return core.zsmooth.TemporalMedian(clip, radius=radius, planes=planes)
     else:
         return core.tmedian.TemporalMedian(clip, radius=radius, planes=planes)
 
 def Repair(clip, repairclip, mode=[1]):
-    # fallback plugins because zsmooth does not support non AVX2 CPUs.
+    # fallback plugin because zsmooth does not support non AVX2 CPUs.
     if hasattr(core, "zsmooth"):
         return core.zsmooth.Repair(clip, repairclip, mode=mode)
     else:
         return core.rgvs.Repair(clip, repairclip, mode=mode)
 
 def Median(clip, radius=1, planes=None):
-    # fallback plugins because zsmooth does not support non AVX2 CPUs. use std.Median for r=1 and CTMF for higher.
+    # fallback plugin because zsmooth does not support non AVX2 CPUs. use std.Median for r=1 and CTMF for higher.
     if hasattr(core, "zsmooth"):
         return core.zsmooth.Median(clip, radius=radius, planes=planes)
     elif radius == 1:
@@ -456,13 +456,15 @@ def vs_temporalfix(clip, strength=400, tr=6, denoise=False, exclude=None, debug=
 
     # overlay original in areas with large motion to fix blending/ghosting/warping
     mm = core.resize.Point(mm, format=vs.GRAY16)
-    if debug:
-        ref = core.std.Levels(ref, gamma=2)  # just for visualization
     clip = core.std.MaskedMerge(clip, ref, mm)
 
     # denoise low frequencies
     if denoise:
         clip = LowFreqDenoise(ref, clip, mm, strength // 2, tr)
+
+    if debug:
+        ref_debug = core.std.Levels(ref, gamma=2)  # visualize unttouched areas
+        clip = core.std.MaskedMerge(clip, ref_debug, mm)
 
     ##### finalize output clip #####
 
@@ -479,7 +481,7 @@ def vs_temporalfix(clip, strength=400, tr=6, denoise=False, exclude=None, debug=
     # exclude regions from temporal fixing
     if exclude is not None:
         if debug:
-            orig = core.std.Levels(orig, gamma=2)
+            orig = core.std.Levels(orig, gamma=2)  # visualize excluded frames
         clip = ExcludeRegions(clip, orig, exclude=exclude)
     
     # return result
