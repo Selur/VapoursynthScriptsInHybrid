@@ -1,6 +1,6 @@
 import vapoursynth as vs
 from vapoursynth import core
-import mvsfunc as mvf
+import color
 import math
 from typing import Union, Optional, Callable, Dict, Any
 
@@ -187,7 +187,7 @@ def nnedi3_resample(input, target_width=None, target_height=None, src_left=None,
     dVCPlace = 0
     
     # Convert depth to 16-bit
-    last = mvf.Depth(input, depth=16, fulls=fulls)
+    last = color.Depth(input, depth=16, fulls=fulls)
     
     # Color space conversion before scaling
     if scaleInGRAY and sIsYUV:
@@ -261,11 +261,11 @@ def nnedi3_resample(input, target_width=None, target_height=None, src_left=None,
     if scaleInGRAY and dIsYUV:
         dCw = target_width // dHSubS
         dCh = target_height // dVSubS
-        last = mvf.Depth(last, depth=dbitPS, fulls=fulls, fulld=fulld)
+        last = color.Depth(last, depth=dbitPS, fulls=fulls, fulld=fulld)
         blkUV = core.std.BlankClip(last, dCw, dCh, color=[1 << (dbitPS - 1)])
         last = core.std.ShufflePlanes([last, blkUV, blkUV], [0, 0, 0], dColorFamily)
     elif scaleInGRAY and dIsRGB:
-        last = mvf.Depth(last, depth=dbitPS, fulls=fulls, fulld=fulld)
+        last = color.Depth(last, depth=dbitPS, fulls=fulls, fulld=fulld)
         last = core.std.ShufflePlanes([last, last, last], [0, 0, 0], dColorFamily)
     elif scaleInRGB and dIsYUV:
         # Matrix conversion
@@ -277,16 +277,16 @@ def nnedi3_resample(input, target_width=None, target_height=None, src_left=None,
         if dIsSubS:
             dCSS = '411' if dHSubS == 4 else '420' if dVSubS == 2 else '422'
             last = core.fmtc.resample(last, kernel=chromak_down, taps=chromak_down_taps, a1=chromak_down_a1, a2=chromak_down_a2, css=dCSS, fulls=fulld, cplaced=cplaced, invks=chromak_down_invks, invkstaps=chromak_down_invkstaps, planes=[2,3,3])
-        last = mvf.Depth(last, depth=dbitPS, fulls=fulld)
+        last = color.Depth(last, depth=dbitPS, fulls=fulld)
     elif scaleInYUV and dIsRGB:
         # Matrix conversion
         if mats == '2020cl':
             last = core.fmtc.matrix2020cl(last, fulls)
         else:
             last = core.fmtc.matrix(last, mat=mats, fulls=fulls, fulld=True, col_fam=vs.RGB, singleout=-1)
-        last = mvf.Depth(last, depth=dbitPS, fulls=True, fulld=fulld)
+        last = color.Depth(last, depth=dbitPS, fulls=True, fulld=fulld)
     else:
-        last = mvf.Depth(last, depth=dbitPS, fulls=fulls, fulld=fulld)
+        last = color.Depth(last, depth=dbitPS, fulls=fulls, fulld=fulld)
     
     # Output
     return last
@@ -608,7 +608,7 @@ def SSIM_downsample(clip: vs.VideoNode, w: int, h: int, smooth: Union[float, Uni
         use_fmtc: (bool) Whether to use fmtconv for downsampling. If not, vszimg (core.resize.*) will be used.
             Default is False.
 
-        depth_args: (dict) Additional arguments passed to mvf.Depth().
+        depth_args: (dict) Additional arguments passed to color.Depth().
             Default is {}.
 
         gamma: (bool) Default is False.
@@ -658,9 +658,9 @@ def SSIM_downsample(clip: vs.VideoNode, w: int, h: int, smooth: Union[float, Uni
         kernel = 'Bicubic'
 
     if gamma:
-        clip = GammaToLinear(color.Depth(clip, 16), fulls=fulls, fulld=fulld, curve=curve, sigmoid=sigmoid, planes=[0])
+        clip = color.GammaToLinear(color.Depth(clip, 16), fulls=fulls, fulld=fulld, curve=curve, sigmoid=sigmoid, planes=[0])
 
-    clip = mvf.Depth(clip, depth=32, sample=vs.FLOAT, **depth_args)
+    clip = color.Depth(clip, depth=32, sample=vs.FLOAT, **depth_args)
 
     EXPR = core.akarin.Expr if hasattr(core,'akarin') else core.std.Expr
     kernel = kernel.capitalize()
@@ -746,7 +746,7 @@ def BoxFilter(input: vs.VideoNode, radius: int = 16, radius_v: Optional[int] = N
         keep_bits: (bool) Whether to keep the bitdepth of the output the same as input.
             Only works when "fmtc_conv" is enabled and input is integer.
 
-        depth_args: (dict) Additional parameters passed to mvf.Depth in the form of dict.
+        depth_args: (dict) Additional parameters passed to color.Depth in the form of dict.
             Only works when "fmtc_conv" is enabled, input is integer and "keep_bits" is True.
             Default is {}.
 
@@ -816,7 +816,7 @@ def BoxFilter(input: vs.VideoNode, radius: int = 16, radius_v: Optional[int] = N
                 flt = core.fmtc.resample(input, kernel='impulse', impulseh=kernel, impulsev=kernel_v, planes=planes2,
                     cnorm=False, fh=-1, fv=-1, center=False, **resample_args)
                 if keep_bits and input.format.bits_per_sample != flt.format.bits_per_sample:
-                    flt = mvf.Depth(flt, depth=input.format.bits_per_sample, **depth_args)
+                    flt = color.Depth(flt, depth=input.format.bits_per_sample, **depth_args)
                 return flt
 
             elif hasattr(core.std, 'BoxBlur'):

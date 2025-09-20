@@ -1426,3 +1426,82 @@ def CheckColorFamily(color_family, valid_list=None, invalid_list=None):
         if color_family not in [getattr(vs, cf, None) for cf in valid_list]:
             raise value_error(f'color family not supported, only {valid_list} are accepted')
 ################################################################################################################################
+
+################################################################################################################################
+## Frame property function: SetColorSpace()
+################################################################################################################################
+## Modify the color space related frame properties in the given clip.
+## Detailed descriptions of these properties: http://www.vapoursynth.com/doc/apireference.html
+################################################################################################################################
+## Parameters
+##     %Any%: for the property named "_%Any%"
+##         - None: do nothing
+##         - True: do nothing
+##         - False: delete corresponding frame properties if exist
+##         - {int}: set to this value
+################################################################################################################################
+def SetColorSpace(clip, ChromaLocation=None, ColorRange=None, Primaries=None, Matrix=None, Transfer=None):
+    # input clip
+    if not isinstance(clip, vs.VideoNode):
+        raise type_error('"clip" must be a clip!')
+
+    # Modify frame properties
+    if ChromaLocation is None:
+        pass
+    elif isinstance(ChromaLocation, bool):
+        if ChromaLocation is False:
+            clip = RemoveFrameProp(clip, '_ChromaLocation')
+    elif isinstance(ChromaLocation, int):
+        if ChromaLocation >= 0 and ChromaLocation <=5:
+            clip = core.std.SetFrameProp(clip, prop='_ChromaLocation', intval=ChromaLocation)
+        else:
+            raise value_error('valid range of "ChromaLocation" is [0, 5]!')
+    else:
+        raise type_error('"ChromaLocation" must be an int or a bool!')
+
+    if ColorRange is None:
+        pass
+    elif isinstance(ColorRange, bool):
+        if ColorRange is False:
+            clip = RemoveFrameProp(clip, '_ColorRange')
+    elif isinstance(ColorRange, int):
+        if ColorRange >= 0 and ColorRange <=1:
+            clip = core.std.SetFrameProp(clip, prop='_ColorRange', intval=ColorRange)
+        else:
+            raise value_error('valid range of "ColorRange" is [0, 1]!')
+    else:
+        raise type_error('"ColorRange" must be an int or a bool!')
+
+    if Primaries is None:
+        pass
+    elif isinstance(Primaries, bool):
+        if Primaries is False:
+            clip = RemoveFrameProp(clip, '_Primaries')
+    elif isinstance(Primaries, int):
+        clip = core.std.SetFrameProp(clip, prop='_Primaries', intval=Primaries)
+    else:
+        raise type_error('"Primaries" must be an int or a bool!')
+
+    if Matrix is None:
+        pass
+    elif isinstance(Matrix, bool):
+        if Matrix is False:
+            clip = RemoveFrameProp(clip, '_Matrix')
+    elif isinstance(Matrix, int):
+        clip = core.std.SetFrameProp(clip, prop='_Matrix', intval=Matrix)
+    else:
+        raise type_error('"Matrix" must be an int or a bool!')
+
+    if Transfer is None:
+        pass
+    elif isinstance(Transfer, bool):
+        if Transfer is False:
+            clip = RemoveFrameProp(clip, '_Transfer')
+    elif isinstance(Transfer, int):
+        clip = core.std.SetFrameProp(clip, prop='_Transfer', intval=Transfer)
+    else:
+        raise type_error('"Transfer" must be an int or a bool!')
+
+    # Output
+    return clip
+################################################################################################################################
