@@ -762,57 +762,73 @@ def EZDenoise(
     blkSize: int = 8,
     overlap: int = 4,
     pel: int = 1,
-    chroma: bool = False,
+    chroma: bool = True,
     out16: bool = False
 ) -> vs.VideoNode:
     """
-    Denoise a video clip using MVTools' Degrain function.
+    Flexible multi-frame denoising using MVTools.
 
     Parameters:
-    src (vs.VideoNode): The input video clip to be denoised.
-    thSAD (int): Threshold for the SAD (Sum of Absolute Differences). Default is 150.
-    thSADC (Optional[int]): Chroma threshold for the SAD. Defaults to the value of thSAD.
-    tr (int): Temporal radius for the denoising. Determines the number of frames to use for motion analysis. Default is 3.
-    blkSize (int): Block size for motion analysis. Default is 8.
-    overlap (int): Overlap size for motion analysis blocks. Default is 4.
-    pel (int): Precision of the motion estimation (1, 2, or 4). Default is 1.
-    chroma (bool): Whether to process chroma planes. Default is False.
-    out16 (bool): Whether to output in 16-bit depth. Default is False.
-
-    Returns:
-    vs.VideoNode: The denoised video clip.
+    clip (vs.VideoNode): Input clip.
+    thSAD (int): Luma threshold.
+    thSADC (Optional[int]): Chroma threshold (defaults to thSAD).
+    tr (int): Temporal radius (number of frames to include in motion analysis).
+    blkSize (int): Block size for motion estimation.
+    overlap (int): Block overlap.
+    pel (int): Subpixel precision (1,2,4).
+    chroma (bool): Whether to denoise chroma planes.
+    out16 (bool): Convert clip to 16-bit depth before processing.
     """
     thSADC = thSAD if thSADC is None else thSADC
+    plane = 4 if chroma else 1
 
     if out16:
         clip = core.fmtc.bitdepth(clip, bits=16)
-    
-    # Create the super clip
+
     super_clip = core.mv.Super(clip, pel=pel, chroma=chroma, hpad=blkSize, vpad=blkSize)
-    
-    # Generate motion vectors for each tr
+
+    # Analyse motion vectors for each delta up to tr
     mv_b = [core.mv.Analyse(super_clip, isb=True, delta=i, blksize=blkSize, overlap=overlap, chroma=chroma) for i in range(1, tr + 1)]
     mv_f = [core.mv.Analyse(super_clip, isb=False, delta=i, blksize=blkSize, overlap=overlap, chroma=chroma) for i in range(1, tr + 1)]
-    
-    def MDG1(a: int) -> vs.VideoNode:
-        bv = mv_b[a]
-        fv = mv_f[a]
-        MDG = core.mv.Degrain1(clip, super_clip, bv, fv, thsad=thSAD, thsadc=thSADC)
-        return MDG
-    
-    MDGMulti = [MDG1(i) for i in range(tr)]
-    MDGMulti = core.std.Interleave(MDGMulti)
-    
-    def MDGMerge(start: Optional[vs.VideoNode] = None, a: int = 2) -> vs.VideoNode:
-        start = core.std.Merge(core.std.SelectEvery(MDGMulti, tr, 0), core.std.SelectEvery(MDGMulti, tr, 1), 0.5) if start is None else start
-        merge = core.std.Merge(start, core.std.SelectEvery(MDGMulti, tr, a), 1 / (a + 1))
-        a = a + 1
-        clip = merge if a == tr else MDGMerge(start=merge, a=a)
-        return clip
-    
-    denoised_clip = MDGMerge()
-    
-    return denoised_clip
+
+    # Helper to create Degrain clip for a single frame
+    def degrain_clip(delta: int) -> vs.VideoNode:
+        if delta == 1:
+            return core.mv.Degrain1(clip, super_clip, mv_b[0], mv_f[0], thsad=thSAD, thsadc=thSADC, plane=plane)
+        elif delta == 2:
+            return core.mv.Degrain2(clip, super_clip,
+                                    mvbw = mv_b[0], mvfw = mv_f[0],
+                                    mvbw2 = mv_b[1], mvfw2 = mv_f[1],
+                                    thsad = thSAD, thsadc = thSADC, plane=plane)
+        else:  # delta >= 3
+            return core.mv.Degrain3(clip, super_clip,
+                                    mvbw = mv_b[0], mvfw = mv_f[0],
+                                    mvbw2 = mv_b[1], mvfw2 = mv_f[1],
+                                    mvbw3 = mv_b[2], mvfw3 = mv_f[2],
+                                    thsad = thSAD, thsadc = thSADC, plane=plane)
+
+    # If tr <= 3, just return degrain directly
+    if tr <= 3:
+        return degrain_clip(tr)
+
+    # For tr > 3, recursively merge additional frames
+    # Create interleaved Degrain1 frames for extra deltas
+    extra_clips = [degrain_clip(i+1) for i in range(tr)]
+    interleaved = core.std.Interleave(extra_clips)
+
+    def recursive_merge(start: vs.VideoNode = None, a: int = 2) -> vs.VideoNode:
+        if start is None:
+            start = core.std.Merge(core.std.SelectEvery(interleaved, tr, 0),
+                                   core.std.SelectEvery(interleaved, tr, 1), 0.5)
+        merge = core.std.Merge(start, core.std.SelectEvery(interleaved, tr, a), 1 / (a + 1))
+        a += 1
+        if a < tr:
+            return recursive_merge(start=merge, a=a)
+        else:
+            return merge
+
+    denoised = recursive_merge()
+    return denoised
         
     
 ########################### HELPER FUNCTIONS ##########################

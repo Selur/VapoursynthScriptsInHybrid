@@ -97,6 +97,7 @@ import functools
 import math
 import havsfunc as havs
 import vapoursynth as vs
+import ChangeFPS
 from vapoursynth import core
 
 def FrameRateConverter(C, newNum = None, newDen = None, preset = "normal", blkSize = None, blkSizeV = None, frameDouble = None, output = "auto", debug = False, \
@@ -166,7 +167,7 @@ def FrameRateConverter(C, newNum = None, newDen = None, preset = "normal", blkSi
             B = B.rife.RIFE(uhd=C.height>1300, model=rifeModel, tta=rifeTta, gpu_id=rifeGpu)
         B = B.resize.Bicubic(format=C.format, matrix_s="709")
         B = B.frc.ConvertFpsLimit(newNum, newDen, ratio=blendRatio)
-    BHard = havs.ChangeFPS(C, newNum, newDen)
+    BHard = ChangeFPS.ChangeFPS(C, newNum, newDen)
     Blank = core.std.BlankClip(C.resize.Point(format=vs.GRAY8))
 
     ## Adjust parameters for different block sizes, causing stronger or weaker masks
@@ -236,7 +237,7 @@ def FrameRateConverter(C, newNum = None, newDen = None, preset = "normal", blkSi
             .resize.Bicubic(C.width, C.height)
         # Apply mask to Flow / EM
         if outFps:
-            EMdiff = havs.ChangeFPS(EMdiff, newNum, newDen)
+            EMdiff = ChangeFPS.ChangeFPS(EMdiff, newNum, newDen)
         Flow = core.std.MaskedMerge(Flow, Flow2, EMdiff)
         EM = core.std.MaskedMerge(EM, EM2, EMdiff)
 
@@ -280,9 +281,9 @@ def FrameRateConverter(C, newNum = None, newDen = None, preset = "normal", blkSi
     
     ## "M" - Apply artifact removal
     if outFps:
-        EM = havs.ChangeFPS(EM, newNum, newDen)
-        EMskip = havs.ChangeFPS(EMskip, newNum, newDen)
-        EMstp = havs.ChangeFPS(EMstp, newNum, newDen)
+        EM = ChangeFPS.ChangeFPS(EM, newNum, newDen)
+        EMskip = ChangeFPS.ChangeFPS(EMskip, newNum, newDen)
+        EMstp = ChangeFPS.ChangeFPS(EMstp, newNum, newDen)
         M = core.std.MaskedMerge(Flow, B, EM)
         if stp:
             M = core.std.MaskedMerge(M, B, EMstp)
@@ -352,7 +353,7 @@ def FrameRateConverter(C, newNum = None, newDen = None, preset = "normal", blkSi
     
     # debug: display AverageLuma values of Skip, Mask and Raw
     if debug:
-        ShowRaw = havs.ChangeFPS(OutRaw, newNum, newDen) if outFps else OutRaw
+        ShowRaw = ChangeFPS.ChangeFPS(OutRaw, newNum, newDen) if outFps else OutRaw
         EMskipLuma = EMskip.std.PlaneStats(plane=0)
         RawLuma = ShowRaw.std.PlaneStats(plane=0)
         EMLuma = EM.std.PlaneStats(plane=0)
