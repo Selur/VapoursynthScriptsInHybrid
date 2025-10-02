@@ -1,7 +1,7 @@
 import vapoursynth as vs
 from vapoursynth import core
 
-from typing import Union
+from typing import Union, Sequence, Optional
 import math
 
 # Taken from old havsfunc
@@ -143,3 +143,34 @@ def GetPlane(clip, plane=None):
 
     # Process
     return core.std.ShufflePlanes(clip, plane, vs.GRAY)
+    
+def AverageFrames(
+    clip: vs.VideoNode, weights: Union[float, Sequence[float]], scenechange: Optional[float] = None, planes: Optional[Union[int, Sequence[int]]] = None
+) -> vs.VideoNode:
+    if not isinstance(clip, vs.VideoNode):
+        raise vs.Error('AverageFrames: this is not a clip')
+
+    if scenechange:
+        clip = SCDetect(clip, threshold=scenechange)
+    return clip.std.AverageFrames(weights=weights, scenechange=scenechange, planes=planes)
+    
+    
+def SCDetect(clip: vs.VideoNode, threshold: float = 0.1) -> vs.VideoNode:
+    def copy_property(n: int, f: vs.VideoFrame) -> vs.VideoFrame:
+        fout = f[0].copy()
+        fout.props['_SceneChangePrev'] = f[1].props['_SceneChangePrev']
+        fout.props['_SceneChangeNext'] = f[1].props['_SceneChangeNext']
+        return fout
+
+    if not isinstance(clip, vs.VideoNode):
+        raise vs.Error('SCDetect: this is not a clip')
+
+    sc = clip
+    if clip.format.color_family == vs.RGB:
+        sc = clip.resize.Point(format=vs.GRAY8, matrix_s='709')
+
+    sc = sc.misc.SCDetect(threshold=threshold)
+    if clip.format.color_family == vs.RGB:
+        sc = clip.std.ModifyFrame(clips=[clip, sc], selector=copy_property)
+
+    return sc
