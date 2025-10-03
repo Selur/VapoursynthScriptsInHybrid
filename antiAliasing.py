@@ -377,7 +377,7 @@ def aaf(                \
                              , inputClip.std.Minimum(planes=0)\
                              , planes=0)
     expr = 'x {i} > {estr} x {neutral} - {j} 90 / * {bstr} + ?'.format(i=scale(218, peak), estr=scale(estr, peak), neutral=neutral, j=estr - bstr, bstr=scale(bstr, peak))
-    EXPR = core.akarin.Expr if hasattr(core,'akarin') else core.std.Expr
+    EXPR = core.llvmexpr.Expr if hasattr(core, 'llvmexpr') else (core.akarin.Expr if hasattr(core, 'akarin') else core.std.Expr)
     mask = EXPR(mask, expr=[expr] if isGray else [expr, ''])
 
     merged = core.std.MaskedMerge(inputClip, aa, mask, planes=0)

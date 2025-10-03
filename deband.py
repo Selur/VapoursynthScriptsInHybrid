@@ -302,7 +302,7 @@ def GradFun3(src, thr=None, radius=None, elast=None, mask=None, mode=None, ampo=
     if mask > 0:
         dmask = GetPlane(src_8, 0)
         dmask = _Build_gf3_range_mask(dmask, mask)
-        EXPR = core.akarin.Expr if hasattr(core,'akarin') else core.std.Expr
+        EXPR = core.llvmexpr.Expr if hasattr(core, 'llvmexpr') else (core.akarin.Expr if hasattr(core, 'akarin') else core.std.Expr)
         dmask = EXPR([dmask], [mexpr])
         if hasattr(core,'zsmooth'):
           dmask = core.zsmooth.RemoveGrain(dmask, [22])
@@ -541,7 +541,7 @@ def LimitFilter(flt, src, ref=None, thr=None, elast=None, brighten_thr=None, thr
                     expr.append(limitExprY)
             else:
                 expr.append("")
-        EXPR = core.akarin.Expr if hasattr(core,'akarin') else core.std.Expr
+        EXPR = core.llvmexpr.Expr if hasattr(core, 'llvmexpr') else (core.akarin.Expr if hasattr(core, 'akarin') else core.std.Expr)
         if ref is None:
             clip = EXPR([flt, src], expr)
         else:
@@ -795,7 +795,7 @@ def _GF3_bilateral_multistage(src: vs.VideoNode, ref: vs.VideoNode, radius: int,
 
 def _Build_gf3_range_mask(src: vs.VideoNode, radius: int = 1) -> vs.VideoNode:
     last = src
-    EXPR = core.akarin.Expr if hasattr(core,'akarin') else core.std.Expr
+    EXPR = core.llvmexpr.Expr if hasattr(core, 'llvmexpr') else (core.akarin.Expr if hasattr(core, 'akarin') else core.std.Expr)
     if radius > 1:
         ma = mt_expand_multi(last, mode='ellipse', planes=[0], sw=radius, sh=radius)
         mi = mt_inpand_multi(last, mode='ellipse', planes=[0], sw=radius, sh=radius)

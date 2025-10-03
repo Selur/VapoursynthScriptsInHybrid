@@ -29,7 +29,7 @@ def Vinverse(clp, sstr=2.7, amnt=255, chroma=True, scl=0.25):
 
     vblur = clp.std.Convolution(matrix=[50, 99, 50], mode='v')
     vblurD = core.std.MakeDiff(clp, vblur)
-    EXPR = core.akarin.Expr if hasattr(core,'akarin') else core.std.Expr
+    EXPR = core.llvmexpr.Expr if hasattr(core, 'llvmexpr') else (core.akarin.Expr if hasattr(core, 'akarin') else core.std.Expr)
     vshrp = EXPR([vblur, vblur.std.Convolution(matrix=[1, 4, 6, 4, 1], mode='v')], expr=[f'x x y - {sstr} * +'])
     vshrpD = core.std.MakeDiff(vshrp, vblur)
     expr = f'x {neutral} - y {neutral} - * 0 < x {neutral} - abs y {neutral} - abs < x y ? {neutral} - {scl} * {neutral} + x {neutral} - abs y {neutral} - abs < x y ? ?'
@@ -64,7 +64,7 @@ def Vinverse2(clp, sstr=2.7, amnt=255, chroma=True, scl=0.25):
 
     vblur = sbrV(clp)
     vblurD = core.std.MakeDiff(clp, vblur)
-    EXPR = core.akarin.Expr if hasattr(core,'akarin') else core.std.Expr
+    EXPR = core.llvmexpr.Expr if hasattr(core, 'llvmexpr') else (core.akarin.Expr if hasattr(core, 'akarin') else core.std.Expr)
     vshrp = EXPR([vblur, vblur.std.Convolution(matrix=[1, 2, 1], mode='v')], expr=[f'x x y - {sstr} * +'])
     vshrpD = core.std.MakeDiff(vshrp, vblur)
     expr = f'x {neutral} - y {neutral} - * 0 < x {neutral} - abs y {neutral} - abs < x y ? {neutral} - {scl} * {neutral} + x {neutral} - abs y {neutral} - abs < x y ? ?'
@@ -109,7 +109,7 @@ def sbrV(c: vs.VideoNode, r: int = 1, planes: Optional[Union[int, Sequence[int]]
         RG11DS = RG11DS.std.Convolution(matrix=matrix2, planes=planes, mode='v')
     if r >= 3:
         RG11DS = RG11DS.std.Convolution(matrix=matrix2, planes=planes, mode='v')
-    EXPR = core.akarin.Expr if hasattr(core,'akarin') else core.std.Expr
+    EXPR = core.llvmexpr.Expr if hasattr(core, 'llvmexpr') else (core.akarin.Expr if hasattr(core, 'akarin') else core.std.Expr)
     RG11DD = EXPR(
         [RG11D, RG11DS],
         expr=[f'x y - x {neutral} - * 0 < {neutral} x y - abs x {neutral} - abs < x y - {neutral} + x ? ?' if i in planes else '' for i in plane_range],

@@ -506,7 +506,7 @@ def MCTemporalDenoise(i, radius=None, pfMode=3, sigma=None, twopass=None, useTTm
     ### DENOISING: FIRST PASS
     dMVS = d.mv.Super(levels=1, **super_args)
     sm = MCTD_TTSM(d, dMVS, thSAD) if useTTmpSm else MCTD_MVD(d, dMVS, thSAD, thSADC)
-    EXPR = core.akarin.Expr if hasattr(core,'akarin') else core.std.Expr
+    EXPR = core.llvmexpr.Expr if hasattr(core, 'llvmexpr') else (core.akarin.Expr if hasattr(core, 'akarin') else core.std.Expr)
     if limit <= -1:
         smD = core.std.MakeDiff(i, sm, planes=planes)
         expr = f'x {neutral} - abs y {neutral} - abs < x y ?'
@@ -736,7 +736,7 @@ def mClean(clip, thSAD=400, chroma=True, sharp=10, rn=14, deband=0, depth=0, str
 
     # If selected, combining ReNoise
     noise_diff = core.std.MakeDiff(clean2, cy)
-    EXPR = core.akarin.Expr if hasattr(core,'akarin') else core.std.Expr
+    EXPR = core.llvmexpr.Expr if hasattr(core, 'llvmexpr') else (core.akarin.Expr if hasattr(core, 'akarin') else core.std.Expr)
     if rn:
         import color
         expr = "x {a} < 0 x {b} > {p} 0 x {c} - {p} {a} {d} - / * - ? ?".format(a=32*i, b=45*i, c=35*i, d=65*i, p=peak)
@@ -928,7 +928,7 @@ def DitherLumaRebuild(src: vs.VideoNode, s0: float = 2.0, c: float = 0.0625, chr
     k = (s0 - 1) * c
     t = f'x {scale_value(16, 8, bits)} - {scale_value(219, 8, bits)} / 0 max 1 min' if is_integer else 'x 0 max 1 min'
     e = f'{k} {1 + c} {(1 + c) * c} {t} {c} + / - * {t} 1 {k} - * + ' + (f'{scale_value(256, 8, bits)} *' if is_integer else '')
-    EXPR = core.akarin.Expr if hasattr(core,'akarin') else core.std.Expr
+    EXPR = core.llvmexpr.Expr if hasattr(core, 'llvmexpr') else (core.akarin.Expr if hasattr(core, 'akarin') else core.std.Expr)
     return EXPR(src, expr=e if is_gray else [e, f'x {neutral} - 128 * 112 / {neutral} +' if chroma and is_integer else ''])
     
 def AvsPrewitt(clip: vs.VideoNode, planes: Optional[Union[int, Sequence[int]]] = None) -> vs.VideoNode:
@@ -941,7 +941,7 @@ def AvsPrewitt(clip: vs.VideoNode, planes: Optional[Union[int, Sequence[int]]] =
         planes = list(plane_range)
     elif isinstance(planes, int):
         planes = [planes]
-    EXPR = core.akarin.Expr if hasattr(core,'akarin') else core.std.Expr
+    EXPR = core.llvmexpr.Expr if hasattr(core, 'llvmexpr') else (core.akarin.Expr if hasattr(core, 'akarin') else core.std.Expr)
     return EXPR(
         [
             clip.std.Convolution(matrix=[1, 1, 0, 1, 0, -1, 0, -1, -1], planes=planes, saturate=False),
@@ -1119,5 +1119,5 @@ def MinBlur(clp: vs.VideoNode, r: int=1, planes: Optional[Union[int, Sequence[in
             RG4 = clp.ctmf.CTMF(radius=3, planes=planes, opt=2)
 
     expr = 'x y - x z - * 0 < x x y - abs x z - abs < y z ? ?'
-    EXPR = core.akarin.Expr if hasattr(core,'akarin') else core.std.Expr
+    EXPR = core.llvmexpr.Expr if hasattr(core, 'llvmexpr') else (core.akarin.Expr if hasattr(core, 'akarin') else core.std.Expr)
     return EXPR([clp, RG11, RG4], expr=[expr if i in planes else '' for i in range(clp.format.num_planes)])

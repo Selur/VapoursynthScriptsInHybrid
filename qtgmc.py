@@ -662,7 +662,7 @@ def QTGMC(
         repair0 = QTGMC_KeepOnlyBobShimmerFixes(binomial0, bobbed, Rep0, RepChroma and ChromaMotion)
 
     matrix = [1, 2, 1, 2, 4, 2, 1, 2, 1]
-    EXPR = core.akarin.Expr if hasattr(core,'akarin') else core.std.Expr
+    EXPR = core.llvmexpr.Expr if hasattr(core, 'llvmexpr') else (core.akarin.Expr if hasattr(core, 'akarin') else core.std.Expr)
     # Blur image and soften edges to assist in motion matching of edge blocks. Blocks are matched by SAD (sum of absolute differences between blocks), but even
     # a slight change in an edge from frame to frame will give a high SAD due to the higher contrast of edges
     if not isinstance(srchClip, vs.VideoNode):
@@ -891,7 +891,7 @@ def QTGMC(
     # Get the max/min value for each pixel over neighboring motion-compensated frames - used for temporal sharpness limiting
     if TR1 > 0 or temporalSL:
         ediSuper = edi.mv.Super(sharp=SubPelInterp, levels=1, **super_args)
-    EXPR = core.akarin.Expr if hasattr(core,'akarin') else core.std.Expr
+    EXPR = core.llvmexpr.Expr if hasattr(core, 'llvmexpr') else (core.akarin.Expr if hasattr(core, 'akarin') else core.std.Expr)
     if temporalSL:
         bComp1 = core.mv.Compensate(edi, ediSuper, bVec1, thscd1=ThSCD1, thscd2=ThSCD2)
         fComp1 = core.mv.Compensate(edi, ediSuper, fVec1, thscd1=ThSCD1, thscd2=ThSCD2)
@@ -1314,7 +1314,7 @@ def QTGMC_KeepOnlyBobShimmerFixes(Input: vs.VideoNode, Ref: vs.VideoNode, Rep: i
     # Combine above areas to find those areas of difference to restore
     expr1 = f'x {scale_value(129, 8, bits)} < x y {neutral} < {neutral} y ? ?'
     expr2 = f'x {scale_value(127, 8, bits)} > x y {neutral} > {neutral} y ? ?'
-    EXPR = core.akarin.Expr if hasattr(core,'akarin') else core.std.Expr
+    EXPR = core.llvmexpr.Expr if hasattr(core, 'llvmexpr') else (core.akarin.Expr if hasattr(core, 'akarin') else core.std.Expr)
     restore = EXPR(
         [EXPR([diff, choke1], expr=expr1 if Chroma or is_gray else [expr1, '']), choke2], expr=expr2 if Chroma or is_gray else [expr2, '']
     )
@@ -1341,7 +1341,7 @@ def QTGMC_Generate2ndFieldNoise(Input: vs.VideoNode, InterleavedClip: vs.VideoNo
         .grain.Add(var=1800, uvar=1800 if ChromaNoise else 0)
     )
     expr = f'x {neutral} - y * {scale_value(256, 8, bits)} / {neutral} +'
-    EXPR = core.akarin.Expr if hasattr(core,'akarin') else core.std.Expr
+    EXPR = core.llvmexpr.Expr if hasattr(core, 'llvmexpr') else (core.akarin.Expr if hasattr(core, 'akarin') else core.std.Expr)
     varRandom = EXPR([core.std.MakeDiff(noiseMax, noiseMin, planes=planes), random], expr=expr if ChromaNoise or is_gray else [expr, ''])
     newNoise = core.std.MergeDiff(noiseMin, varRandom, planes=planes)
     return Weave(core.std.Interleave([origNoise, newNoise]), tff=TFF)
@@ -1370,7 +1370,7 @@ def QTGMC_MakeLossless(Input: vs.VideoNode, Source: vs.VideoNode, InputType: int
     vertMedian = processed.zsmooth.VerticalCleaner(mode=1) if zsmooth else processed.rgvs.VerticalCleaner(mode=1)
     vertMedDiff = core.std.MakeDiff(processed, vertMedian)
     vmNewDiff1 = vertMedDiff.std.SeparateFields(tff=TFF).std.SelectEvery(cycle=4, offsets=[1, 2])
-    EXPR = core.akarin.Expr if hasattr(core,'akarin') else core.std.Expr
+    EXPR = core.llvmexpr.Expr if hasattr(core, 'llvmexpr') else (core.akarin.Expr if hasattr(core, 'akarin') else core.std.Expr)
     if zsmooth:
       vmNewDiff2 = EXPR(
         [vmNewDiff1.zsmooth.VerticalCleaner(mode=1), vmNewDiff1], expr=f'x {neutral} - y {neutral} - * 0 < {neutral} x {neutral} - abs y {neutral} - abs < x y ? ?'
@@ -1436,7 +1436,7 @@ def QTGMC_ApplySourceMatch(
     # S will make the result sharper, sensible range is about -0.25 to 1.0. Empirically, S=0.5 is effective [will do deeper analysis later]
     errorTemporalSimilarity = 0.5  # S in formula described above
     errorAdjust1 = [1.0, 2.0 / (1.0 + errorTemporalSimilarity), 8.0 / (3.0 + 5.0 * errorTemporalSimilarity)][MatchTR1]
-    EXPR = core.akarin.Expr if hasattr(core,'akarin') else core.std.Expr
+    EXPR = core.llvmexpr.Expr if hasattr(core, 'llvmexpr') else (core.akarin.Expr if hasattr(core, 'akarin') else core.std.Expr)
     if SourceMatch < 1 or InputType == 1:
         match1Clip = Deinterlace
     else:
@@ -1611,7 +1611,7 @@ def DitherLumaRebuild(src: vs.VideoNode, s0: float = 2.0, c: float = 0.0625, chr
     k = (s0 - 1) * c
     t = f'x {scale_value(16, 8, bits)} - {scale_value(219, 8, bits)} / 0 max 1 min' if is_integer else 'x 0 max 1 min'
     e = f'{k} {1 + c} {(1 + c) * c} {t} {c} + / - * {t} 1 {k} - * + ' + (f'{scale_value(256, 8, bits)} *' if is_integer else '')
-    EXPR = core.akarin.Expr if hasattr(core,'akarin') else core.std.Expr
+    EXPR = core.llvmexpr.Expr if hasattr(core, 'llvmexpr') else (core.akarin.Expr if hasattr(core, 'akarin') else core.std.Expr)
     return EXPR(src, expr=e if is_gray else [e, f'x {neutral} - 128 * 112 / {neutral} +' if chroma and is_integer else ''])
 
     
@@ -1646,7 +1646,7 @@ def mt_clamp(
         planes = list(plane_range)
     elif isinstance(planes, int):
         planes = [planes]
-    EXPR = core.akarin.Expr if hasattr(core,'akarin') else core.std.Expr
+    EXPR = core.llvmexpr.Expr if hasattr(core, 'llvmexpr') else (core.akarin.Expr if hasattr(core, 'akarin') else core.std.Expr)
     return EXPR([clip, bright_limit, dark_limit], expr=[f'x y {overshoot} + min z {undershoot} - max' if i in planes else '' for i in plane_range])
     
     
