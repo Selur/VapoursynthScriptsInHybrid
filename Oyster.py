@@ -24,11 +24,11 @@ class get_core:
           self.BMBasic         = self.core.bm3d.VBasic
           self.BMFinal         = self.core.bm3d.VFinal
           self.Aggregate       = self.core.bm3d.VAggregate
-          self.DFTTest         = self.core.dfttest.DFTTest
-          self.KNLMeansCL      = self.core.knlm.KNLMeansCL
+          self.DFTTest         = self.core.dfttest2_nvrtc.DFTTest if hasattr(self.core, 'dfttest2_nvrtc') else core.dfttest2_cuda.DFTTest if hasattr(self.core, 'dfttest2_nvrtc') else self.core.dfttest.DFTTest
+          self.KNLMeansCL      = self.core.nlm_cuda.NLMeans if hasattr(self.core, 'nlm_cuda') else self.core.knlm.KNLMeansCL
           self.NNEDI           = self.core.nnedi3cl.NNEDI3CL if hasattr(self.core, 'nnedi3cl') else self.core.znedi3.nnedi3 if hasattr(self.core, 'znedi3') else self.core.nnedi3.nnedi3
           self.Resample        = self.core.fmtc.resample
-          self.Expr            = self.core.akarin.Expr if hasattr(self.core,'akarin') else self.core.std.Expr
+          self.Expr            = self.core.llvmexpr.Expr if hasattr(self.core, 'llvmexpr') else self.core.akarin.Expr if hasattr(self.core,'akarin') else self.core.std.Expr
           self.MakeDiff        = self.core.std.MakeDiff
           self.MergeDiff       = self.core.std.MergeDiff
           self.Crop            = self.core.std.CropRel
