@@ -14,21 +14,71 @@ dfttest_args                   = dict(smode=0, sosize=0, tbsize=1, tosize=0, tmo
 
 class get_core:
       def __init__(self):
-          self.core            = vs.core
-          self.MSuper          = self.core.mvsf.Super
-          self.MAnalyze        = self.core.mvsf.Analyze
-          self.MRecalculate    = self.core.mvsf.Recalculate
-          self.MDegrain        = self.core.mvsf.Degrain
-          self.RGB2OPP         = self.core.bm3d.RGB2OPP
-          self.OPP2RGB         = self.core.bm3d.OPP2RGB
-          self.BMBasic         = self.core.bm3d.VBasic
-          self.BMFinal         = self.core.bm3d.VFinal
-          self.Aggregate       = self.core.bm3d.VAggregate
-          self.DFTTest         = self.core.dfttest2_nvrtc.DFTTest if hasattr(self.core, 'dfttest2_nvrtc') else core.dfttest2_cuda.DFTTest if hasattr(self.core, 'dfttest2_nvrtc') else self.core.dfttest.DFTTest
-          self.KNLMeansCL      = self.core.nlm_cuda.NLMeans if hasattr(self.core, 'nlm_cuda') else self.core.knlm.KNLMeansCL
-          self.NNEDI           = self.core.nnedi3cl.NNEDI3CL if hasattr(self.core, 'nnedi3cl') else self.core.znedi3.nnedi3 if hasattr(self.core, 'znedi3') else self.core.nnedi3.nnedi3
+          self.core = vs.core
+
+          # --- motion estimation ---
+          self.MSuper       = self.core.mvsf.Super
+          self.MAnalyze     = self.core.mvsf.Analyze
+          self.MRecalculate = self.core.mvsf.Recalculate
+          self.MDegrain     = self.core.mvsf.Degrain
+
+          # --- BM3D / BM3DCUDA selection ---
+          if hasattr(self.core, 'bm3dcuda_rtc'):
+              bm3d_core = self.core.bm3dcuda_rtc
+              # BM3DCUDA uses a single 'BM3D' entry, no separate RGB2OPP/OPP2RGB
+              self.BMBasic   = lambda **kwargs: bm3d_core.BM3D(**kwargs, radius=0)
+              self.BMFinal   = lambda **kwargs: bm3d_core.BM3D(**kwargs, radius=0)
+              self.Aggregate = bm3d_core.VAggregate
+              self.RGB2OPP   = lambda clip, _: clip
+              self.OPP2RGB   = lambda clip, _: clip
+
+          elif hasattr(self.core, 'bm3dcuda'):
+              bm3d_core = self.core.bm3dcuda
+              self.BMBasic   = lambda **kwargs: bm3d_core.BM3D(**kwargs, radius=0)
+              self.BMFinal   = lambda **kwargs: bm3d_core.BM3D(**kwargs)
+              self.Aggregate = bm3d_core.VAggregate
+              self.RGB2OPP   = lambda clip, _: clip
+              self.OPP2RGB   = lambda clip, _: clip
+
+          if hasattr(self.core, 'bm3d'):
+              bm3d_core = self.core.bm3d
+              # Standard BM3D has Basic, Final, VBasic, VFinal, RGB2OPP, OPP2RGB
+              self.BMBasic   = bm3d_core.Basic
+              self.BMFinal   = bm3d_core.Final
+              self.Aggregate = bm3d_core.VAggregate
+              self.RGB2OPP   = bm3d_core.RGB2OPP
+              self.OPP2RGB   = bm3d_core.OPP2RGB
+
+          else:
+              raise RuntimeError("No BM3D plugin found.")
+
+          # --- DFTTest selection ---
+          if hasattr(self.core, 'dfttest2_nvrtc'):
+              self.DFTTest = self.core.dfttest2_nvrtc.DFTTest
+          elif hasattr(self.core, 'dfttest2_cuda'):
+              self.DFTTest = self.core.dfttest2_cuda.DFTTest
+          else:
+              self.DFTTest = self.core.dfttest.DFTTest
+
+          # --- KNLMeansCL ---
+          if hasattr(self.core, 'nlm_cuda'):
+              self.KNLMeansCL = self.core.nlm_cuda.NLMeans
+          else:
+              self.KNLMeansCL = self.core.knlm.KNLMeansCL
+
+          # --- NNEDI ---
+          if hasattr(self.core, 'nnedi3cl'):
+              self.NNEDI = self.core.nnedi3cl.NNEDI3CL
+          elif hasattr(self.core, 'znedi3'):
+              self.NNEDI = self.core.znedi3.nnedi3
+          else:
+              self.NNEDI = self.core.nnedi3.nnedi3
+
+          # --- Common functions ---
           self.Resample        = self.core.fmtc.resample
-          self.Expr            = self.core.llvmexpr.Expr if hasattr(self.core, 'llvmexpr') else self.core.akarin.Expr if hasattr(self.core,'akarin') else self.core.std.Expr
+          self.Expr            = (self.core.llvmexpr.Expr if hasattr(self.core, 'llvmexpr')
+                                  else self.core.akarin.Expr if hasattr(self.core,'akarin')
+                                  else self.core.std.Expr)
           self.MakeDiff        = self.core.std.MakeDiff
           self.MergeDiff       = self.core.std.MergeDiff
           self.Crop            = self.core.std.CropRel
