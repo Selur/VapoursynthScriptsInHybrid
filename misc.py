@@ -218,3 +218,56 @@ def ShiftLinesHorizontally(clip: vs.VideoNode, shift: int, ymin: int, ymax: int)
     
     return core.std.StackVertical(parts)
     
+# Wrapper
+def scene_aware(
+    clip: vs.VideoNode,
+    filter_func,
+    sc_threshold: float = 0.1,
+    min_scene_len: int = 5,
+    color_matrix: str = "709",
+    **filter_kwargs
+) -> vs.VideoNode:
+    """
+    Automatically split a clip by scene changes and apply a filter separately per scene.
+    """
+
+    if not isinstance(clip, vs.VideoNode):
+        raise TypeError("scene_aware: 'clip' must be a VideoNode")
+
+    # --- SCDetect: clip must be constant format and of integer 8-16 bit type or 32 bit float
+    sc_src = clip
+    if clip.format.color_family == vs.RGB:
+        sc_src = core.resize.Bicubic(clip, format=vs.YUV420P8, matrix_s=color_matrix)  # convert to YUV8 for SCDetect
+    elif clip.format.sample_type == vs.FLOAT and clip.format.bits_per_sample != 32:
+        sc_src = core.resize.Bicubic(clip, format=vs.YUV420P8)
+
+    sc = core.misc.SCDetect(sc_src, threshold=sc_threshold)
+    sc_frames = [i for i in range(clip.num_frames) if sc.get_frame(i).props._SceneChangePrev == 1]
+
+    # --- Remove very short segments
+    clean_frames = []
+    prev = 0
+    for f in sc_frames:
+        if f - prev >= min_scene_len:
+            clean_frames.append(f)
+            prev = f
+    sc_frames = clean_frames
+
+    # --- Build scene ranges
+    start = 0
+    ranges = []
+    for f in sc_frames:
+        ranges.append((start, f))
+        start = f
+    ranges.append((start, clip.num_frames - 1))
+
+    # --- Apply filter per scene
+    processed_segments = []
+    for i, (s, e) in enumerate(ranges):
+        sub = clip[s:e+1]
+        out = filter_func(sub, **filter_kwargs)
+        processed_segments.append(out)
+
+    # --- Join them back
+    result = core.std.Splice(processed_segments)
+    return result
