@@ -257,7 +257,7 @@ def scene_aware(
     start = 0
     ranges = []
     for f in sc_frames:
-        ranges.append((start, f))
+        ranges.append((start, f - 1))
         start = f
     ranges.append((start, clip.num_frames - 1))
 
