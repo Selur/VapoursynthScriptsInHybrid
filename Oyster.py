@@ -22,24 +22,7 @@ class get_core:
           self.MRecalculate = self.core.mvsf.Recalculate
           self.MDegrain     = self.core.mvsf.Degrain
 
-          # --- BM3D / BM3DCUDA selection ---
-          if hasattr(self.core, 'bm3dcuda_rtc'):
-              bm3d_core = self.core.bm3dcuda_rtc
-              # BM3DCUDA uses a single 'BM3D' entry, no separate RGB2OPP/OPP2RGB
-              self.BMBasic   = lambda **kwargs: bm3d_core.BM3D(**kwargs, radius=0)
-              self.BMFinal   = lambda **kwargs: bm3d_core.BM3D(**kwargs, radius=0)
-              self.Aggregate = bm3d_core.VAggregate
-              self.RGB2OPP   = lambda clip, _: clip
-              self.OPP2RGB   = lambda clip, _: clip
-
-          elif hasattr(self.core, 'bm3dcuda'):
-              bm3d_core = self.core.bm3dcuda
-              self.BMBasic   = lambda **kwargs: bm3d_core.BM3D(**kwargs, radius=0)
-              self.BMFinal   = lambda **kwargs: bm3d_core.BM3D(**kwargs)
-              self.Aggregate = bm3d_core.VAggregate
-              self.RGB2OPP   = lambda clip, _: clip
-              self.OPP2RGB   = lambda clip, _: clip
-
+          # --- BM3D selection ---
           if hasattr(self.core, 'bm3d'):
               bm3d_core = self.core.bm3d
               # Standard BM3D has Basic, Final, VBasic, VFinal, RGB2OPP, OPP2RGB
@@ -48,17 +31,11 @@ class get_core:
               self.Aggregate = bm3d_core.VAggregate
               self.RGB2OPP   = bm3d_core.RGB2OPP
               self.OPP2RGB   = bm3d_core.OPP2RGB
-
           else:
               raise RuntimeError("No BM3D plugin found.")
 
           # --- DFTTest selection ---
-          if hasattr(self.core, 'dfttest2_nvrtc'):
-              self.DFTTest = self.core.dfttest2_nvrtc.DFTTest
-          elif hasattr(self.core, 'dfttest2_cuda'):
-              self.DFTTest = self.core.dfttest2_cuda.DFTTest
-          else:
-              self.DFTTest = self.core.dfttest.DFTTest
+          self.DFTTest = self.core.dfttest.DFTTest
 
           # --- KNLMeansCL ---
           if hasattr(self.core, 'nlm_cuda'):
