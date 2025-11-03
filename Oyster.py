@@ -43,8 +43,8 @@ class get_core:
           if hasattr(self.core, 'bm3d'):
               bm3d_core = self.core.bm3d
               # Standard BM3D has Basic, Final, VBasic, VFinal, RGB2OPP, OPP2RGB
-              self.BMBasic   = bm3d_core.Basic
-              self.BMFinal   = bm3d_core.Final
+              self.BMBasic   = bm3d_core.VBasic
+              self.BMFinal   = bm3d_core.VFinal
               self.Aggregate = bm3d_core.VAggregate
               self.RGB2OPP   = bm3d_core.RGB2OPP
               self.OPP2RGB   = bm3d_core.OPP2RGB
