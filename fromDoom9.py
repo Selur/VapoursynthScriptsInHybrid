@@ -102,7 +102,7 @@ def StabilizeIT(clip: vs.VideoNode, div: float=2.0, initZoom: float=1.0, zoomMax
 # By default it is disabled (only for presets 2 and 3)
 # - Repair is an option for certain sources or anime/cartoon content, where ghosting may be evident
 # By default it is disabled (maybe for preset = 1 it is not necessary to activate it)
-def Small_Deflicker(clip: vs.VideoNode, width: int=0, height: int=0, preset: int=2, cnr: bool=False,rep: bool=True, zsmooth: bool=False):
+def Small_Deflicker(clip: vs.VideoNode, width: int=0, height: int=0, preset: int=2, cnr: bool=False,rep: bool=True):
   clip = core.misc.SCDetect(clip)
   if width == 0:
     width = toMod(clip.width/4,16)
@@ -117,7 +117,7 @@ def Small_Deflicker(clip: vs.VideoNode, width: int=0, height: int=0, preset: int
     raise vs.Error('preset not valid (1, 2 or 3)')
 
   small = core.resize.Bicubic(clip, width,height) # can be altered, but ~25% of original resolution seems reasonable
-  zsmooth = zsmooth and hasattr(core,'zsmooth')
+  zsmooth = hasattr(core,'zsmooth')
   if preset == 1:
     smallModified = deflickerPreset1(small, zsmooth=zsmooth)
   elif preset == 2:
