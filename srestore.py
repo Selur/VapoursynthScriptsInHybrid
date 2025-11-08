@@ -563,16 +563,21 @@ def sRestoreMUVs(
 
         ### output clip ###
         if dup == 4:
-            ret = fin
+            ret = fin[n] if n < fin.num_frames else fin[fin.num_frames - 1]
         else:
             oclp = mec if mer and dup == 0 else source
             opos += dup - (1 if dup == 0 and mer and dbc < dcn else 0)
-            if opos < 0:
-                ret = oclp.std.DuplicateFrames(frames=[0] * -opos)
-            else:
-                ret = oclp.std.Trim(first=opos)
-
-        ret = ret[n]
+            
+            # Calculate the actual frame number to output
+            target_frame = n + opos
+            
+            # Ensure the target frame is within valid bounds
+            if target_frame < 0:
+                target_frame = 0
+            elif target_frame >= oclp.num_frames:
+                target_frame = oclp.num_frames - 1
+            
+            ret = oclp[target_frame]
 
         props = state_obj.to_frame_props()
         if hasattr(core.std, "SetFrameProps"):
