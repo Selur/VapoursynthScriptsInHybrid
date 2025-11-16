@@ -223,7 +223,13 @@ def SMDegrain(input, tr=2, thSAD=300, thSADC=None, RefineMotion=False, contrasha
     # Finally, MDegrain
     search_params = dict(blksize=blksize, search=search, chroma=chroma, truemotion=truemotion, global_=MVglobal, overlap=overlap, dct=dct)
     refine_params = dict(thsad=thSAD2, blksize=blksize // 2, search=search, chroma=chroma, truemotion=truemotion, overlap=overlap // 2, dct=dct) if RefineMotion else None
-    vectors = get_motion_vectors(super_search, super_render if RefineMotion else None, search_params, refine_params, tr, interlaced)
+        
+    refine_super = None
+    if RefineMotion:
+        # If Recalculate was created earlier in the function it will be in locals()
+        refine_super = Recalculate if 'Recalculate' in locals() else super_render
+    vectors = get_motion_vectors(super_search, refine_super, search_params, refine_params, tr, interlaced)
+    
     degrain_args = dict(thsad=thSAD, thsadc=thSADC, plane=plane, limit=limit, limitc=limitc, thscd1=thSCD1, thscd2=thSCD2)
     if not GlobalO:
       if interlaced:
