@@ -353,6 +353,6 @@ def DelayAudio(audio_clip: vs.AudioNode, delay_ms: float) -> vs.AudioNode:
 
     if delay_ms > 0: # prepend silence
         silence = core.std.BlankAudio(clip=audio_clip, length=delay_samples)
-        return core.std.AudioSplice([silence, audio])
+        return core.std.AudioSplice([silence, audio_clip])
     else: # negative delay → trim start
         return core.std.AudioTrim(audio_clip, first=delay_samples)
