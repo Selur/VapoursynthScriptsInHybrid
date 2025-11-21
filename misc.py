@@ -218,7 +218,7 @@ def ShiftLinesHorizontally(clip: vs.VideoNode, shift: int, ymin: int, ymax: int)
     
     return core.std.StackVertical(parts)
     
-# Wrapper
+
 def scene_aware(
     clip: vs.VideoNode,
     filter_func,
@@ -273,7 +273,7 @@ def scene_aware(
     return result
 
 # define ShowFramesAround here (correct FrameEval usage)
-def ShowFramesAround(src_clip, count=3):
+def ShowFramesAround(src_clip: vs.VideoNode, count: int = 3) -> vs.VideoNode:
     """
     Return a clip that shows `count` consecutive frames horizontally,
     centered around each frame of the source. `count` must be odd.
@@ -292,7 +292,7 @@ def ShowFramesAround(src_clip, count=3):
     template = core.std.StackHorizontal([src_clip] * count)
 
     # callback for FrameEval: given frame index n, gather frames around n from src_clip
-    def _select(n):
+    def _select(n: int) -> vs.VideoNode:
         frames = []
         for offset in range(-radius, radius + 1):
             i = n + offset
@@ -308,3 +308,51 @@ def ShowFramesAround(src_clip, count=3):
 
     # Evaluate on the template so FrameEval sees matching dimensions
     return core.std.FrameEval(template, _select)
+
+
+def AddVerticalLines(clip: vs.VideoNode, interval_ms: int = 10, color: float = 1.0) -> vs.VideoNode:
+    """
+    Draw vertical lines every `interval_ms` milliseconds.
+    """
+    width, height = clip.width, clip.height
+    fps = clip.fps_num / clip.fps_den
+    pixels_per_interval = max(1, int(width * interval_ms / (1000 / fps)))
+
+    # start with a blank clip of the same size as clip
+    lines_clip = core.std.BlankClip(
+        clip=clip,
+        color=0.0,
+        width=width,
+        height=height
+    )
+
+    for x in range(0, width, pixels_per_interval):
+        # create a single-pixel-wide vertical line
+        line = core.std.BlankClip(clip=clip, color=color, width=1, height=height)
+        # shift it into position
+        left = x
+        right = width - x - 1
+        line = core.std.AddBorders(line, left=left, right=right, top=0, bottom=0)
+        # overlay this line on lines_clip
+        lines_clip = core.std.MergeDiff(lines_clip, line)
+
+    # overlay the vertical lines on the original clip
+    return core.std.MergeDiff(clip, lines_clip)
+    
+def DelayAudio(audio_clip: vs.AudioNode, delay_ms: float) -> vs.AudioNode:
+    """
+    Delay an AudioNode by delay_ms milliseconds.
+    Positive delay_ms prepends silence (audio plays later),
+    Negative delay_ms trims the start (audio plays earlier).
+    """
+    if delay_ms == 0:
+        return audio_clip
+
+    sr = audio_clip.sample_rate  # sample rate of the audio
+    delay_samples = abs(int(sr * (delay_ms / 1000)))
+
+    if delay_ms > 0: # prepend silence
+        silence = core.std.BlankAudio(clip=audio_clip, length=delay_samples)
+        return core.std.AudioSplice([silence, audio])
+    else: # negative delay → trim start
+        return core.std.AudioTrim(audio_clip, first=delay_samples)
