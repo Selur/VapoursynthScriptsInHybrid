@@ -271,3 +271,40 @@ def scene_aware(
     # --- Join them back
     result = core.std.Splice(processed_segments)
     return result
+
+# define ShowFramesAround here (correct FrameEval usage)
+def ShowFramesAround(src_clip, count=3):
+    """
+    Return a clip that shows `count` consecutive frames horizontally,
+    centered around each frame of the source. `count` must be odd.
+    This implementation builds a stacked TEMPLATE clip and uses FrameEval
+    on that template so returned frames match expected dimensions.
+    """
+    if count < 1 or (count % 2) == 0:
+        raise ValueError("ShowFramesAround: count must be an odd integer >= 1")
+
+    radius = count // 2
+    last = src_clip.num_frames - 1
+
+    # Build a template whose frames already have the stacked (wider) dimensions:
+    # stack `count` copies of the source clip horizontally. The template has the same
+    # number of frames as src_clip and the desired output dimensions.
+    template = core.std.StackHorizontal([src_clip] * count)
+
+    # callback for FrameEval: given frame index n, gather frames around n from src_clip
+    def _select(n):
+        frames = []
+        for offset in range(-radius, radius + 1):
+            i = n + offset
+            # clamp to first/last frame
+            if i < 0:
+                i = 0
+            elif i > last:
+                i = last
+            # index into the original source clip to get the requested frame
+            frames.append(src_clip[i])
+        # stack the selected frames horizontally; dimensions match the template
+        return core.std.StackHorizontal(frames)
+
+    # Evaluate on the template so FrameEval sees matching dimensions
+    return core.std.FrameEval(template, _select)
