@@ -1201,7 +1201,10 @@ def QTGMC_Interpolate(
 
     
     if opencl:
-        nnedi3 = partial(core.nnedi3cl.NNEDI3CL, field=field, device=device, **nnedi3_args)
+        if hasattr(core, 'sneedif'):
+          nnedi3 = partial(core.sneedif.NNEDI3, field=field, device=device, **nnedi3_args)
+        else:
+          nnedi3 = partial(core.nnedi3cl.NNEDI3CL, field=field, device=device, **nnedi3_args)
         if hasattr(core, 'EEDI3CL'):
           eedi3 = partial(core.eedi3m.EEDI3CL, field=field, planes=planes, mdis=EdiMaxD, device=device, **eedi3_args)
         else:

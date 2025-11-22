@@ -1,8 +1,10 @@
 # Original: https://github.com/IFeelBloated/Oyster/blob/master/Oyster.py
-# modified by Selur, to support Akarin, znedi3, nnedi3cl if present
+# modified by Selur, to support Akarin, znedi3, nnedi3cl, sneedif if present
 
 import vapoursynth as vs
 import math
+import sys
+import json
 
 fmtc_args                      = dict(fulls=True, fulld=True)
 msuper_args                    = dict(hpad=0, vpad=0, sharp=2, levels=0)
@@ -44,12 +46,20 @@ class get_core:
               self.KNLMeansCL = self.core.knlm.KNLMeansCL
 
           # --- NNEDI ---
+          if hasattr(core, 'sneedif'):
+              self.NNEDI = self.core.sneedif.NNEDI3
           if hasattr(self.core, 'nnedi3cl'):
               self.NNEDI = self.core.nnedi3cl.NNEDI3CL
           elif hasattr(self.core, 'znedi3'):
               self.NNEDI = self.core.znedi3.nnedi3
           else:
               self.NNEDI = self.core.nnedi3.nnedi3
+              
+          # --- SVPFlow plugins ---
+          if hasattr(self.core, "svp1"):
+              self.svp1 = self.core.svp1
+          if hasattr(self.core, "svp2"):
+              self.svp2 = self.core.svp2    
 
           # --- Common functions ---
           self.Resample        = self.core.fmtc.resample
@@ -138,30 +148,136 @@ class internal:
              clip              = core.Transpose(core.NNEDI(core.Transpose(core.NNEDI(clip, **nnedi_args)), **nnedi_args))
           return clip
 
-      def basic(core, src, super, radius, pel, sad, short_time, color):
-          plane                = 4 if color else 0
-          src                  = core.Pad(src, 128, 128, 128, 128)
-          supersoft            = core.MSuper(src, pelclip=super, rfilter=4, pel=pel, chroma=color, **msuper_args)
-          supersharp           = core.MSuper(src, pelclip=super, rfilter=2, pel=pel, chroma=color, **msuper_args)
+      @staticmethod
+      def svp_overlap_from_mv(blksize, mv_overlap):
+          """
+          Convert MVTools pixel overlap to SVPFlow allowed index.
+          Allowed fractions: 0, 1/8, 1/4, 1/2 of block
+          Returns: 0,1,2,3
+          """
+          allowed = [0, blksize // 8, blksize // 4, blksize // 2]
+          diffs = [abs(mv_overlap - a) for a in allowed]
+          return diffs.index(min(diffs))
+
+      @staticmethod
+      def svpflow_process(clip, new_num=None, new_den=1, preset='Medium', tuning='Film',
+                          super_clip=None, radius=2, pel=2, sad=400, short_time=False, color=False):
+
+          core = vs.core
+
+          # --- Super clip config ---
+          super_opts = {"pel": pel, "gpu": 1}
+          super_opts_json = json.dumps(super_opts)
+
+          # --- SAD mapping ---
+          svp_sad = max(1, int(sad))
+          refine_sad = max(1, int(sad // 8))
+
+          # --- Convert clip to YUV420P8 ---
+          svp_input = core.resize.Bicubic(clip, format=vs.YUV420P8)
+
+          # --- Build SVPFlow vectors steps, safe overlaps ---
           if short_time:
-             constant          = 0.0001989762736579584832432989326
-             me_sad            = [constant * math.pow(sad, 2.0) * math.log(1.0 + 1.0 / (constant * sad))]
-             me_sad           += [sad]
-             vmulti            = core.MAnalyze(supersoft, radius=radius, chroma=color, overlap=4, blksize=8, **manalyze_args)
-             vmulti            = core.MRecalculate(supersoft, vmulti, chroma=color, overlap=2, blksize=4, thsad=me_sad[0], **mrecalculate_args)
-             vmulti            = core.MRecalculate(supersoft, vmulti, chroma=color, overlap=1, blksize=2, thsad=me_sad[1], **mrecalculate_args)
+              mv_steps = [(8, 4), (4, 2), (2, 1)]
           else:
-             constant          = 0.0000139144247313257680589719533
-             me_sad            = constant * math.pow(sad, 2.0) * math.log(1.0 + 1.0 / (constant * sad))
-             vmulti            = core.MAnalyze(supersoft, radius=radius, chroma=color, overlap=64, blksize=128, **manalyze_args)
-             vmulti            = core.MRecalculate(supersoft, vmulti, chroma=color, overlap=32, blksize=64, thsad=me_sad, **mrecalculate_args)
-             vmulti            = core.MRecalculate(supersoft, vmulti, chroma=color, overlap=16, blksize=32, thsad=me_sad, **mrecalculate_args)
-             vmulti            = core.MRecalculate(supersoft, vmulti, chroma=color, overlap=8, blksize=16, thsad=me_sad, **mrecalculate_args)
-             vmulti            = core.MRecalculate(supersoft, vmulti, chroma=color, overlap=4, blksize=8, thsad=me_sad, **mrecalculate_args)
-             vmulti            = core.MRecalculate(supersoft, vmulti, chroma=color, overlap=2, blksize=4, thsad=me_sad, **mrecalculate_args)
-          clip                 = core.MDegrain(src, supersharp, vmulti, thsad=sad, plane=plane, **mdegrain_args)
-          clip                 = core.Crop(clip, 128, 128, 128, 128)
-          return clip
+              mv_steps = [(128, 64), (64, 32), (32, 16), (16, 8), (8, 4), (4, 2)]
+
+          vectors_list = []
+          for blksize, mv_overlap in mv_steps:
+              vectors_list.append({
+                  "block": {"w": blksize, "overlap": internal.svp_overlap_from_mv(blksize, mv_overlap)},
+                  "main": {"search": {"distance": -10}, "bad": {"sad": svp_sad}},
+                  "refine": [{"thsad": refine_sad}]
+              })
+          vectors_opts_json = json.dumps({"vectors": vectors_list})
+
+          # --- SmoothFps config ---
+          if new_num is not None:
+              smooth_opts = {
+                  "rate": {"num": new_num, "den": new_den, "abs": True},
+                  "algo": 13,
+                  "mask": {"cover": 80, "area": 0, "area_sharp": 1.2},
+                  "scene": {"blend": True, "mode": 0}
+              }
+          else:
+              smooth_opts = {
+                  "rate": {"num": 2, "den": 1, "abs": False},
+                  "algo": 13,
+                  "mask": {"cover": 80, "area": 0, "area_sharp": 1.2},
+                  "scene": {"blend": True, "mode": 0}
+              }
+          smooth_opts_json = json.dumps(smooth_opts)
+
+          try:
+              # --- Call SVPFlow ---
+              super_clip_obj = core.svp1.Super(svp_input, super_opts_json)
+              vectors_clip = core.svp1.Analyse(super_clip_obj['clip'], super_clip_obj['data'], svp_input, vectors_opts_json)
+              out = core.svp2.SmoothFps(
+                  svp_input,
+                  super_clip_obj['clip'], super_clip_obj['data'],
+                  vectors_clip['clip'], vectors_clip['data'],
+                  smooth_opts_json
+              )
+
+              # Convert back to float YUV444PS
+              out_float = core.resize.Bicubic(out, format=vs.YUV444PS)
+
+              # Crop padding if necessary
+              if super_clip is None:
+                  out_float = core.std.CropRel(out_float, left=128, right=128, top=128, bottom=128)
+
+              return out_float
+
+          except Exception as e:
+              # Fallback to MVTools
+              # print(f"SVPFlow failed, falling back to MVTools: {e}")
+              return None
+
+
+      def basic(core, src, super_clip=None, radius=2, pel=2, sad=400, short_time=False, color=False, use_svpflow=True):
+          plane = 4 if color else 0
+
+          # Ensure src is single-precision float
+          if src.format.sample_type != vs.FLOAT:
+              src = core.fmtc.bitdepth(src, bits=32, planes=[0,1,2])
+
+          src_padded = core.Pad(src, 128, 128, 128, 128)
+
+          if use_svpflow:
+              svp_out = internal.svpflow_process(
+                  src_padded, new_num=None, new_den=1, preset='Medium', tuning='Film',
+                  super_clip=super_clip, radius=radius, pel=pel, sad=sad,
+                  short_time=short_time, color=color
+              )
+              if svp_out is not None:
+                  return core.Crop(svp_out, 128, 128, 128, 128)
+
+          # --- MVTools fallback ---
+          if super_clip is None:
+              supersoft = core.MSuper(src_padded, rfilter=4, pel=pel, chroma=color, **msuper_args)
+              supersharp = core.MSuper(src_padded, rfilter=2, pel=pel, chroma=color, **msuper_args)
+          else:
+              supersoft = supersharp = super_clip
+
+          # Motion estimation
+          if short_time:
+              constant = 0.0001989762736579584832432989326
+              me_sad = [constant * math.pow(sad, 2.0) * math.log(1.0 + 1.0 / (constant * sad)), sad]
+              vmulti = core.MAnalyze(supersoft, radius=radius, chroma=color, overlap=4, blksize=8, **manalyze_args)
+              vmulti = core.MRecalculate(supersoft, vmulti, chroma=color, overlap=2, blksize=4, thsad=me_sad[0], **mrecalculate_args)
+              vmulti = core.MRecalculate(supersoft, vmulti, chroma=color, overlap=1, blksize=2, thsad=me_sad[1], **mrecalculate_args)
+          else:
+              constant = 0.0000139144247313257680589719533
+              me_sad = constant * math.pow(sad, 2.0) * math.log(1.0 + 1.0 / (constant * sad))
+              vmulti = core.MAnalyze(supersoft, radius=radius, chroma=color, overlap=3, blksize=128, **manalyze_args)
+              vmulti = core.MRecalculate(supersoft, vmulti, chroma=color, overlap=3, blksize=64, thsad=me_sad, **mrecalculate_args)
+              vmulti = core.MRecalculate(supersoft, vmulti, chroma=color, overlap=3, blksize=32, thsad=me_sad, **mrecalculate_args)
+              vmulti = core.MRecalculate(supersoft, vmulti, chroma=color, overlap=3, blksize=16, thsad=me_sad, **mrecalculate_args)
+              vmulti = core.MRecalculate(supersoft, vmulti, chroma=color, overlap=2, blksize=8, thsad=me_sad, **mrecalculate_args)
+              vmulti = core.MRecalculate(supersoft, vmulti, chroma=color, overlap=1, blksize=4, thsad=me_sad, **mrecalculate_args)
+
+          clip = core.MDegrain(src_padded, supersharp, vmulti, thsad=sad, plane=plane, **mdegrain_args)
+          return core.Crop(clip, 128, 128, 128, 128)
 
       def deringing(core, src, ref, radius, h, sigma, \
                     mse, hard_thr, block_size, block_step, group_size, bm_range, bm_step, ps_num, ps_range, ps_step, \

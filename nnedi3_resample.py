@@ -439,9 +439,9 @@ def nnedi3_dh(input, field=1, nsize=None, nns=None, qual=None, etype=None, pscrn
     # check nnedi3 plugin installation
     has_znedi3 = hasattr(core, 'znedi3')
     has_nnedi3 = hasattr(core, 'nnedi3')
-    has_nnedi3cl = hasattr(core, 'nnedi3cl')
+    has_nnedi3cl = hasattr(core, 'nnedi3cl') or hasattr(core, 'sneedif')
     if not (has_znedi3 or has_nnedi3 or has_nnedi3cl):
-        raise ValueError(f'nnedi3_dh: znedi3, nnedi3 or nnedi3cl installation not found.')
+        raise ValueError(f'nnedi3_dh: znedi3, nnedi3, nnedi3cl or sneedif installation not found.')
 
     # select default plugin
     if mode is None:
@@ -453,7 +453,10 @@ def nnedi3_dh(input, field=1, nsize=None, nns=None, qual=None, etype=None, pscrn
     elif mode == 'nnedi3':
         res = core.nnedi3.nnedi3(input, field=field, dh=True, **nnedi3_args1, **nnedi3_args2)
     elif mode == 'nnedi3cl':
-        res = core.nnedi3cl.NNEDI3CL(input, field=field, dh=True, **nnedi3_args1, device=device)
+        if hasattr(core, 'sneedif'):
+          res = core.sneedif.NNEDI3(input, field=field, dh=True, **nnedi3_args1, device=device)
+        else:
+          res = core.nnedi3cl.NNEDI3CL(input, field=field, dh=True, **nnedi3_args1, device=device)
     else:
         raise ValueError(f'nnedi3_dh: Unsupported mode={mode}, should be znedi3, nnedi3 or nnedi3cl.')
 

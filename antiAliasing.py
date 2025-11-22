@@ -31,7 +31,10 @@ def daa(
         raise vs.Error('daa: this is not a clip')
 
     if opencl:
-        nnedi3 = partial(core.nnedi3cl.NNEDI3CL, nsize=nsize, nns=nns, qual=qual, pscrn=pscrn, device=device)
+        if hasattr(core,'sneedif'):
+          nnedi3 = partial(core.sneedif.NNEDI3, nsize=nsize, nns=nns, qual=qual, pscrn=pscrn, device=device)
+        else:
+          nnedi3 = partial(core.nnedi3cl.NNEDI3CL, nsize=nsize, nns=nns, qual=qual, pscrn=pscrn, device=device)
     else:
         if hasattr(core,'znedi3'):
           nnedi3 = partial(core.znedi3.nnedi3, nsize=nsize, nns=nns, qual=qual, pscrn=pscrn, int16_prescreener=int16_prescreener, int16_predictor=int16_predictor, exp=exp)
@@ -63,7 +66,10 @@ def daamod(c, nsize=None, nns=None, qual=None, pscrn=None, exp=None, opencl=Fals
       V = core.rgsf.VerticalCleaner if isFLOAT else core.rgvs.VerticalCleaner
 
     if opencl:
-        NNEDI3 = core.nnedi3cl.NNEDI3CL
+        if hasattr(core,'sneedif'):
+          NNEDI3 = core.sneedif.NNEDI3
+        else:
+          NNEDI3 = core.nnedi3cl.NNEDI3CL
         nnedi3_args = dict(nsize=nsize, nns=nns, qual=qual, pscrn=pscrn, device=device)
     else:
         NNEDI3 = core.znedi3.nnedi3 if hasattr(core, 'znedi3') and not isFLOAT else core.nnedi3.nnedi3
@@ -179,7 +185,10 @@ def santiag(
 
     def santiag_stronger(c: vs.VideoNode, strength: int, type: str) -> vs.VideoNode:
         if opencl:
-            nnedi3 = partial(core.nnedi3cl.NNEDI3CL, nsize=nsize, nns=nns, qual=qual, pscrn=pscrn, device=device)
+            if hasattr(core, 'sneedif'):
+              nnedi3 = partial(core.sneedif.NNEDI3, nsize=nsize, nns=nns, qual=qual, pscrn=pscrn, device=device)
+            else:
+              nnedi3 = partial(core.nnedi3cl.NNEDI3CL, nsize=nsize, nns=nns, qual=qual, pscrn=pscrn, device=device)
             if hasattr(core, 'EEDI3CL'):
               eedi3 = partial(core.eedi3m.EEDI3CL, alpha=alpha, beta=beta, gamma=gamma, nrad=nrad, mdis=mdis, vcheck=vcheck, device=device)
             else:
@@ -250,7 +259,10 @@ def nnedi3aa(a: vs.VideoNode, opencl: bool=False, device: Optional[int] = None,)
     """
 
     if opencl:
-      myNNEDI3 = vs.core.nnedi3cl.NNEDI3CL
+      if hasattr(core, 'sneedif'):
+        myNNEDI3 = vs.core.sneedif.NNEDI3
+      else:
+        myNNEDI3 = vs.core.nnedi3cl.NNEDI3CL
       last = myNNEDI3(a, field=1, dh=True, device=device).std.Transpose()
       last = myNNEDI3(last, field=1, dh=True, device=device).std.Transpose()
     else:

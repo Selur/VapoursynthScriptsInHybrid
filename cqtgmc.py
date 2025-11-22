@@ -14,7 +14,10 @@ def CQTGMC(clip: vs.VideoNode, Sharpness: float=0.25, thSAD1: int=192, thSAD2: i
     # spatial deinterlace
     X = 3 if tff else 2
     if openCL:
-        spatial = core.nnedi3cl.NNEDI3CL(clip=padded, field=X, qual=2)
+        if hasattr(core, 'sneedif'):
+          spatial = core.sneedif.NNEDI3(clip=padded, field=X, qual=2)
+        else:
+          spatial = core.nnedi3cl.NNEDI3CL(clip=padded, field=X, qual=2)
     else:
         spatial = core.znedi3.nnedi3(clip=padded, field=X, qual=2)
 

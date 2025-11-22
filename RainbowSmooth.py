@@ -65,7 +65,10 @@ def derainbow(clip: vs.VideoNode) -> vs.VideoNode:
     #     .std.Maximum()
     #     .std.Inflate()
     # )
-    nnedi3 = core.nnedi3cl.NNEDI3CL(derainbow, 2, nsize=4, nns=0, planes=[1, 2])
+    if hasattr(core, 'sneedif'):
+      nnedi3 = core.sneedif.NNEDI3(derainbow, 2, nsize=4, nns=0, planes=[1, 2])
+    else:
+      nnedi3 = core.nnedi3cl.NNEDI3CL(derainbow, 2, nsize=4, nns=0, planes=[1, 2])
     # Old technique for dealing with dot crawl - part 2
     # double rate deinterlace, then choose whichever field was furthest from source.
     # this completely removes dots, but also does a sort of weird vertical blur

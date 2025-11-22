@@ -23,10 +23,21 @@ def nnedi3_rpow2(clip, rfactor, correct_shift="fmtconv", nsize=0, nns=3, qual=No
 
 def nnedi3cl_rpow2(clip, rfactor, correct_shift="fmtconv", nsize=0, nns=3, qual=None, etype=None, pscrn=None):
     """
-    Scales clip by rfactor (power of two) using nnedi3cl.
+    Scales clip by rfactor (power of two) using nnedi3cl or sneedif.
     """
     def edi(clip, field, dh):
+        if hasattr(core, 'sneedif'):
+          return sneedif_rpow2(clip, rfactor, correct_shift, nsize, nns, qual, etype, pscrn)
         return core.nnedi3cl.NNEDI3CL(clip=clip, field=field, dh=dh, nsize=nsize, nns=nns, qual=qual, etype=etype, pscrn=pscrn)
+
+    return edi_rpow2(clip=clip, rfactor=rfactor, correct_shift=correct_shift, edi=edi)
+
+def sneedif_rpow2(clip, rfactor, correct_shift="fmtconv", nsize=0, nns=3, qual=None, etype=None, pscrn=None):
+    """
+    Scales clip by rfactor (power of two) using sneedif.
+    """
+    def edi(clip, field, dh):
+        return core.sneedif.NNEDI3(clip=clip, field=field, dh=dh, nsize=nsize, nns=nns, qual=qual, etype=etype, pscrn=pscrn)
 
     return edi_rpow2(clip=clip, rfactor=rfactor, correct_shift=correct_shift, edi=edi)
 

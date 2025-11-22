@@ -11,7 +11,10 @@ def TFMBobN(clip: vs.VideoNode,
             openCL: bool = False):
   field = clip.get_frame(0).props['_FieldBased']
   if openCL:
-    n = core.nnedi3cl.NNEDI3CL(clip = clip, field=field+1,nns=4)
+    if hasattr(core, 'sneedif'):
+      n = core.sneedif.NNEDI3(clip = clip, field=field+1,nns=4)
+    else:
+      n = core.nnedi3cl.NNEDI3CL(clip = clip, field=field+1,nns=4)
   elif hasattr(core, 'znedi3'):
     n = core.znedi3.nnedi3(clip=clip, field=field+1, nns=4)
   else:
