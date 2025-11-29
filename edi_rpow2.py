@@ -3,64 +3,32 @@ import math
 
 core = vs.core
 
-def nnedi3_rpow2(clip, rfactor, correct_shift="fmtconv", nsize=0, nns=3, qual=None, etype=None, pscrn=None, opt=None,
-                 int16_prescreener=None, int16_predictor=None, exp=None):
-    """
-    Scales clip by rfactor (power of two) using nnedi3 or znedi3 if available.
-    """
-    def edi(clip, field, dh):
-        if hasattr(core, 'znedi3'):
-            return core.znedi3.nnedi3(clip=clip, field=field, dh=dh, nsize=nsize, nns=nns, qual=qual, etype=etype,
-                                      pscrn=pscrn, opt=opt, int16_prescreener=int16_prescreener,
-                                      int16_predictor=int16_predictor, exp=exp)
-        else:
-            return core.nnedi3.nnedi3(clip=clip, field=field, dh=dh, nsize=nsize, nns=nns, qual=qual, etype=etype,
-                                     pscrn=pscrn, opt=opt, int16_prescreener=int16_prescreener,
-                                     int16_predictor=int16_predictor, exp=exp)
 
-    return edi_rpow2(clip=clip, rfactor=rfactor, correct_shift=correct_shift, edi=edi)
-
-
-def nnedi3cl_rpow2(clip, rfactor, correct_shift="fmtconv", nsize=0, nns=3, qual=None, etype=None, pscrn=None):
+def edi_rpow2(clip, rfactor, correct_shift="fmtconv", edi=None):
     """
-    Scales clip by rfactor (power of two) using nnedi3cl or sneedif.
+    Scales clip by rfactor (power of two) using an EDI function that doubles size.
+    edi(clip, field, dh) must perform a 2x vertical upscale.
     """
-    def edi(clip, field, dh):
-        if hasattr(core, 'sneedif'):
-          return sneedif_rpow2(clip, rfactor, correct_shift, nsize, nns, qual, etype, pscrn)
-        return core.nnedi3cl.NNEDI3CL(clip=clip, field=field, dh=dh, nsize=nsize, nns=nns, qual=qual, etype=etype, pscrn=pscrn)
+    if edi is None:
+        raise ValueError("edi function must be provided.")
 
-    return edi_rpow2(clip=clip, rfactor=rfactor, correct_shift=correct_shift, edi=edi)
-
-def sneedif_rpow2(clip, rfactor, correct_shift="fmtconv", nsize=0, nns=3, qual=None, etype=None, pscrn=None):
-    """
-    Scales clip by rfactor (power of two) using sneedif.
-    """
-    def edi(clip, field, dh):
-        return core.sneedif.NNEDI3(clip=clip, field=field, dh=dh, nsize=nsize, nns=nns, qual=qual, etype=etype, pscrn=pscrn)
-
-    return edi_rpow2(clip=clip, rfactor=rfactor, correct_shift=correct_shift, edi=edi)
-
-
-def edi_rpow2(clip, rfactor, correct_shift, edi):
-    """
-    Core function to scale clip by rfactor (power of two) using edi() function.
-    """
     if not (rfactor != 0 and ((rfactor & (rfactor - 1)) == 0)):
-        raise ValueError('rfactor must be a power of two')
+        raise ValueError("rfactor must be a power of two")
 
     steps = int(math.log2(rfactor))
 
     if correct_shift not in [None, "fmtconv", "zimg"]:
         raise ValueError('correct_shift must be None, "fmtconv" or "zimg"')
 
+    # Horizontal upscale via transpose
     clip = core.std.Transpose(clip)
     for _ in range(steps):
         clip = edi(clip, field=1, dh=1)
     clip = core.std.Transpose(clip)
-    clip = edi(clip, field=1, dh=1)
-    for _ in range(steps - 1):
-        clip = edi(clip, field=0, dh=1)
+
+    # Vertical upscale
+    for _ in range(steps):
+        clip = edi(clip, field=1, dh=1)
 
     if correct_shift in ("fmtconv", "zimg"):
         clip = correct_edi_shift(clip, rfactor=rfactor, plugin=correct_shift)
@@ -70,7 +38,7 @@ def edi_rpow2(clip, rfactor, correct_shift, edi):
 
 def correct_edi_shift(clip, rfactor, plugin):
     """
-    Corrects subpixel shift introduced by EDI scaling depending on plugin.
+    Corrects subpixel shift introduced by NNEDI upscaling, depending on plugin.
     """
     if clip.format.subsampling_w == 1:
         hshift = -rfactor / 2 + 0.5
@@ -89,18 +57,71 @@ def correct_edi_shift(clip, rfactor, plugin):
 
     elif plugin == "zimg":
         if clip.format.subsampling_h == 0:
-            clip = core.z.Subresize(clip=clip, resample_filter="spline36", width=clip.width, height=clip.height,
-                                    shift_w=hshift, shift_h=-0.5)
+            clip = core.z.Subresize(
+                clip=clip,
+                resample_filter="spline36",
+                width=clip.width,
+                height=clip.height,
+                shift_w=hshift,
+                shift_h=-0.5
+            )
         else:
             Y = core.std.ShufflePlanes(clips=clip, planes=0, colorfamily=vs.GRAY)
             U = core.std.ShufflePlanes(clips=clip, planes=1, colorfamily=vs.GRAY)
             V = core.std.ShufflePlanes(clips=clip, planes=2, colorfamily=vs.GRAY)
-            Y = core.z.Subresize(clip=Y, resample_filter="spline36", width=clip.width, height=clip.height,
-                                 shift_w=hshift, shift_h=-0.5)
-            U = core.z.Subresize(clip=U, resample_filter="spline36", width=clip.width, height=clip.height,
-                                 shift_w=hshift / 2, shift_h=-0.5)
-            V = core.z.Subresize(clip=V, resample_filter="spline36", width=clip.width, height=clip.height,
-                                 shift_w=hshift / 2, shift_h=-0.5)
-            clip = core.std.ShufflePlanes(clips=[Y, U, V], planes=[0, 0, 0], colorfamily=vs.YUV)
+
+            Y = core.z.Subresize(Y, "spline36", clip.width, clip.height, shift_w=hshift,     shift_h=-0.5)
+            U = core.z.Subresize(U, "spline36", clip.width, clip.height, shift_w=hshift / 2, shift_h=-0.5)
+            V = core.z.Subresize(V, "spline36", clip.width, clip.height, shift_w=hshift / 2, shift_h=-0.5)
+
+            clip = core.std.ShufflePlanes([Y, U, V], planes=[0, 0, 0], colorfamily=vs.YUV)
 
     return clip
+
+
+def nnedi3_rpow2(clip, rfactor, correct_shift="fmtconv",
+                 nsize=0, nns=3, qual=None, etype=None,
+                 pscrn=None, opt=None,
+                 int16_prescreener=None, int16_predictor=None, exp=None):
+    """
+    Scales using nnedi3 or znedi3 if available.
+    """
+
+    def edi_func(c, field, dh):
+        if hasattr(core, "znedi3"):
+            return core.znedi3.nnedi3(
+                clip=c, field=field, dh=dh, nsize=nsize, nns=nns,
+                qual=qual, etype=etype, pscrn=pscrn, opt=opt,
+                int16_prescreener=int16_prescreener,
+                int16_predictor=int16_predictor, exp=exp
+            )
+        return core.nnedi3.nnedi3(
+            clip=c, field=field, dh=dh, nsize=nsize, nns=nns,
+            qual=qual, etype=etype, pscrn=pscrn, opt=opt,
+            int16_prescreener=int16_prescreener,
+            int16_predictor=int16_predictor, exp=exp
+        )
+
+    return edi_rpow2(clip, rfactor, correct_shift, edi_func)
+
+
+def nnedi3cl_rpow2(clip, rfactor, correct_shift="fmtconv",
+                   nsize=0, nns=3, qual=None, etype=None, pscrn=None):
+    """
+    Scales using NNEDI3CL or sneedif if installed.
+    """
+
+    def edi_func(c, field, dh):
+        if hasattr(core, "sneedif"):
+            return core.sneedif.NNEDI3(
+                clip=c, field=field, dh=dh,
+                nsize=nsize, nns=nns, qual=qual,
+                etype=etype, pscrn=pscrn
+            )
+        return core.nnedi3cl.NNEDI3CL(
+            clip=c, field=field, dh=dh,
+            nsize=nsize, nns=nns, qual=qual,
+            etype=etype, pscrn=pscrn
+        )
+
+    return edi_rpow2(clip, rfactor, correct_shift, edi_func)
