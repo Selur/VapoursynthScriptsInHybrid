@@ -464,84 +464,132 @@ def RGBAdjust(rgb: vs.VideoNode, r: float=1.0, g: float=1.0, b: float=1.0, a: fl
   rgb_adjusted = core.std.ShufflePlanes(planes, planes=[0,0,0], colorfamily = vs.RGB)
   return rgb_adjusted
   
-  
-def AutoGain(clip: vs.VideoNode, gain_limit: float = 1.0, strength: float = 0.5, darken: bool = False) -> vs.VideoNode:
+def AutoGain(
+    clip: vs.VideoNode,
+    gain_limit: float = 1.0,
+    strength: float = 0.5,
+    darken: bool = False,
+    sc_threshold: float = 0.4,
+    ema_alpha: float = 0.15
+) -> vs.VideoNode:
     """
-    Dynamically adjusts the brightness and contrast of a clip based on its luminance range.
+    AutoGain: Scene-aware automatic gain adjustment with EMA smoothing.
     
+    Dynamically adjusts the brightness/contrast of a YUV clip's luma (Y) plane
+    while avoiding flicker caused by frame-to-frame variations or scene changes.
+
+    Features:
+    - Scene-aware: resets EMA at scene boundaries using SCDetect.
+    - EMA smoothing: smooths scale and offset within a scene for temporal consistency.
+    - Dynamic EMA: automatically reduces smoothing speed if gain_limit is high.
+    - Scale clamping: prevents extreme dynamic range swings.
+
     Parameters:
-    clip (vs.VideoNode): Input clip. Must be YUV format (integer or float samples).
-    gain_limit (float): Limits maximum scaling percentage (0 = no gain/stretching, 100 = full gain). Default is 1.0.
-    strength (float): Strength of the adjustment. 0.0 = no adjustment, 1.0 = full adjustment. Default is 0.5.
-    darken (bool): If True, compresses dynamic range. If False, expands it. Default is False.
+    - clip: vs.VideoNode
+        Input YUV clip.
+    - gain_limit: float [0–1]
+        Maximum proportion of gain/stretching to apply.
+    - strength: float [0–1]
+        Overall adjustment strength. 0=no change, 1=full adjustment.
+    - darken: bool
+        If True, compress contrast; if False, expand contrast.
+    - sc_threshold: float
+        Threshold for scene detection (SCDetect). Lower = more sensitive.
+    - ema_alpha: float [0–1]
+        Base EMA smoothing coefficient. Smaller = slower, smoother adjustment.
 
     Returns:
-    vs.VideoNode: Processed clip with adjusted dynamic range, in original format.
+    - vs.VideoNode: Processed clip with adjusted dynamic range, original planes preserved.
     """
+
     import vapoursynth as vs
     core = vs.core
 
     if not clip.format:
-        raise ValueError("AutoGain: Variable format clips are not supported.")
-
+        raise ValueError("AutoGain: Variable-format clips not supported.")
     fmt = clip.format
-
-    # Check supported formats
     if fmt.color_family != vs.YUV:
-        raise ValueError("AutoGain: Only YUV color family is supported.")
-    if fmt.sample_type not in (vs.INTEGER, vs.FLOAT):
-        raise ValueError("AutoGain: Only integer and float sample types are supported.")
+        raise ValueError("AutoGain: Only YUV clips supported.")
 
-    # Extract Y plane
-    Y = core.std.ShufflePlanes(clip, planes=0, colorfamily=vs.GRAY)
+    # Extract luma plane
+    Y = core.std.ShufflePlanes(clip, 0, vs.GRAY)
 
-    is_float = fmt.sample_type == vs.FLOAT
-    bits = fmt.bits_per_sample
-    peak = 1.0 if is_float else (1 << bits) - 1
+    # Plane statistics + scene detection
+    stats = core.std.PlaneStats(Y)
+    sc    = core.misc.SCDetect(Y, threshold=sc_threshold)
+    prop_src = core.std.CopyFrameProps(sc, stats)
 
-    props = core.std.PlaneStats(Y)
+    # Determine peak value
+    peak = 1.0 if fmt.sample_type == vs.FLOAT else (1 << fmt.bits_per_sample) - 1
 
-    def apply_gain(n: int, f: vs.VideoFrame) -> vs.VideoNode:
-        avg = f.props.PlaneStatsAverage
-        min_ = f.props.PlaneStatsMin
-        max_ = f.props.PlaneStatsMax
+    # Adjust EMA inversely with gain_limit to reduce flicker
+    effective_alpha = ema_alpha / max(gain_limit, 0.01)
 
-        y_range = max_ - min_
+    # Persistent state for EMA
+    state = {"scale": 1.0, "offset": 0.0, "first": True}
 
-        # Avoid division by zero if the range is zero
-        if y_range == 0:
-            scale = 1.0
-            offset = 0.0
+    # FrameEval callback
+    def apply_gain(n, f):
+        # Extract PlaneStats
+        avg = f.props.get("PlaneStatsAverage", None)
+        mn  = f.props.get("PlaneStatsMin", None)
+        mx  = f.props.get("PlaneStatsMax", None)
+        if avg is None or mn is None or mx is None:
+            return Y  # fallback
+
+        rng = mx - mn
+        if rng <= 0:
+            tgt_s, tgt_o = 1.0, 0.0
         else:
             if darken:
-                # Compression: reduce contrast by moving toward average
-                scale = 1.0 - (gain_limit * strength)
-                offset = (1.0 - scale) * avg  # Shift toward the average to compress
+                tgt_s = 1.0 - gain_limit * strength
+                tgt_o = (1.0 - tgt_s) * avg
             else:
-                # Expansion: stretch contrast to use full available range
-                ideal_scale = peak / y_range
-                scale = 1.0 + (ideal_scale - 1.0) * (gain_limit * strength)
-                offset = -scale * min_  # Adjust the offset to use the full available range
+                ideal = peak / rng
+                tgt_s = 1.0 + (ideal - 1.0) * (gain_limit * strength)
+                tgt_o = -tgt_s * mn
 
-        # Calculate final expression (now strength=0 means no adjustment)
-        weight = max(min(strength, 1.0), 0.0)
-        expr = f"x {offset:.8f} + {scale:.8f} * {weight:.8f} * x {1.0-weight:.8f} * +"
-        
-        EXPR = core.llvmexpr.Expr if hasattr(core, 'llvmexpr') else (core.akarin.Expr if hasattr(core, 'akarin') else core.std.Expr)
+        # Clamp scale to prevent extreme swings
+        tgt_s = max(min(tgt_s, 3.0), 0.3)
+
+        # Scene change detection
+        sc_prev = f.props.get("_SceneChangePrev", 0) > 0
+
+        # EMA update
+        if state["first"] or sc_prev:
+            state["scale"]  = tgt_s
+            state["offset"] = tgt_o
+            state["first"] = False
+        else:
+            state["scale"]  = state["scale"]  * (1 - effective_alpha) + tgt_s * effective_alpha
+            state["offset"] = state["offset"] * (1 - effective_alpha) + tgt_o * effective_alpha
+
+        # Weighted adjustment
+        s = state["scale"]
+        o = state["offset"]
+        w = max(min(strength, 1.0), 0.0)
+        expr = f"x {o:.8f} + {s:.8f} * {w:.8f} * x {1.0-w:.8f} * +"
+
+        EXPR = (
+            core.llvmexpr.Expr if hasattr(core, "llvmexpr")
+            else core.akarin.Expr if hasattr(core, "akarin")
+            else core.std.Expr
+        )
         return EXPR([Y], expr=[expr])
 
-    # Adjusted luma (frame by frame)
-    Y_adj = core.std.FrameEval(Y, eval=apply_gain, prop_src=props)
+    Y_adj = core.std.FrameEval(Y, eval=apply_gain, prop_src=prop_src)
 
+    # Recombine U/V planes
     if fmt.num_planes == 1:
-        result = Y_adj
-    else:
-        # Handle U and V planes separately and merge
-        U = core.std.ShufflePlanes(clip, planes=1, colorfamily=vs.GRAY)
-        V = core.std.ShufflePlanes(clip, planes=2, colorfamily=vs.GRAY)
-        result = core.std.ShufflePlanes([Y_adj, U, V], planes=[0, 0, 0], colorfamily=vs.YUV)
+        return Y_adj
 
-    return result
+    U = core.std.ShufflePlanes(clip, 1, vs.GRAY)
+    V = core.std.ShufflePlanes(clip, 2, vs.GRAY)
+    return core.std.ShufflePlanes([Y_adj, U, V], [0, 0, 0], vs.YUV)
+
+
+
+
 
 # auto white from http://www.vapoursynth.com/doc/functions/frameeval.html
 def AutoWhiteAdjust(n, f, clip, core):
