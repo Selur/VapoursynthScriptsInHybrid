@@ -189,7 +189,9 @@ def santiag(
               nnedi3 = partial(core.sneedif.NNEDI3, nsize=nsize, nns=nns, qual=qual, pscrn=pscrn, device=device)
             else:
               nnedi3 = partial(core.nnedi3cl.NNEDI3CL, nsize=nsize, nns=nns, qual=qual, pscrn=pscrn, device=device)
-            if hasattr(core, 'EEDI3CL'):
+            if hasattr(core, 'eedi3vk'):
+              eedi3 = partial(core.eedi3vk.EEDI3, alpha=alpha, beta=beta, gamma=gamma, nrad=nrad, mdis=mdis, vcheck=vcheck, device=device)
+            elif hasattr(core, 'eedi3m.EEDI3CL'):
               eedi3 = partial(core.eedi3m.EEDI3CL, alpha=alpha, beta=beta, gamma=gamma, nrad=nrad, mdis=mdis, vcheck=vcheck, device=device)
             else:
               eedi3 = partial(core.eedi3m.EEDI3, alpha=alpha, beta=beta, gamma=gamma, nrad=nrad, mdis=mdis, vcheck=vcheck)
@@ -199,7 +201,9 @@ def santiag(
             else:
               nnedi3 = partial(core.nnedi3.nnedi3, nsize=nsize, nns=nns, qual=qual, pscrn=pscrn, int16_prescreener=int16_prescreener, int16_predictor=int16_predictor, exp=exp)
             
-            if hasattr(core, 'EEDI3CL'):
+            if hasattr(core, 'eedi3vk'):
+              eedi3 = partial(core.eedi3vk.EEDI3, alpha=alpha, beta=beta, gamma=gamma, nrad=nrad, mdis=mdis, vcheck=vcheck, device=device)
+            elif hasattr(core, 'eedi3m.EEDI3CL'):
               eedi3 = partial(core.eedi3m.EEDI3CL, alpha=alpha, beta=beta, gamma=gamma, nrad=nrad, mdis=mdis, vcheck=vcheck, device=device)
             else:
               eedi3 = partial(core.eedi3m.EEDI3, alpha=alpha, beta=beta, gamma=gamma, nrad=nrad, mdis=mdis, vcheck=vcheck)
