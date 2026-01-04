@@ -502,14 +502,14 @@ def AutoGain(
     - vs.VideoNode: Processed clip with adjusted dynamic range, original planes preserved.
     """
 
-    import vapoursynth as vs
-    core = vs.core
-
     if not clip.format:
         raise ValueError("AutoGain: Variable-format clips not supported.")
     fmt = clip.format
     if fmt.color_family != vs.YUV:
         raise ValueError("AutoGain: Only YUV clips supported.")
+        
+    if hasattr(core, 'vszip'):
+      return AutoGainZ(clip)
 
     # Extract luma plane
     Y = core.std.ShufflePlanes(clip, 0, vs.GRAY)
@@ -570,13 +570,111 @@ def AutoGain(
         w = max(min(strength, 1.0), 0.0)
         expr = f"x {o:.8f} + {s:.8f} * {w:.8f} * x {1.0-w:.8f} * +"
 
-        EXPR = (
-            core.llvmexpr.Expr if hasattr(core, "llvmexpr")
-            else core.akarin.Expr if hasattr(core, "akarin")
-            else core.std.Expr
-        )
+        # Use LLVMExpr / Akarin / Expr depending on availability
+        EXPR = core.llvmexpr.Expr if hasattr(core, 'llvmexpr') else (core.akarin.Expr if hasattr(core, 'akarin') else core.std.Expr)
         return EXPR([Y], expr=[expr])
 
+    Y_adj = core.std.FrameEval(Y, eval=apply_gain, prop_src=prop_src)
+
+    # Recombine U/V planes
+    if fmt.num_planes == 1:
+        return Y_adj
+
+    U = core.std.ShufflePlanes(clip, 1, vs.GRAY)
+    V = core.std.ShufflePlanes(clip, 2, vs.GRAY)
+    return core.std.ShufflePlanes([Y_adj, U, V], [0, 0, 0], vs.YUV)
+
+def AutoGainZ(
+    clip: vs.VideoNode,
+    gain_limit: float = 1.0,
+    strength: float = 0.5,
+    darken: bool = False,
+    sc_threshold: float = 0.4,
+    ema_alpha: float = 0.15
+) -> vs.VideoNode:
+    """
+    AutoGain optimized with vszip PlaneAverage.
+    """
+
+    if not clip.format:
+        raise ValueError("AutoGain: Variable-format clips not supported.")
+    fmt = clip.format
+    if fmt.color_family != vs.YUV:
+        raise ValueError("AutoGain: Only YUV clips supported.")
+
+    # Extract luma
+    Y = core.std.ShufflePlanes(clip, 0, vs.GRAY)
+
+    # Compute stats with vszip (average, min, max if your build supports)
+    stats = core.vszip.PlaneAverage(
+        Y,
+        exclude=[-1],
+        planes=[0],
+        prop="y_avg"
+    )
+
+    # Scene detection
+    sc = core.misc.SCDetect(Y, threshold=sc_threshold)
+
+    # Combine stats + scene detection properties
+    prop_src = core.std.CopyFrameProps(sc, stats)
+
+    peak = 1.0 if fmt.sample_type == vs.FLOAT else (1 << fmt.bits_per_sample) - 1
+    effective_alpha = ema_alpha / max(gain_limit, 0.01)
+
+    # Persistent EMA state
+    state = {"scale": 1.0, "offset": 0.0, "first": True}
+
+    # FrameEval lambda with minimal Python work
+    def apply_gain(n, f):
+        avg = f.props.get("y_avgAvg", None)
+        if avg is None:
+            return Y  # fallback
+
+        # Use min/max if available; else assume 0..peak range
+        mn = f.props.get("y_avgMin", 0.0)
+        mx = f.props.get("y_avgMax", peak)
+
+        rng = mx - mn
+        if rng <= 0:
+            tgt_s, tgt_o = 1.0, 0.0
+        else:
+            if darken:
+                tgt_s = 1.0 - gain_limit * strength
+                tgt_o = (1.0 - tgt_s) * avg
+            else:
+                ideal = peak / rng
+                tgt_s = 1.0 + (ideal - 1.0) * (gain_limit * strength)
+                tgt_o = -tgt_s * mn
+
+        # Clamp scale
+        tgt_s = max(min(tgt_s, 3.0), 0.3)
+
+        # Scene change detection
+        sc_prev = f.props.get("_SceneChangePrev", 0) > 0
+
+        # EMA update
+        if state["first"] or sc_prev:
+            state["scale"] = tgt_s
+            state["offset"] = tgt_o
+            state["first"] = False
+        else:
+            state["scale"]  = state["scale"] * (1 - effective_alpha) + tgt_s * effective_alpha
+            state["offset"] = state["offset"] * (1 - effective_alpha) + tgt_o * effective_alpha
+
+        s = state["scale"]
+        o = state["offset"]
+        w = max(min(strength, 1.0), 0.0)
+
+        # Expression applied entirely in C++
+        expr = f"x {o:.8f} + {s:.8f} * {w:.8f} * x {1.0-w:.8f} * +"
+
+        # Use LLVMExpr / Akarin / Expr depending on availability
+        EXPR = core.llvmexpr.Expr if hasattr(core, 'llvmexpr') else (core.akarin.Expr if hasattr(core, 'akarin') else core.std.Expr)
+
+        return EXPR(Y, expr=[expr])
+
+    # Apply per-frame gain
     Y_adj = core.std.FrameEval(Y, eval=apply_gain, prop_src=prop_src)
 
     # Recombine U/V planes
@@ -590,8 +688,7 @@ def AutoGain(
 
 
 
-
-# auto white from http://www.vapoursynth.com/doc/functions/frameeval.html
+# auto white from https://www.vapoursynth.com/doc/functions/frameeval.html
 def AutoWhiteAdjust(n, f, clip, core):
     small_number = 1e-9
 
@@ -618,8 +715,39 @@ def AutoWhiteAdjust(n, f, clip, core):
 
     return EXPR(clip, expr=[f"x {r_gain} *", f"x {g_gain} *", f"x {b_gain} *"])
 
+# AutoWhiteAdjustZ version using vszip
+def AutoWhiteAdjustZ(clip, r, g, b, core):
+    small_number = 1e-9
 
+    # Compute per-plane correction factors
+    max_rgb = max(r, g, b)
+
+    red_corr   = max_rgb / max(r, small_number)
+    green_corr = max_rgb / max(g, small_number)
+    blue_corr  = max_rgb / max(b, small_number)
+
+    # Use the passed parameter 'b' instead of undefined 'blue'
+    norm = max(b, math.sqrt(red_corr**2 + green_corr**2 + blue_corr**2) / math.sqrt(3), small_number)
+
+    r_gain = red_corr / norm
+    g_gain = green_corr / norm
+    b_gain = blue_corr / norm
+
+    # Select the fastest available expression filter
+    EXPR = core.llvmexpr.Expr if hasattr(core, 'llvmexpr') else (
+           core.akarin.Expr if hasattr(core, 'akarin') else core.std.Expr)
+
+    return EXPR(clip, expr=[f"x {r_gain} *", f"x {g_gain} *", f"x {b_gain} *"])
+
+###
+# AutoWhite is a function that takes a video clip as an input and calculates the average color values for each of the three color planes (red, green, blue).
+# The AutoWhiteAdjust function is then used to adjust the white balance of the input clip based on the color balance of the individual frames.
+# This function calculates the correction gain for each color plane (red, green, blue) based on the average color values of each plane, and applies the correction gain to each pixel in the input clip.
+# The output is a video clip with corrected white balance.
+###
 def AutoWhite(clip):
+    if hasattr(core, 'vszip'):
+      return AutoWhiteZ(clip)
     # Compute per-plane stats separately (required for correct output)
     r_avg = core.std.PlaneStats(clip, plane=0)
     g_avg = core.std.PlaneStats(clip, plane=1)
@@ -627,6 +755,31 @@ def AutoWhite(clip):
 
     # Use FrameEval with partial to avoid repeated Python lookups
     return core.std.FrameEval(clip, partial(AutoWhiteAdjust, clip=clip, core=core), prop_src=[r_avg, g_avg, b_avg])
+
+
+
+# AutoWhite version using vszip
+def AutoWhiteZ(clip):
+    # One PlaneAverage per plane
+    r_avg = core.vszip.PlaneAverage(clip, exclude=[-1], planes=[0], prop="r_avg")
+    g_avg = core.vszip.PlaneAverage(clip, exclude=[-1], planes=[1], prop="g_avg")
+    b_avg = core.vszip.PlaneAverage(clip, exclude=[-1], planes=[2], prop="b_avg")
+
+    # FrameEval receives a list of three frames
+    return core.std.FrameEval(
+        clip,
+        lambda n, f: AutoWhiteAdjustZ(
+            clip,
+            r=f[0].props['r_avgAvg'],  # correct property name
+            g=f[1].props['g_avgAvg'],
+            b=f[2].props['b_avgAvg'],
+            core=core
+        ),
+        prop_src=[r_avg, g_avg, b_avg]
+    )
+
+
+
 
 # ToneMapping Simple
 def tm(clip="",source_peak="",desat=50,lin=True,show_satmask=False,show_clipped=False ) :
