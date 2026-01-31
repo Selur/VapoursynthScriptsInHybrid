@@ -345,7 +345,7 @@ def FineDehalo_contrasharp(dehaloed: vs.VideoNode, src: vs.VideoNode, level: flo
     if dehaloed.format.id != src.format.id:
         raise vs.Error('FineDehalo_contrasharp: clips must have the same format')
 
-    neutral = 1 << (get_depth(dehaloed) - 1) if dehaloed.format.sample_type == vs.INTEGER else 0.0
+    neutral = 1 << (dehaloed.format.bits_per_sample - 1) if dehaloed.format.sample_type == vs.INTEGER else 0.0
 
     if dehaloed.format.color_family != vs.GRAY:
         dehaloed_orig = dehaloed
