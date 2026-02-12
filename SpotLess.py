@@ -166,8 +166,9 @@ def SpotLess(
         denoised = core.std.Trim(denoised, 0, denoised.num_frames - 1 - radT)
 
     if debugmask:
-        EXPR = core.llvmexpr.Expr if hasattr(core, 'llvmexpr') else (core.akarin.Expr if hasattr(core, 'akarin') else core.std.Expr)
+        EXPR = core.llvmexpr.Expr if hasattr(core, 'llvmexpr') else core.akarin.Expr if hasattr(core, 'akarin') else core.cranexpr.Expr if hasattr(core, 'cranexpr') else core.std.Expr
         mask = EXPR([clip, denoised], expr=["x y - abs"])
         return core.std.StackVertical([clip, denoised, mask])
+
 
     return core.std.AssumeFPS(denoised, fpsnum=fpsnum, fpsden=fpsden)

@@ -90,7 +90,7 @@ def sRestoreMUVs(
         dclip.height if srad == 4 else int(dclip.height / 2 / srad + 4) * 4
     )
     dclip = dclip.std.Trim(first=2)
-    EXPR = core.llvmexpr.Expr if hasattr(core, 'llvmexpr') else (core.akarin.Expr if hasattr(core, 'akarin') else core.std.Expr)
+    EXPR = core.llvmexpr.Expr if hasattr(core, 'llvmexpr') else core.akarin.Expr if hasattr(core, 'akarin') else core.cranexpr.Expr else core.std.Expr
     if mode < 0:
         dclip = core.std.StackVertical([
             core.std.StackHorizontal([GetPlane(dclip, 1), GetPlane(dclip, 2)]),

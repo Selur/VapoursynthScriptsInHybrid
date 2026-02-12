@@ -104,7 +104,7 @@ def Hysteria(clip, strength=1.0, usemask=True, lowthresh=6, highthresh=20, luma_
 
     # imitate mt_edge(mode=cartoon) (stolen from Frechdachs)
     noisymask = core.std.Convolution(clip, matrix=[0, -2, 1, 0, 1, 0, 0, 0, 0], planes=planes, saturate=True)
-    EXPR = core.llvmexpr.Expr if hasattr(core, 'llvmexpr') else (core.akarin.Expr if hasattr(core, 'akarin') else core.std.Expr)
+    EXPR = core.llvmexpr.Expr if hasattr(core, 'llvmexpr') else core.akarin.Expr if hasattr(core, 'akarin') else core.cranexpr.Expr else core.std.Expr
     noisymask = EXPR(noisymask, ['x {high} >= {maxvalue} x {low} <= 0 x ? ?'
                               .format(low=lowthresh, high=lowthresh, maxvalue=max_bitval)])
 
