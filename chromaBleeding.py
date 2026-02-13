@@ -22,7 +22,7 @@ def FixChromaBleedingMod(input: vs.VideoNode, cx: int = 4, cy: int = 4, thr: flo
     else:
         mask_area = v_tweaked
 
-    EXPR = core.llvmexpr.Expr if hasattr(core, 'llvmexpr') else core.akarin.Expr if hasattr(core, 'akarin') else core.cranexpr.Expr else core.std.Expr
+    EXPR = core.llvmexpr.Expr if hasattr(core, 'llvmexpr') else core.akarin.Expr if hasattr(core, 'akarin') else core.cranexpr.Expr if hasattr(core, 'cranexpr') else core.std.Expr
     # Apply basic mask processing (ensure dynamic level scaling)
     mask = EXPR(mask_area, ['x 128 - abs 2 *'])
     mask = mask.std.Inflate()

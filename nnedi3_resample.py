@@ -665,7 +665,7 @@ def SSIM_downsample(clip: vs.VideoNode, w: int, h: int, smooth: Union[float, Uni
 
     clip = color.Depth(clip, depth=32, sample=vs.FLOAT, **depth_args)
 
-    EXPR = core.llvmexpr.Expr if hasattr(core, 'llvmexpr') else core.akarin.Expr if hasattr(core, 'akarin') else core.cranexpr.Expr else core.std.Expr
+    EXPR = core.llvmexpr.Expr if hasattr(core, 'llvmexpr') else core.akarin.Expr if hasattr(core, 'akarin') else core.cranexpr.Expr if hasattr(core, 'cranexpr') else core.std.Expr
     kernel = kernel.capitalize()
     if use_fmtc:
         l = core.fmtc.resample(clip, w, h, kernel=kernel, **resample_args)

@@ -98,7 +98,7 @@ def GrainFactory3(clp, g1str=7.0, g2str=5.0, g3str=3.0, g1shrp=60, g2shrp=66, g3
 
     expr1 = f'x {th1} < 0 x {th2} > {peak} {peak} {th2 - th1} / x {th1} - * ? ?'
     expr2 = f'x {th3} < 0 x {th4} > {peak} {peak} {th4 - th3} / x {th3} - * ? ?'
-    EXPR = core.llvmexpr.Expr if hasattr(core, 'llvmexpr') else core.akarin.Expr if hasattr(core, 'akarin') else core.cranexpr.Expr else core.std.Expr
+    EXPR = core.llvmexpr.Expr if hasattr(core, 'llvmexpr') else core.akarin.Expr if hasattr(core, 'akarin') else core.cranexpr.Expr if hasattr(core, 'cranexpr') else core.std.Expr
     grainlayer = core.std.MaskedMerge(core.std.MaskedMerge(grainlayer1, grainlayer2, EXPR(clp, expr=[expr1])), grainlayer3, EXPR(clp, expr=[expr2]))
     if temp_avg > 0:
         grainlayer = core.std.Merge(grainlayer, AverageFrames(grainlayer, weights=[1] * 3), weight=[tmpavg])

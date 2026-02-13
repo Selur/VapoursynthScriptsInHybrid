@@ -34,7 +34,7 @@ def bbmod(c, cTop, cBottom, cLeft, cRight, thresh=128, blur=999):
 
         last = c2.std.CropAbs(width=cWidth * 2, height=2, top=cTop * 2)
         last = last.resize.Point(cWidth * 2, cTop * 2)
-        EXPR = core.llvmexpr.Expr if hasattr(core, 'llvmexpr') else core.akarin.Expr if hasattr(core, 'akarin') else core.cranexpr.Expr else core.std.Expr
+        EXPR = core.llvmexpr.Expr if hasattr(core, 'llvmexpr') else core.akarin.Expr if hasattr(core, 'akarin') else core.cranexpr.Expr if hasattr(core, 'cranexpr') else core.std.Expr
         referenceBlurChroma = BicubicResize(BicubicResize(EXPR(last, expr=[f'x {neutral} - abs 2 *', '']), blurWidth * 2, cTop * 2), cWidth * 2, cTop * 2)
         referenceBlur = BicubicResize(BicubicResize(last, blurWidth * 2, cTop * 2), cWidth * 2, cTop * 2)
 

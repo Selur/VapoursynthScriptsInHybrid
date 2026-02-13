@@ -8,7 +8,7 @@ def RainbowSmooth(clip, radius=3, lthresh=0, hthresh=220, mask="original"):
     core = vs.core
     if isinstance(mask, str):
         if mask == "original":
-            EXPR = core.llvmexpr.Expr if hasattr(core, 'llvmexpr') else core.akarin.Expr if hasattr(core, 'akarin') else core.cranexpr.Expr else core.std.Expr
+            EXPR = core.llvmexpr.Expr if hasattr(core, 'llvmexpr') else core.akarin.Expr if hasattr(core, 'akarin') else core.cranexpr.Expr if hasattr(core, 'cranexpr') else core.std.Expr
             mask = EXPR(clips=[clip.std.Maximum(planes=0), clip.std.Minimum(planes=0)], expr=["x y - 90 > 255 x y - 255 90 / * ?", "", ""])
         elif mask == "prewitt":
             mask = core.std.Prewitt(clip=clip, planes=0)
@@ -40,7 +40,7 @@ def derainbow(clip: vs.VideoNode) -> vs.VideoNode:
     clip_pre = split(clip[0] + clip[:-1])[1:]
     clip_post = split(clip[1:] + clip[-1])[1:]
     clip_chroma = split(clip)[1:]
-    EXPR = core.llvmexpr.Expr if hasattr(core, 'llvmexpr') else core.akarin.Expr if hasattr(core, 'akarin') else core.cranexpr.Expr else core.std.Expr
+    EXPR = core.llvmexpr.Expr if hasattr(core, 'llvmexpr') else core.akarin.Expr if hasattr(core, 'akarin') else core.cranexpr.Expr if hasattr(core, 'cranexpr') else core.std.Expr
     rainbowmask = EXPR(
         [clip_pre[0], clip_chroma[0], clip_post[0], clip_pre[1], clip_chroma[1], clip_post[1]],
         "x y - abs x z - abs + a b - abs a c - abs + + 20 / 5 pow 20 *",
@@ -79,7 +79,10 @@ def derainbow(clip: vs.VideoNode) -> vs.VideoNode:
     #     "x y - abs x z - abs < z y ?",
     # ).rgvs.Repair(get_y(derainbow), 1)
     # nnedi3_l = core.std.MaskedMerge(get_y(derainbow), nnedi3_l, nnedi3_v)
-    nnedi3_c = core.average.Mean([nnedi3[::2], nnedi3[1::2]])
+    if hasattr(core, 'artyfox'):
+      nnedi3_c = core.artyfox.Mean([nnedi3[::2], nnedi3[1::2]])
+    else:
+      nnedi3_c = core.average.Mean([nnedi3[::2], nnedi3[1::2]])
     nnedi3 = core.std.ShufflePlanes([derainbow, nnedi3_c], [0, 1, 2], vs.YUV)
     return nnedi3
     

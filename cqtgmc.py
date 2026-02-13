@@ -85,7 +85,7 @@ def CQTGMC(clip: vs.VideoNode, Sharpness: float=0.25, thSAD1: int=192, thSAD2: i
     
     bComp1 = core.mv.Compensate(clip=weaved, super=csuper, vectors=bVec1, thsad=thSAD4)
     fComp1 = core.mv.Compensate(clip=weaved, super=csuper, vectors=fVec1, thsad=thSAD4)
-    EXPR = core.llvmexpr.Expr if hasattr(core, 'llvmexpr') else core.akarin.Expr if hasattr(core, 'akarin') else core.cranexpr.Expr else core.std.Expr
+    EXPR = core.llvmexpr.Expr if hasattr(core, 'llvmexpr') else core.akarin.Expr if hasattr(core, 'akarin') else core.cranexpr.Expr if hasattr(core, 'cranexpr') else core.std.Expr
     tMax = EXPR(clips=[weaved, bComp1], expr=['x y max'])
     tMax = EXPR(clips=[tMax, fComp1], expr=['x y max'])
     tMin = EXPR(clips=[weaved, bComp1], expr=['x y min'])
@@ -125,7 +125,7 @@ def mt_clamp(
         planes = [planes]
 
     expr = [f'x y {overshoot} + < y {overshoot} + x ? z {undershoot} - > z {undershoot} - x ?' if i in planes else '' for i in plane_range]
-    EXPR = core.llvmexpr.Expr if hasattr(core, 'llvmexpr') else core.akarin.Expr if hasattr(core, 'akarin') else core.cranexpr.Expr else core.std.Expr
+    EXPR = core.llvmexpr.Expr if hasattr(core, 'llvmexpr') else core.akarin.Expr if hasattr(core, 'akarin') else core.cranexpr.Expr if hasattr(core, 'cranexpr') else core.std.Expr
     return EXPR(clips=[clip, bright_limit, dark_limit], expr=expr)
 
 
