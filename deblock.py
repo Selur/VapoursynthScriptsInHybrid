@@ -2,6 +2,7 @@ import vapoursynth as vs
 from vapoursynth import core
 
 import math
+from functools import partial
 
 def Deblock_QED(
     clp: vs.VideoNode, quant1: int = 24, quant2: int = 26, aOff1: int = 1, bOff1: int = 2, aOff2: int = 1, bOff2: int = 2, uv: int = 3
@@ -108,3 +109,139 @@ def Deblock_QED(
 
     # remove mod 8 borders
     return deblocked.std.Crop(right=padX, bottom=padY)
+
+"""
+based on https://github.com/Irrational-Encoding-Wizardry/fvsfunc/blob/076dbde68227f6cca91304a447b2a02b0e95413e/fvsfunc.py#L773
+VapourSynth port of AutoDeblock2. Original script by joletb, vinylfreak89, eXmendiC and Gebbi.
+
+The purpose of this script is to automatically remove MPEG2 artifacts.
+
+Supports 8..16 bit integer YUV formats
+
+Adjusted by Selur to use faster libraries for speed
+"""
+def AutoDeblock(src: vs.VideoNode, edgevalue: int = 24, db1: int = 1, db2: int = 6, db3: int = 15, deblocky: bool = True, deblockuv: bool = True, debug: bool = False, redfix: bool = False, fastdeblock: bool = False, adb1: int = 3, adb2: int = 4, adb3: int = 8, adb1d: int = 2, adb2d: int = 7, adb3d: int = 11, planes: Optional[List[int]] = None) -> vs.VideoNode:
+    """
+    Automatically deblocks a YUV clip using adaptive thresholds and optional red-area correction.
+
+    Parameters
+    ----------
+    src : vs.VideoNode
+        Input clip, must be YUV color family, 8-16 bit integer format.
+    edgevalue : int
+        Threshold for detecting edges, scaled internally for bit depth.
+    db1, db2, db3 : int
+        Deblocking strengths for weak, medium, and strong deblocking passes.
+    deblocky : bool
+        Whether to deblock the luma plane.
+    deblockuv : bool
+        Whether to deblock the chroma planes.
+    debug : bool
+        If True, overlays debug information showing differences for each frame.
+    redfix : bool
+        If True, avoids over-deblocking red-colored areas. Cannot be combined with `fastdeblock`.
+    fastdeblock : bool
+        If True, applies a faster, single-pass deblock method based on thresholds.
+    adb1, adb2, adb3 : int
+        Adaptive thresholds for OrigDiff to determine deblocking strength.
+    adb1d, adb2d, adb3d : int
+        Adaptive thresholds for YNextDiff to determine deblocking strength.
+    planes : Optional[List[int]]
+        List of planes to process; defaults to `[0]` if deblocky or `[1,2]` if deblockuv
+
+    Returns
+    -------
+    vs.VideoNode
+
+    Raises
+    ------
+    TypeError, ValueError
+    """
+    if src.format.color_family not in [vs.YUV]: raise TypeError("AutoDeblock: src must be YUV color family!")
+    if src.format.bits_per_sample < 8 or src.format.bits_per_sample > 16 or src.format.sample_type != vs.INTEGER:
+        raise TypeError("AutoDeblock: src must be between 8 and 16 bit integer format")
+
+    shift = src.format.bits_per_sample - 8
+    edgevalue <<= shift
+    maxvalue = (1 << src.format.bits_per_sample) - 1
+
+    def to8bit(f: float) -> float: return f * 255
+
+    def sub_props(src: vs.VideoNode, f: List[vs.VideoNode], name: str) -> vs.VideoNode:
+        OrigDiff_str = str(to8bit(f[0].props.OrigDiff))
+        YNextDiff_str = str(to8bit(f[1].props.YNextDiff))
+        return core.sub.Subtitle(src, name + f"\nOrigDiff: {OrigDiff_str}\nYNextDiff: {YNextDiff_str}")
+
+    def eval_deblock_strength(n: int, f: List[vs.VideoNode], fastdeblock: bool, debug: bool, unfiltered: vs.VideoNode, fast: vs.VideoNode, weakdeblock: vs.VideoNode, mediumdeblock: vs.VideoNode, strongdeblock: vs.VideoNode) -> vs.VideoNode:
+        unfiltered = sub_props(unfiltered, f, "unfiltered") if debug else unfiltered
+        out = unfiltered
+        if fastdeblock:
+            if to8bit(f[0].props.OrigDiff) > adb1 and to8bit(f[1].props.YNextDiff) > adb1d:
+                return sub_props(fast, f, "deblock") if debug else fast
+            else: return unfiltered
+        if to8bit(f[0].props.OrigDiff) > adb1 and to8bit(f[1].props.YNextDiff) > adb1d:
+            out = sub_props(weakdeblock, f, "weakdeblock") if debug else weakdeblock
+        if to8bit(f[0].props.OrigDiff) > adb2 and to8bit(f[1].props.YNextDiff) > adb2d:
+            out = sub_props(mediumdeblock, f, "mediumdeblock") if debug else mediumdeblock
+        if to8bit(f[0].props.OrigDiff) > adb3 and to8bit(f[1].props.YNextDiff) > adb3d:
+            out = sub_props(strongdeblock, f, "strongdeblock") if debug else strongdeblock
+        return out
+
+    def fix_red(n: int, f: List[vs.VideoNode], unfiltered: vs.VideoNode, autodeblock: vs.VideoNode) -> vs.VideoNode:
+        if 50 < to8bit(f[0].props.YAverage) < 130 and 95 < to8bit(f[1].props.UAverage) < 130 and 130 < to8bit(f[2].props.VAverage) < 155: return unfiltered
+        return autodeblock
+
+    if redfix and fastdeblock: raise ValueError('AutoDeblock: You cannot set both "redfix" and "fastdeblock" to True!')
+
+    if planes is None:
+        planes = []
+        if deblocky: planes.append(0)
+        if deblockuv: planes.extend([1, 2])
+
+    orig = core.std.Prewitt(src)
+    EXPR = core.llvmexpr.Expr if hasattr(core, 'llvmexpr') else core.akarin.Expr if hasattr(core, 'akarin') else core.cranexpr.Expr if hasattr(core, 'cranexpr') else core.std.Expr
+    orig = EXPR(orig, f"x {edgevalue} >= {maxvalue} x ?")
+
+    isFLOAT = src.format.sample_type == vs.FLOAT
+    RG = core.zsmooth.RemoveGrain if hasattr(core, 'zsmooth') else core.rgsf.RemoveGrain if hasattr(core, 'rgsf') and isFLOAT else core.rgvs.RemoveGrain
+
+    orig_d = RG(orig, 4)
+    orig_d = RG(orig_d, 4)
+    src_d = RG(src, 2)
+    src_d = RG(src_d, 2)
+
+    unfiltered = src
+    predeblock = Deblock_QED(src_d)
+
+    if hasattr(core, 'dfttest2_nvrtc'):
+        import dfttest2
+        backend = dfttest2.Backend.NVRTC
+        DFTTest = partial(dfttest2.DFTTest, backend=backend)
+    else: DFTTest = core.dfttest.DFTTest
+
+    fast = DFTTest(predeblock, tbsize=1)
+    weakdeblock = DFTTest(predeblock, sigma=db1, tbsize=1, planes=planes)
+    mediumdeblock = DFTTest(predeblock, sigma=db2, tbsize=1, planes=planes)
+    strongdeblock = DFTTest(predeblock, sigma=db3, tbsize=1, planes=planes)
+
+    difforig = core.std.PlaneStats(orig, orig_d, prop='Orig')
+    diffnext = core.std.PlaneStats(src, src.std.DeleteFrames([0]), prop='YNext')
+
+    autodeblock = core.std.FrameEval(
+        unfiltered,
+        partial(eval_deblock_strength, fastdeblock=fastdeblock, debug=debug, unfiltered=unfiltered,
+                fast=fast, weakdeblock=weakdeblock, mediumdeblock=mediumdeblock, strongdeblock=strongdeblock),
+        prop_src=[difforig, diffnext]
+    )
+
+    if redfix:
+        src_y = core.std.PlaneStats(src, prop='Y')
+        src_u = core.std.PlaneStats(src, plane=1, prop='U')
+        src_v = core.std.PlaneStats(src, plane=2, prop='V')
+        autodeblock = core.std.FrameEval(
+            unfiltered,
+            partial(fix_red, unfiltered=unfiltered, autodeblock=autodeblock),
+            prop_src=[src_y, src_u, src_v]
+        )
+
+    return autodeblock
