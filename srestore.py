@@ -589,14 +589,9 @@ def sRestoreMUVs(
 
     ###### evaluation call & output calculation ######
     
-    if hasattr(core,'vzsip'): 
-      bclpYStats = core.vszip.PlaneAverage(bclp)
-      dclpYStats = core.vszip.PlaneAverage(dclp)
-      dclipYStats = core.vszip.PlaneMinMax(dclip, dclip.std.Trim(first=2))
-    else:
-      bclpYStats = bclp.std.PlaneStats()
-      dclpYStats = dclp.std.PlaneStats()
-      dclipYStats = core.std.PlaneStats(dclip, dclip.std.Trim(first=2))
+    bclpYStats = bclp.std.PlaneStats()
+    dclpYStats = dclp.std.PlaneStats()
+    dclipYStats = core.std.PlaneStats(dclip, dclip.std.Trim(first=2))
 
     # https://github.com/vapoursynth/vapoursynth/blob/55e7d0e989359c23782fc1e0d4aa1c0c35838a80/src/core/vsapi.cpp#L151-L152
     def get_frame(clip: vs.VideoNode, n: int) -> vs.VideoNode:
