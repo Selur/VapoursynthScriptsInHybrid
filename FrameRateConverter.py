@@ -95,7 +95,7 @@
 
 import functools
 import math
-import havsfunc as havs
+import misc
 import vapoursynth as vs
 import ChangeFPS
 from vapoursynth import core
@@ -198,12 +198,12 @@ def FrameRateConverter(C, newNum = None, newDen = None, preset = "normal", blkSi
         EM = ToGray(C.mv.Mask(bak, ml=255, kind=1, gamma=1/gam, ysc=255, thscd2=skipOver))
         # Mask: Temporal blending
         EMfwd = ToGray(C.mv.Mask(fwd, ml=255, kind=1, gamma=1/gam, thscd2=skipOver))
-        EM = havs.Overlay(EM, EMfwd, opacity=.6, mode="lighten")
+        EM = misc.Overlay(EM, EMfwd, opacity=.6, mode="lighten")
     EXPR = core.llvmexpr.Expr if hasattr(core, 'llvmexpr') else core.akarin.Expr if hasattr(core, 'akarin') else core.cranexpr.Expr if hasattr(core, 'cranexpr') else core.std.Expr
     # Mask: Occlusion
     if maskOcc > 0:
         EMocc = ToGray(C.mv.Mask(bak, ml=maskOcc, kind=2, gamma=1/gam, ysc=255, thscd2=skipOver).std.Minimum())
-        EM = havs.Overlay(EM, EMocc, opacity=.7, mode="lighten")
+        EM = misc.Overlay(EM, EMocc, opacity=.7, mode="lighten")
     if dct_mult!=1 or dct_pow!=1:
        EM = EXPR(EM, f"x {dct_mult} * {dct_pow} pow")
 
@@ -221,10 +221,10 @@ def FrameRateConverter(C, newNum = None, newDen = None, preset = "normal", blkSi
         if maskThr > 0:
             EM2 = ToGray(C.mv.Mask(bak2, ml=255, kind=1, gamma=1/gam, ysc=255, thscd2=skipOver))
             EMfwd2 = ToGray(C.mv.Mask(fwd2, ml=255, kind=1, gamma=1/gam, thscd2=skipOver))
-            EM2 = havs.Overlay(EM2, EMfwd2, opacity=.6, mode="lighten")
+            EM2 = misc.Overlay(EM2, EMfwd2, opacity=.6, mode="lighten")
         if maskOcc > 0:
             EMocc2 = ToGray(C.mv.Mask(bak2, ml=maskOcc, kind=2, gamma=1/gam, ysc=255, thscd2=skipOver).std.Minimum())
-            EM2 = havs.Overlay(EM2, EMocc2, opacity=.7, mode="lighten")
+            EM2 = misc.Overlay(EM2, EMocc2, opacity=.7, mode="lighten")
 
         # Get difference mask between two versions
         EMdiff = EXPR([EM, EM2], "x y -") \
@@ -302,10 +302,10 @@ def FrameRateConverter(C, newNum = None, newDen = None, preset = "normal", blkSi
 
     # Prepare output=Over: Mask(cyan), Stripes(yellow)
     Overlays = core.std.ShufflePlanes(clips=[Blank, EM, EM], planes=[0, 0, 0], colorfamily=vs.RGB)
-    FlowOver = havs.Overlay(Flow.resize.Point(format=vs.RGB24, matrix_in_s="709"), Overlays, mode="addition", opacity=0.6)
+    FlowOver = misc.Overlay(Flow.resize.Point(format=vs.RGB24, matrix_in_s="709"), Overlays, mode="addition", opacity=0.6)
     if stp:
         Overlays = core.std.ShufflePlanes(clips=[EMstp, EMstp, Blank], planes=[0, 0, 0], colorfamily=vs.RGB)
-        FlowOver = havs.Overlay(FlowOver, Overlays, mode="addition", opacity=0.5)
+        FlowOver = misc.Overlay(FlowOver, Overlays, mode="addition", opacity=0.5)
 
     # output modes
     if oput == O_AUTO:                              # auto: artifact masking
