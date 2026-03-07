@@ -848,28 +848,46 @@ def _build_of_clip(
     pel      Sub-pixel precision: 1=pixel, 2=half-pixel, 4=quarter.
     blksize  Block size for vector search.
     """
-    fmt_orig   = clip.format
-    needs_conv = fmt_orig.bits_per_sample != 8 or fmt_orig.sample_type != vs.INTEGER
-    if needs_conv:
-        src8 = clip.resize.Bicubic(format=fmt_orig.replace(
-            bits_per_sample=8, sample_type=vs.INTEGER
-        ).id)
+  
+    fmt_orig = clip.format
+
+    # mvsf requires single-precision float; core.mv requires 8-bit integer.
+    # Detect which plugin we have by checking for a known mvsf-only attribute.
+    plugin_name = getattr(mv, 'namespace', None) or ''
+    is_mvsf = 'mvsf' in plugin_name.lower() or (
+        hasattr(core, 'mvsf') and type(mv) is type(core.mvsf)
+    )
+
+    # Safest approach: just check what format mvsf.Super actually needs
+    # by always converting to float32 when mvsf is loaded at all.
+    if hasattr(core, 'mvsf'):
+        # mvsf is present — always feed it float32 regardless of which
+        # namespace 'mv' points to, since mvsf.Super rejects non-float.
+        target_fmt = fmt_orig.replace(bits_per_sample=32, sample_type=vs.FLOAT)
+        src_work   = clip.resize.Bicubic(format=target_fmt.id)
+        needs_conv = True
     else:
-        src8 = clip
+        # Only core.mv available — it needs 8-bit integer
+        if fmt_orig.bits_per_sample != 8 or fmt_orig.sample_type != vs.INTEGER:
+            target_fmt = fmt_orig.replace(bits_per_sample=8, sample_type=vs.INTEGER)
+            src_work   = clip.resize.Bicubic(format=target_fmt.id)
+            needs_conv = True
+        else:
+            src_work   = clip
+            needs_conv = False
 
-    sup_src = mv.Super(src8, pel=pel, hpad=blksize, vpad=blksize)
-    bwd = mv.Analyse(sup_src, isb=True,  blksize=blksize, overlap=blksize // 2)
-    fwd = mv.Analyse(sup_src, isb=False, blksize=blksize, overlap=blksize // 2)
+    sup_src = mv.Super(src_work, pel=pel, hpad=blksize, vpad=blksize)
+    _analyse = mv.Analyze if hasattr(mv, 'Analyze') else mv.Analyse
+    bwd = _analyse(sup_src, isb=True,  blksize=blksize, overlap=blksize // 2)
+    fwd = _analyse(sup_src, isb=False, blksize=blksize, overlap=blksize // 2)
 
-    # time in [0, 100] % — 50 = midpoint between prev and next
-    interp = mv.FlowInter(src8, sup_src, bwd, fwd, time=50)
+    interp = mv.FlowInter(src_work, sup_src, bwd, fwd, time=50)
 
-    if needs_conv:
+    if needs_conv and fmt_orig.id != interp.format.id:
         interp = interp.resize.Bicubic(
             format=fmt_orig.id, dither_type="error_diffusion"
         )
     return interp
-
 
 def _build_of_clip_svp(clip: vs.VideoNode) -> vs.VideoNode:
     """
