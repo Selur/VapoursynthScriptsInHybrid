@@ -47,6 +47,12 @@ Usage
 
   # Option D – interleaved comparison:
   SpotDelta(src, output='interleaved').set_output()
+
+  # Option E – SpotLess vs SpotDelta + exaggerated-chroma diff:
+  SpotDelta(src, output='versus_stacked').set_output()
+
+  # Option F – all four panels including exaggerated-chroma diff:
+  SpotDelta(src, output='full_stacked').set_output()
 """
 
 from typing import Optional
@@ -139,6 +145,44 @@ def _adddiff(base: vs.VideoNode, diff: vs.VideoNode) -> vs.VideoNode:
 
 
 # ---------------------------------------------------------------------------
+# Exaggerated-chroma diff
+# ---------------------------------------------------------------------------
+
+def _exaggerated_chroma_diff(source: vs.VideoNode,
+                              filtered: vs.VideoNode) -> vs.VideoNode:
+    """
+    Diff clip where luma is a plain MakeDiff and chroma differences are
+    amplified 3x, making colour artefacts clearly visible.
+    Mirrors the AviSynth logic:
+      diff1 = MakeDiff(source, filtered)
+      chroma is accumulated onto itself twice more → 3x total
+      result = luma from diff1, chroma from diff3
+    """
+    bits = source.format.bits_per_sample
+    mid  = 1 << (bits - 1)
+    peak = (1 << bits) - 1
+
+    diff1 = core.std.MakeDiff(source, filtered)
+
+    def _boost_chroma(base: vs.VideoNode, addend: vs.VideoNode) -> vs.VideoNode:
+        """Add addend chroma onto base chroma (+mid offset); luma untouched."""
+        exprs = [
+            '',                                        # luma: unchanged
+            f'x y + {mid} - 0 {peak} clamp',          # U: accumulate
+            f'x y + {mid} - 0 {peak} clamp',          # V: accumulate
+        ]
+        return _expr_fn()([base, addend], exprs)
+
+    diff2 = _boost_chroma(diff1, diff1)   # chroma x2
+    diff3 = _boost_chroma(diff2, diff1)   # chroma x3
+
+    # Recombine: luma from diff1 (plain), chroma from diff3 (3x amplified)
+    return core.std.ShufflePlanes(
+        [diff1, diff3, diff3], [0, 1, 2], source.format.color_family
+    )
+
+
+# ---------------------------------------------------------------------------
 # Basic mask operations  (all GRAY in, GRAY out)
 # ---------------------------------------------------------------------------
 
@@ -164,9 +208,6 @@ def _must_not_overlap(mask: vs.VideoNode, other: vs.VideoNode) -> vs.VideoNode:
     expanded = _hysteresis_fn()(other, mask)
     return _expr2(mask, expanded, 'x y - 0 max')
 
-def _logic_and_masks(mask: vs.VideoNode, other: vs.VideoNode) -> vs.VideoNode:
-    return _logic_and(mask, other)
-
 
 # ---------------------------------------------------------------------------
 # Morphological helpers  (use native Maximum / Minimum)
@@ -189,6 +230,7 @@ def _expand_mask(mask: vs.VideoNode, amount: int, blur: float = 0.0) -> vs.Video
     return mask
 
 def _must_be_near(mask: vs.VideoNode, other: vs.VideoNode, max_distance: int, expanded: bool = False) -> vs.VideoNode:
+  
     ea         = max_distance // 2
     eb         = max_distance - ea
     mask_exp   = _expand_mask(mask,  ea)
@@ -213,7 +255,7 @@ def _z_padding(clip: vs.VideoNode,
 def _scharr(clip: vs.VideoNode) -> vs.VideoNode:
     """Scharr edge magnitude – operates on luma, returns GRAY."""
     g  = _gray(clip)
-    # Use native Convolution for the horizontal and vertical passes
+    # Convolution for the horizontal and vertical passes
     sx = core.std.Convolution(g, matrix=[3, 0, -3, 10, 0, -10, 3, 0, -3])
     sy = core.std.Convolution(g, matrix=[3, 10, 3, 0, 0, 0, -3, -10, -3])
     return _expr2(sx, sy, 'x x * y y * + sqrt')
@@ -251,9 +293,9 @@ def _luma_delta_mask(source: vs.VideoNode,
     mask_orig = mask
 
     if limit_brightness != brightness:
-        lim     = int(mid * limit_brightness)
-        sup     = _expr1(diff, f'x {lim} {op} {peak} 0 ?')
-        mask    = _suppress_with(mask, sup)
+        lim  = int(mid * limit_brightness)
+        sup  = _expr1(diff, f'x {lim} {op} {peak} 0 ?')
+        mask = _suppress_with(mask, sup)
 
     if limit_abs_brightness > 0.0:
         abs_thr = int(peak * limit_abs_brightness)
@@ -280,7 +322,6 @@ def _chroma_delta_mask(source: vs.VideoNode,
     Returns a GRAY mask selecting pixels with large chroma difference
     (Euclidean distance sqrt(Δu² + Δv²)).
     """
-    # Extract chroma planes as GRAY, then MakeDiff
     u_diff = _makediff(_plane(source, 1), _plane(filtered, 1))
     v_diff = _makediff(_plane(source, 2), _plane(filtered, 2))
 
@@ -290,7 +331,6 @@ def _chroma_delta_mask(source: vs.VideoNode,
     u_delta = _expr1(u_diff, f'x {mid} - abs')
     v_delta = _expr1(v_diff, f'x {mid} - abs')
 
-    # Chroma planes may be subsampled – resize deltas to luma resolution
     W, H = source.width, source.height
     if u_delta.width != W or u_delta.height != H:
         u_delta = core.resize.Bilinear(u_delta, W, H)
@@ -337,7 +377,7 @@ def _dark_delta_mask(mask: vs.VideoNode,
 
 
 # ---------------------------------------------------------------------------
-# UnsharpMask  –  luma sharpened via MakeDiff / Expr AddDiff, chroma untouched
+# UnsharpMask  –  luma sharpened via MakeDiff + Expr, chroma untouched
 # ---------------------------------------------------------------------------
 
 def _unsharp_mask(clip: vs.VideoNode,
@@ -355,13 +395,11 @@ def _unsharp_mask(clip: vs.VideoNode,
     peak = (1 << bits) - 1
     s    = strength / 100.0
 
-    # diff = luma - blurred  (with mid offset, via MakeDiff)
     diff           = _makediff(luma, blurred)
-    # Apply strength and threshold; result stays in diff-space (mid offset)
     sharpened_diff = _expr1(diff,
         f'x {1 << (bits-1)} - dup abs {threshold} > dup {s} * 0 ? + '
         f'{1 << (bits-1)} + 0 {peak} clamp')
-    # Add sharpening back: base + diff - mid  (Expr, AddDiff does not exist in VS)
+    # Add sharpening back: base + diff - mid  (core.std.AddDiff does not exist in VS)
     result_luma    = _adddiff(luma, sharpened_diff)
 
     if clip.format.num_planes == 1:
@@ -373,7 +411,7 @@ def _unsharp_mask(clip: vs.VideoNode,
 
 
 # ---------------------------------------------------------------------------
-# RestoreGrain  –  uses MakeDiff / Expr for inverse diff (approximates mRD_RestoreGrain)
+# RestoreGrain  –  uses MakeDiff + Expr (approximates mRD_RestoreGrain)
 # ---------------------------------------------------------------------------
 
 def _restore_grain(filtered: vs.VideoNode,
@@ -393,16 +431,12 @@ def _restore_grain(filtered: vs.VideoNode,
     src_luma = _gray(source)
     flt_luma = _gray(filtered)
 
-    # Blur to get the low-frequency base
     blur1 = _boxblur_fn()(src_luma, hradius=val1, vradius=val1)
     blur2 = _boxblur_fn()(flt_luma, hradius=val2, vradius=val2)
 
-    # grain    = source luma − its blurred base  (high-frequency = grain)
-    # ref_flat = filtered luma − its blurred base
     grain    = _makediff(src_luma, blur1)
     ref_flat = _makediff(flt_luma, blur2)
 
-    # Restore grain only where the flat reference is near neutral
     restored_diff = _expr2(grain, ref_flat,
         f'x {mid} - y {mid} - dup abs {limit} < 0 ? + {mid} + '
         f'0 {peak} clamp')
@@ -503,7 +537,6 @@ def SpotLess(
 
     S, A, R, C = core.mv.Super, core.mv.Analyse, core.mv.Recalculate, core.mv.Compensate
 
-    # Mirror at start/end if requested
     if mStart or mEnd:
         head = core.std.Reverse(core.std.Trim(clip, 1, radT)) if mStart else None
         tail = core.std.Reverse(
@@ -517,11 +550,14 @@ def SpotLess(
     for _ in range(iterations):
         supclip    = ref or (core.std.Convolution(denoised, [1,2,1,2,4,2,1,2,1])
                              if blur else denoised)
-        sup        = S(supclip,  hpad=ablksize, vpad=ablksize, pel=pel, sharp=ssharp, rfilter=rfilter)
-        sup_render = S(denoised, levels=1, pel=pel, sharp=ssharp, rfilter=rfilter)
+        sup        = S(supclip,  hpad=ablksize, vpad=ablksize,
+                       pel=pel, sharp=ssharp, rfilter=rfilter)
+        sup_render = S(denoised, levels=1,
+                       pel=pel, sharp=ssharp, rfilter=rfilter)
 
         bv, fv = [], []
-        kw = dict(search=asearch, blksize=ablksize, overlap=aoverlap, chroma=chroma, truemotion=truemotion, pglobal=pglobal)
+        kw = dict(search=asearch, blksize=ablksize, overlap=aoverlap,
+                  chroma=chroma, truemotion=truemotion, pglobal=pglobal)
         for d in range(1, radT + 1):
             bv.append(A(sup, isb=True,  delta=d, **kw))
             fv.append(A(sup, isb=False, delta=d, **kw))
@@ -595,12 +631,17 @@ def SpotDelta(
     rgr1: int = 10,
     rgr2: int = 20,
 
+    # DeltaRestore bright-object tuning (e.g. fast white ball)
+    luma_brt: float = 1.1,        # brightness ratio for main luma restore mask
+    luma_expand: int = 3,         # dilation amount for luma mask
+    light_brt: float = 1.04,      # brightness ratio for light half of dark/light pair
+
     # Output mode
     output: str = 'restored',
 ) -> vs.VideoNode:
     """
     SpotDelta – Spotless + DeltaRestore for VapourSynth
-    ==================================================
+    ====================================================
     Removes dirt/dust spots from digitised film via SpotLess (temporal
     motion-compensated median), then uses DeltaRestore to bring back any
     legitimate detail (moving objects, fast hands, balloons…) that SpotLess
@@ -628,11 +669,21 @@ def SpotDelta(
     slog            Auto-level for mask generation (S-Log / washed-out).
     rgr             Restore film grain after cleaning. Default False.
     rgr1, rgr2      Grain restoration blur radii. Default 10, 20.
+    luma_brt        Brightness ratio for the main luma restore mask. Default 1.1.
+                    Lower this (e.g. 1.02) to restore bright fast-moving objects
+                    like a white tennis ball that SpotLess removes.
+    luma_expand     Dilation amount for the luma mask. Default 3.
+                    Increase (e.g. 5) to cover a larger ball area.
+    light_brt       Brightness ratio for the light half of the dark/light pair.
+                    Default 1.04. Lower alongside luma_brt for bright objects.
     output          What to return:
                       'restored'       – the cleaned clip (default)
                       'stacked'        – StackHorizontal([source, SpotLess, SpotDelta])
                       'interleaved'    – Interleave([source, SpotLess, SpotDelta])
-                      'versus_stacked' – StackHorizontal([SpotLess, SpotDelta, MakeDiff(SpotLess, SpotDelta)])
+                      'versus_stacked' – StackHorizontal([SpotLess, SpotDelta,
+                                         Diff(chroma 3x)])
+                      'full_stacked'   – StackHorizontal([source, SpotLess,
+                                         SpotDelta, Diff(chroma 3x)])
 
     Example
     -------
@@ -655,7 +706,7 @@ def SpotDelta(
     else:
         source_lvl = source
 
-    # ── Sharpen (luma only, via MakeDiff + Expr) ─────────────────────────
+    # ── Sharpen (luma only, via MakeDiff + Expr) ──────────────────────────
     if sharpen_it:
         source_shp     = _unsharp_mask(source,     usharp_strength, usharp_radius, usharp_th)
         source_lvl_shp = _unsharp_mask(source_lvl, usharp_strength, usharp_radius, usharp_th)
@@ -684,9 +735,11 @@ def SpotDelta(
     # ── Masks (all GRAY throughout) ───────────────────────────────────────
 
     # Luma mask: where source is brighter than filtered (bright spots)
+    # luma_brt / luma_expand are exposed as parameters so fast bright objects
+    # (e.g. a white tennis ball) can be tuned without touching the source.
     luma_mask = _luma_delta_mask(source_lvl_shp, source_lvl_shp_spt,
-                                 '>', brightness=1.1, spot_size=3)
-    luma_mask = _expand_mask(luma_mask, 3, blur=4)
+                                 '>', brightness=luma_brt, spot_size=3)
+    luma_mask = _expand_mask(luma_mask, luma_expand, blur=4)
 
     # Chroma mask: large colour difference
     chroma_mask = _chroma_delta_mask(source_lvl_shp, source_lvl_shp_spt,
@@ -714,7 +767,7 @@ def SpotDelta(
                              '<', brightness=dark2_brt,
                              limit_brightness=0.66, spot_size=5)
     light = _luma_delta_mask(source_lvl_shp, source_lvl_shp_spt,
-                             '>', brightness=1.04, spot_size=5)
+                             '>', brightness=light_brt, spot_size=5)
     light = _z_padding(light, 60, 14, 14, 10)
 
     dark_near_light = _must_be_near(dark, light, 28)
@@ -756,16 +809,23 @@ def SpotDelta(
     # Label clips for comparison modes
     src_labeled      = core.text.Text(source,         'Source',   alignment=8)
     spotless_labeled = core.text.Text(source_shp_spt, 'SpotLess', alignment=8)
-    spotdel_labeled  = core.text.Text(delta_restored, 'SpotDelta',  alignment=8)
+    spotdel_labeled  = core.text.Text(delta_restored, 'SpotDelta', alignment=8)
 
     if output == 'stacked':
         return core.std.StackHorizontal([src_labeled, spotless_labeled, spotdel_labeled])
     elif output == 'interleaved':
         return core.std.Interleave([src_labeled, spotless_labeled, spotdel_labeled])
-    elif output == 'versus_stacked':
-        diff = core.std.MakeDiff(source_shp_spt, delta_restored)
-        diff_labeled = core.text.Text(diff, 'MakeDiff(SpotLess, SpotDel)', alignment=8)
-        return core.std.StackHorizontal([spotless_labeled, spotdel_labeled, diff_labeled])
+    elif output in ('versus_stacked', 'full_stacked'):
+        # Exaggerated-chroma diff: luma = plain diff, chroma = 3x amplified
+        exc_diff     = _exaggerated_chroma_diff(source_shp_spt, delta_restored)
+        diff_labeled = core.text.Text(exc_diff, 'Diff (chroma 3x)', alignment=8)
+        if output == 'versus_stacked':
+            return core.std.StackHorizontal([spotless_labeled, spotdel_labeled,
+                                             diff_labeled])
+        else:  # full_stacked
+            return core.std.StackHorizontal([src_labeled, spotless_labeled,
+                                             spotdel_labeled, diff_labeled])
     else:
-        raise ValueError(f"SpotDel: unknown output mode '{output}'. "
-                         f"Use 'restored', 'stacked', 'interleaved', or 'versus_stacked'.")
+        raise ValueError(f"SpotDelta: unknown output mode '{output}'. "
+                         f"Use 'restored', 'stacked', 'interleaved', "
+                         f"'versus_stacked', or 'full_stacked'.")
