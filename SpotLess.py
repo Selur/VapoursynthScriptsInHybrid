@@ -229,8 +229,8 @@ def _expand_mask(mask: vs.VideoNode, amount: int, blur: float = 0.0) -> vs.Video
         mask = _boxblur_fn()(mask, hradius=r, vradius=r)
     return mask
 
-def _must_be_near(mask: vs.VideoNode, other: vs.VideoNode, max_distance: int, expanded: bool = False) -> vs.VideoNode:
-  
+def _must_be_near(mask: vs.VideoNode, other: vs.VideoNode,
+                  max_distance: int, expanded: bool = False) -> vs.VideoNode:
     ea         = max_distance // 2
     eb         = max_distance - ea
     mask_exp   = _expand_mask(mask,  ea)
@@ -287,7 +287,6 @@ def _luma_delta_mask(source: vs.VideoNode,
     thr  = int(mid * brightness)
     op   = '>' if direction == '>' else '<'
 
-    # core.std.MakeDiff on luma planes
     diff      = _makediff(_gray(source), _gray(filtered))
     mask      = _expr1(diff, f'x {thr} {op} {peak} 0 ?')
     mask_orig = mask
@@ -606,12 +605,26 @@ def SpotDelta(
     thsad: int = 10000,
     pel: Optional[int] = None,
     chroma: bool = True,
-    blksz: Optional[int] = None,
-    olap: Optional[int] = None,
-    schparam: Optional[int] = None,
+    ablksize: Optional[int] = None,
+    aoverlap: Optional[int] = None,
+    asearch: Optional[int] = None,
     truemotion: bool = False,
-    bblur: bool = False,
+    blur: bool = False,
     smoother: str = 'tmedian',
+
+    # SpotLess – advanced motion analysis
+    thsad2: Optional[int] = None,      # SAD threshold at radius > 1 (None = same as thsad)
+    ssharp: Optional[int] = None,      # mv.Super sharpness (None = auto → 1)
+    pglobal: bool = True,              # global motion estimation
+    rec: bool = False,                 # recalculation pass for refined vectors
+    rblksize: Optional[int] = None,    # block size for recalculation (None = ablksize)
+    roverlap: Optional[int] = None,    # overlap for recalculation (None = rblksize//2)
+    rsearch: Optional[int] = None,     # search type for recalculation (None = asearch)
+    rfilter: Optional[int] = None,     # mv.Super rfilter (None = auto → 2)
+    ref: Optional[vs.VideoNode] = None,# reference clip for mv.Super
+    mStart: bool = False,              # mirror-pad clip start to reduce border artefacts
+    mEnd: bool = False,                # mirror-pad clip end
+    iterations: int = 1,              # repeat denoising chain N times
 
     # Sharpening
     sharpen_it: bool = True,
@@ -654,28 +667,43 @@ def SpotDelta(
     thsad           SAD threshold (default 10000 ≈ nearly off).
     pel             Sub-pixel precision (1/2/4). Auto if None.
     chroma          Use chroma in block matching.
-    blksz           MV block size. Auto-scaled to resolution if None.
-    olap            MV overlap. Default blksz//2.
-    schparam        MV search param. Default olap//2.
+    ablksize        MV block size. Auto-scaled to resolution if None.
+    aoverlap        MV overlap. Default ablksize//2.
+    asearch         MV search param. Default aoverlap//2.
     truemotion      MV truemotion flag. Default False.
-    bblur           Blur before vector analysis. Default False.
+    blur            Blur before vector analysis. Default False.
     smoother        'tmedian' | 'ttsmooth' | 'zsmooth'. Default 'tmedian'.
+    thsad2          SAD threshold at temporal radius > 1. Default = thsad.
+    ssharp          mv.Super sharpness (1–3). Default 1.
+    pglobal         Use global motion estimation. Default True.
+    rec             Enable recalculation pass for refined vectors. Default False.
+    rblksize        Block size for recalculation. Default = ablksize.
+    roverlap        Overlap for recalculation. Default = rblksize//2.
+    rsearch         Search type for recalculation. Default = asearch.
+    rfilter         mv.Super rfilter strength. Default 2.
+    ref             Optional external reference clip for mv.Super.
+    mStart          Mirror-pad clip start to reduce border artefacts. Default False.
+    mEnd            Mirror-pad clip end. Default False.
+    iterations      Repeat the SpotLess denoising chain N times. Default 1.
     sharpen_it      Sharpen input before SpotLess (recommended). Default True.
-    usharp_strength Unsharp strength (0–100+). Default 80.
-    usharp_radius   Unsharp radius in pixels. Default 5.
-    usharp_th       Unsharp threshold. Default 1.
-    dark2_brt       Secondary dark-mask brightness ratio. Default 0.97.
-    dark2_brt_limit Secondary dark-mask brightness limit. Default 0.86.
+                    When False, the original clip is passed to SpotLess and
+                    DeltaRestore unmodified – no sharpening is applied anywhere.
+    usharp_strength Unsharp strength (0–200). Default 80.
+    usharp_radius   Unsharp radius in pixels (1–20). Default 5.
+    usharp_th       Unsharp threshold (0–255). Default 1.
+    dark2_brt       Secondary dark-mask brightness ratio (0.5–1.0). Default 0.97.
+    dark2_brt_limit Secondary dark-mask brightness limit (0.3–dark2_brt). Default 0.86.
     slog            Auto-level for mask generation (S-Log / washed-out).
     rgr             Restore film grain after cleaning. Default False.
-    rgr1, rgr2      Grain restoration blur radii. Default 10, 20.
-    luma_brt        Brightness ratio for the main luma restore mask. Default 1.1.
-                    Lower this (e.g. 1.02) to restore bright fast-moving objects
-                    like a white tennis ball that SpotLess removes.
-    luma_expand     Dilation amount for the luma mask. Default 3.
-                    Increase (e.g. 5) to cover a larger ball area.
-    light_brt       Brightness ratio for the light half of the dark/light pair.
-                    Default 1.04. Lower alongside luma_brt for bright objects.
+    rgr1            Grain restoration blur radius for source (1–50). Default 10.
+    rgr2            Grain restoration blur radius for filtered (1–50). Default 20.
+    luma_brt        Brightness ratio for the main luma restore mask (1.01–1.5).
+                    Default 1.1. Lower (e.g. 1.02) to restore bright fast-moving
+                    objects like a white tennis ball that SpotLess removes.
+    luma_expand     Dilation amount for the luma mask (0–20). Default 3.
+                    Increase (e.g. 5) to cover a larger bright object.
+    light_brt       Brightness ratio for the light half of the dark/light pair
+                    (1.01–1.5). Default 1.04. Lower alongside luma_brt.
     output          What to return:
                       'restored'       – the cleaned clip (default)
                       'stacked'        – StackHorizontal([source, SpotLess, SpotDelta])
@@ -707,6 +735,9 @@ def SpotDelta(
         source_lvl = source
 
     # ── Sharpen (luma only, via MakeDiff + Expr) ──────────────────────────
+    # When sharpen_it=False the original clips pass through unchanged.
+    # source_shp      → fed into SpotLess and used as the DeltaRestore source
+    # source_lvl_shp  → used only for mask generation (levelled version)
     if sharpen_it:
         source_shp     = _unsharp_mask(source,     usharp_strength, usharp_radius, usharp_th)
         source_lvl_shp = _unsharp_mask(source_lvl, usharp_strength, usharp_radius, usharp_th)
@@ -715,14 +746,18 @@ def SpotDelta(
         source_lvl_shp = source_lvl
 
     # ── SpotLess ──────────────────────────────────────────────────────────
-    _blksz    = blksz    or (32 if clip.width > 1920 else 16 if clip.width > 960 else 8)
-    _olap     = olap     or (_blksz // 2)
-    _schparam = schparam or (_olap  // 2)
+    _blksz    = ablksize or (32 if clip.width > 1920 else 16 if clip.width > 960 else 8)
+    _olap     = aoverlap or (_blksz // 2)
+    _schparam = asearch  or (_olap  // 2)
 
     sl_kw = dict(
-        radT=radT, thsad=thsad, pel=pel, chroma=chroma,
+        radT=radT, thsad=thsad, thsad2=thsad2, pel=pel, chroma=chroma,
         ablksize=_blksz, aoverlap=_olap, asearch=_schparam,
-        truemotion=truemotion, blur=bblur, smoother=smoother,
+        ssharp=ssharp, pglobal=pglobal,
+        rec=rec, rblksize=rblksize, roverlap=roverlap, rsearch=rsearch,
+        truemotion=truemotion, rfilter=rfilter,
+        blur=blur, smoother=smoother,
+        ref=ref, mStart=mStart, mEnd=mEnd, iterations=iterations,
     )
 
     source_shp_spt = SpotLess(source_shp, **sl_kw)
@@ -807,8 +842,8 @@ def SpotDelta(
         return delta_restored
 
     # Label clips for comparison modes
-    src_labeled      = core.text.Text(source,         'Source',   alignment=8)
-    spotless_labeled = core.text.Text(source_shp_spt, 'SpotLess', alignment=8)
+    src_labeled      = core.text.Text(source,         'Source',    alignment=8)
+    spotless_labeled = core.text.Text(source_shp_spt, 'SpotLess',  alignment=8)
     spotdel_labeled  = core.text.Text(delta_restored, 'SpotDelta', alignment=8)
 
     if output == 'stacked':
