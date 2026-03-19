@@ -7,19 +7,8 @@ SpotDelta (Spotless + Delta Restore) – VapourSynth Port
 Original AviSynth script by chmars (17/06/2021)
 VapourSynth port based on the AviSynth source and the VS SpotLess implementation.
 
-Avisynth SpotLessDelta:   https://forum.doom9.org/showthread.php?t=182831
+Avisynth SpotLessDelta: https://forum.doom9.org/showthread.php?p=1946031
 Avisynth SpotLess: https://forum.doom9.org/showthread.php?t=181777
-
-Design note
------------
-All internal masks are GRAY (single-plane) clips throughout the pipeline.
-They are only combined with the source format at the final MaskedMerge call
-(via first_plane=True).  This avoids format-mismatch errors between luma
-masks (naturally GRAY) and chroma masks.
-
-Native core.std functions (MakeDiff, MaskedMerge, Maximum, Minimum,
-Convolution, etc.) are used wherever available; Expr is used only for
-operations that have no native equivalent.
 
 Requirements
 ------------
@@ -153,10 +142,6 @@ def _exaggerated_chroma_diff(source: vs.VideoNode,
     """
     Diff clip where luma is a plain MakeDiff and chroma differences are
     amplified 3x, making colour artefacts clearly visible.
-    Mirrors the AviSynth logic:
-      diff1 = MakeDiff(source, filtered)
-      chroma is accumulated onto itself twice more → 3x total
-      result = luma from diff1, chroma from diff3
     """
     bits = source.format.bits_per_sample
     mid  = 1 << (bits - 1)
@@ -418,32 +403,53 @@ def _restore_grain(filtered: vs.VideoNode,
                    val1: int = 10,
                    val2: int = 20) -> vs.VideoNode:
     """
-    Blends original film grain back into the cleaned clip.
-    val1 / val2 control the blur radius used to separate grain from structure.
-    Uses native MakeDiff on luma planes; inverse diff applied via Expr.
+    Blends original film grain from source back into the cleaned filtered clip.
+
+    The algorithm:
+      diff = MakeDiff(source, filtered)          # per-pixel difference
+      abs_diff = abs(diff - mid)
+      # soft-limit: restore grain proportionally, fade where diff is large
+      clamped = min(abs_diff, str1) - max(0, str2 - abs_diff), clamped >= 0
+      weight  = sign(diff - mid)  i.e. (diff-mid) / max(abs(diff-mid), 1)
+      grain_diff = clamped * weight + mid
+      result = AddDiff(filtered_luma, grain_diff)
+
+    val1 (str1): upper threshold – grain stronger than this is fully restored.
+                 Range 1–50, default 10.
+    val2 (str2): lower threshold – grain weaker than this is suppressed.
+                 Range 1–50, default 20. Must be >= val1 for sensible results.
     """
-    bits  = source.format.bits_per_sample
-    mid   = 1 << (bits - 1)
-    peak  = (1 << bits) - 1
-    limit = peak // 8
+    bits = source.format.bits_per_sample
+    mid  = 1 << (bits - 1)
+    peak = (1 << bits) - 1
+
+    # Scale str1/str2 from 8-bit units to the actual bit depth
+    scale = peak / 255.0
+    str1  = val1 * scale
+    str2  = val2 * scale
 
     src_luma = _gray(source)
     flt_luma = _gray(filtered)
 
-    blur1 = _boxblur_fn()(src_luma, hradius=val1, vradius=val1)
-    blur2 = _boxblur_fn()(flt_luma, hradius=val2, vradius=val2)
+    # diff = source - filtered, stored with mid offset (MakeDiff convention)
+    diff = _makediff(src_luma, flt_luma)
 
-    grain    = _makediff(src_luma, blur1)
-    ref_flat = _makediff(flt_luma, blur2)
-
-    restored_diff = _expr2(grain, ref_flat,
-        f'x {mid} - y {mid} - dup abs {limit} < 0 ? + {mid} + '
-        f'0 {peak} clamp')
-    result_luma = _adddiff(flt_luma, restored_diff)
+    expr = (
+        f'x {mid} - '                              # d = diff - mid
+        f'dup abs '                                # abs_d  (stack: d abs_d)
+        f'dup {str1} min '                         # min(abs_d, str1)
+        f'swap {str2} swap - 0 max - '             # - max(str2 - abs_d, 0)
+        f'0 max '                                  # clamp clamped >= 0
+        f'swap dup abs 1 max / * '                 # * weight = d / max(abs_d,1)
+        f'{mid} + 0 {peak} clamp'                  # + mid, clamp to valid range
+    )
+    grain_diff  = _expr1(diff, expr)
+    result_luma = _adddiff(flt_luma, grain_diff)
 
     if filtered.format.num_planes == 1:
         return result_luma
 
+    # Luma restored, chroma copied from filtered
     return core.std.ShufflePlanes(
         [result_luma, filtered, filtered], [0, 1, 2], filtered.format.color_family
     )
@@ -633,7 +639,7 @@ def SpotDelta(
     usharp_th: int = 1,
 
     # DeltaRestore tuning
-    dark2_brt: float = 0.97,
+    dark2_brt: float = 0.85,
     dark2_brt_limit: float = 0.86,
 
     # S-Log / washed-out footage
