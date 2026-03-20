@@ -893,11 +893,9 @@ def _build_of_clip_svp(clip: vs.VideoNode) -> vs.VideoNode:
     """
     Return a clip where every frame is an SVP motion-interpolated frame
     at the midpoint between frame[n-1] and frame[n+1].
-
     SVP uses adaptive block sizes and multi-level vector refinement,
     generally producing better results than basic MVTools on live-action.
     Requires core.svp1 and core.svp2.
-
     SVP's SmoothFps outputs at 2× the source rate.  We double the fps,
     then SelectEvery(2, [1]) to grab only the interpolated odd frames
     (the t=0.5 midpoints), then restore the original fps.
@@ -907,7 +905,6 @@ def _build_of_clip_svp(clip: vs.VideoNode) -> vs.VideoNode:
             "deblend: optical_flow_engine='svp' requires the SVP plugin "
             "(core.svp1 and core.svp2) to be installed."
         )
-
     fmt_orig   = clip.format
     needs_conv = fmt_orig.bits_per_sample != 8 or fmt_orig.sample_type != vs.INTEGER
     if needs_conv:
@@ -917,8 +914,16 @@ def _build_of_clip_svp(clip: vs.VideoNode) -> vs.VideoNode:
     else:
         src8 = clip
 
+    blksize    = 32
+    max_levels = max(1, int(math.log2(min(src8.width, src8.height) / blksize)))
+
     super_params   = '{"pel":2,"gpu":0}'
-    analyse_params = '{"block":{"w":32,"h":32},"main":{"levels":5}}'
+    analyse_params = (
+        f'{{"block":{{"w":{blksize},"h":{blksize}}},'
+        f'"main":{{"levels":{max_levels},"search":{{"type":4,"distance":-8}},'
+        f'"penalty":{{"lambda":100,"plambda":100}}}},'
+        f'"refine":[{{"search":{{"type":4,"distance":2}}}}]}}'
+    )
     smooth_params  = '{"rate":{"num":2,"den":1,"abs":false},"algo":21,"mask":{"area":100}}'
 
     sup     = core.svp1.Super(src8, super_params)
@@ -928,7 +933,6 @@ def _build_of_clip_svp(clip: vs.VideoNode) -> vs.VideoNode:
     )
     # SelectEvery(2, [1]) picks frames 1, 3, 5 … — the interpolated midpoints
     interp = doubled.std.SelectEvery(cycle=2, offsets=[1])
-
     if needs_conv:
         interp = interp.resize.Bicubic(
             format=fmt_orig.id, dither_type="error_diffusion"
