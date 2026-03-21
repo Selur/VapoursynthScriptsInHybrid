@@ -140,15 +140,29 @@ def _build_detection_clips(
     dclip: vs.VideoNode,
     bsize: int   = 32,
     srad:  float = 12.0,
-) -> tuple[vs.VideoNode, vs.VideoNode, vs.VideoNode]:
+) -> tuple[vs.VideoNode, vs.VideoNode, vs.VideoNode, vs.VideoNode]:
+    """
+    Returns (bclp, dclp, luma_trimmed, luma_full).
+
+    luma_trimmed  — the detection luma with Trim(first=2) applied.
+                    Used as the base for bclp / dclp stats.
+    luma_full     — the detection luma WITHOUT the leading trim.
+                    Used for the dc_motion diff so that frame n of
+                    luma_full corresponds to frame n of the source,
+                    matching AviSynth's  lumadifference(det, det.trim(2,0)).
+    """
     if dclip.format.id != vs.YUV420P8:
         dclip = dclip.resize.Bicubic(format=vs.YUV420P8)
 
     new_w = int(dclip.width  / 2 / srad + 4) * 4
     new_h = int(dclip.height / 2 / srad + 4) * 4
     small = dclip.resize.Point(new_w, new_h)
-    luma  = _get_plane(small, 0)
-    luma  = luma.std.Trim(first=2)
+
+    # luma_full: before the Trim — needed for dc_motion
+    luma_full = _get_plane(small, 0)
+
+    # luma: with Trim(first=2) applied — used for bclp / dclp
+    luma = luma_full.std.Trim(first=2)
 
     EXPR = (core.llvmexpr.Expr if hasattr(core, 'llvmexpr') else
             core.akarin.Expr   if hasattr(core, 'akarin')   else
@@ -168,7 +182,7 @@ def _build_detection_clips(
                .std.Lut(function=lambda x: max(_cround(abs(x - 128) ** 1.1 - 1), 0))
                .resize.Bilinear(bsize, bsize))
 
-    return bclp, dclp, luma
+    return bclp, dclp, luma, luma_full
 
 
 # ---------------------------------------------------------------------------
@@ -211,8 +225,8 @@ def _compute_decision(
     denm:  int,
     thr:   float,
     mode:  int,
-) -> tuple[int, bool]:
-    """Mutates state in-place. Returns (target_frame_index, use_mec)."""
+) -> tuple[int, bool, bool]:
+    """Mutates state in-place. Returns (target_frame_index, use_mec, is_blend)."""
 
     jmp  = (state['lfr'] + 1 == n)
     cfo  = ((n % denm) * numr * 2 + denm + numr) % (2 * denm) - denm
@@ -232,6 +246,7 @@ def _compute_decision(
 
     state['ldet'] = -1 if n + pos == state['ldet'] else n + pos
 
+    ## diff value shifting ##
     d_v = s.d_max + 0.015625
     if jmp:
         d43          = state['d32']
@@ -246,6 +261,7 @@ def _compute_decision(
               state['d01'] = state['d12'] = state['d23'] = d_v
     state['d34'] = d_v
 
+    ## motion value shifting ##
     m_v = s.dc_diff + 0.015625
     if jmp:
         m53          = state['m42']
@@ -260,9 +276,11 @@ def _compute_decision(
               state['m11'] = state['m02'] = state['m13'] = m_v
     state['m24'] = m_v
 
+    ## get blend and clear values ##
     b_v = max(128 - s.b_min, 0.125)
     c_v = max(s.b_max - 128, 0.125)
 
+    ## blend value shifting ##
     if jmp:
         bp3          = state['bp2']
         state['bp2'] = state['bp1']
@@ -275,6 +293,7 @@ def _compute_decision(
               state['bn1'] = state['bn2'] = b_v
     state['bn3'] = b_v
 
+    ## clear value shifting ##
     if jmp:
         cp3          = state['cp2']
         state['cp2'] = state['cp1']
@@ -287,6 +306,7 @@ def _compute_decision(
               state['cn1'] = state['cn2'] = c_v
     state['cn3'] = c_v
 
+    ## used detection values ##
     i = pos + 2
 
     bb  = [bp3,          state['bp2'], state['bp1'], state['bn0'], state['bn1']][i]
@@ -306,6 +326,7 @@ def _compute_decision(
     mn  = [state['m20'], state['m11'], state['m02'], state['m13'], state['m24']][i]
     mn1 = [state['m11'], state['m02'], state['m13'], state['m24'], 0.01        ][i]
 
+    ### basic calculation ###
     bbool = (0.8 * bc * cb > bb * cc and
              0.8 * bc * cn > bn * cc and
              bc * bc > cc)
@@ -348,6 +369,7 @@ def _compute_decision(
            (dbc * 4 < dbb and dcn * 4 < dbb and dnn * 4 < dbb and dn2 * 4 < dbb) or
            (dcn * 4 < dbc and dnn * 4 < dbc and dn2 * 4 < dbc))
 
+    ### offset calculation ###
     if blend:
         odm = denm
     elif clear:
@@ -399,12 +421,14 @@ def _compute_decision(
         )
     pos = min(max(opos, -2), 2)
 
+    ### frame output calculation - resync - dup ###
     i2   = pos + 2
     dbb2 = [d43,          state['d32'], state['d21'], state['d10'], state['d01']][i2]
     dbc2 = [state['d32'], state['d21'], state['d10'], state['d01'], state['d12']][i2]
     dcn2 = [state['d21'], state['d10'], state['d01'], state['d12'], state['d23']][i2]
     dnn2 = [state['d10'], state['d01'], state['d12'], state['d23'], state['d34']][i2]
 
+    ## dup_hq - merge ##
     if opos != pos or abs(mode) < 2 or abs(mode) == 3:
         dup = 0
     elif (dcn2 * 5 < dbc2 and dnn2 * 5 < dbc2 and
@@ -429,8 +453,9 @@ def _compute_decision(
             dnn2 * 9 < dbc2 and dcn2 * 3 < dbc2 or
             dbb2 * 9 < dcn2 and dbc2 * 3 < dcn2))
 
-    use_mec  = mer and dup == 0
-    target   = n + opos + dup - (1 if dup == 0 and mer and dbc2 < dcn2 else 0)
+    ## deblend - doubleblend removal - postprocessing ##
+    use_mec = mer and dup == 0
+    target  = n + opos + dup - (1 if dup == 0 and mer and dbc2 < dcn2 else 0)
 
     return target, use_mec, blend
 
@@ -707,17 +732,24 @@ def deblendS6(
         numr = _cround(frfac * 9000)
     denm = _cround(numr / frfac)
 
-    bclp, dclp_clip, dclip_small = _build_detection_clips(dclip)
+    ###### source preparation ######
+    # _build_detection_clips returns luma_full (pre-trim) as the 4th value;
+    # it is used below to build dc_motion with the correct frame-0 alignment.
+    bclp, dclp_clip, dclip_small, dclip_small_full = _build_detection_clips(dclip)
 
     # PlaneStats nodes (cheap — just adds stats props, lazy evaluation)
     bclp_s = bclp.std.PlaneStats()
     dclp_s = dclp_clip.std.PlaneStats()
 
-    dclip_nxt  = (dclip_small.std.Trim(first=2) +
-                  dclip_small[-1] * 2)
+    # Motion reference: diff between frame n and frame n+2 on the small luma,
+    # matching AviSynth's  lumadifference(det, det.trim(2,0)).
+    # luma_full is used here (not the trimmed variant) so that both operands
+    # share the same frame-0 origin and the diff stays correctly aligned.
+    dclip_nxt  = (dclip_small_full.std.Trim(first=2) +
+                  dclip_small_full[-1] * 2)
     dc_motion  = core.std.PlaneStats(
-        dclip_small,
-        dclip_nxt[:dclip_small.num_frames]
+        dclip_small_full,
+        dclip_nxt[:dclip_small_full.num_frames]
     )
 
     engine = Engine(
@@ -731,10 +763,12 @@ def deblendS6(
         mode        = mode,
     )
 
-    # mec clip (mode >= 2)
+    # mec clip: 50/50 blend of frame n and frame n+1 across all planes.
+    # Matches AviSynth's
+    #   mergeluma(mergechroma(out, out.trim(1,0), 0.5), out.trim(1,0), 0.5)
+    # Used as the output clip when the merge detector (mer) fires.
     if abs(mode) >= 2:
-        mec = core.std.Merge(clip, clip.std.Trim(first=1), weight=[0, 0.5])
-        mec = core.std.Merge(mec,  clip.std.Trim(first=1), weight=[0.5, 0])
+        mec = core.std.Merge(clip, clip.std.Trim(first=1), weight=[0.5, 0.5])
     else:
         mec = clip
 
@@ -752,12 +786,20 @@ def deblendS6(
     def _select(n: int) -> vs.VideoNode:
         engine.advance(n)
         target, use_mec, is_blend = engine.get(n)
+
+        # Clamp target to a valid frame index for all clip lookups.
+        # Mirrors AviSynth's  oclp = mer&&dup==0 ? mec : source
+        #                     opos = opos+dup-(dup==0&&mer&&dbc<dcn ? 1 : 0)
+        #                     oclp.trim(opos, 0)
+        t = max(0, min(target, clip.num_frames - 1))
+
         # On a detected blend frame, use OF interpolation if available.
-        # On non-blend frames always use the source.
+        # On non-blend frames always use the source (or mec when mer fires).
         if is_blend and of_clip is not None:
-            return of_clip[max(0, min(n, of_clip.num_frames - 1))]
+            return of_clip[max(0, min(t, of_clip.num_frames - 1))]
+
         src = mec if use_mec else clip
-        return src[max(0, min(target, src.num_frames - 1))]
+        return src[max(0, min(t, src.num_frames - 1))]
 
     output = clip.std.FrameEval(eval=_select)
 
@@ -848,21 +890,13 @@ def _build_of_clip(
     pel      Sub-pixel precision: 1=pixel, 2=half-pixel, 4=quarter.
     blksize  Block size for vector search.
     """
-  
     fmt_orig = clip.format
 
     # mvsf requires single-precision float; core.mv requires 8-bit integer.
-    # Detect which plugin we have by checking for a known mvsf-only attribute.
-    plugin_name = getattr(mv, 'namespace', None) or ''
-    is_mvsf = 'mvsf' in plugin_name.lower() or (
-        hasattr(core, 'mvsf') and type(mv) is type(core.mvsf)
-    )
-
-    # Safest approach: just check what format mvsf.Super actually needs
-    # by always converting to float32 when mvsf is loaded at all.
+    # Safest approach: always convert to float32 when mvsf is loaded at all,
+    # since mvsf.Super rejects non-float input regardless of which namespace
+    # 'mv' points to.
     if hasattr(core, 'mvsf'):
-        # mvsf is present — always feed it float32 regardless of which
-        # namespace 'mv' points to, since mvsf.Super rejects non-float.
         target_fmt = fmt_orig.replace(bits_per_sample=32, sample_type=vs.FLOAT)
         src_work   = clip.resize.Bicubic(format=target_fmt.id)
         needs_conv = True
@@ -876,10 +910,10 @@ def _build_of_clip(
             src_work   = clip
             needs_conv = False
 
-    sup_src = mv.Super(src_work, pel=pel, hpad=blksize, vpad=blksize)
+    sup_src  = mv.Super(src_work, pel=pel, hpad=blksize, vpad=blksize)
     _analyse = mv.Analyze if hasattr(mv, 'Analyze') else mv.Analyse
-    bwd = _analyse(sup_src, isb=True,  blksize=blksize, overlap=blksize // 2)
-    fwd = _analyse(sup_src, isb=False, blksize=blksize, overlap=blksize // 2)
+    bwd      = _analyse(sup_src, isb=True,  blksize=blksize, overlap=blksize // 2)
+    fwd      = _analyse(sup_src, isb=False, blksize=blksize, overlap=blksize // 2)
 
     interp = mv.FlowInter(src_work, sup_src, bwd, fwd, time=50)
 
@@ -888,6 +922,7 @@ def _build_of_clip(
             format=fmt_orig.id, dither_type="error_diffusion"
         )
     return interp
+
 
 def _build_of_clip_svp(clip: vs.VideoNode) -> vs.VideoNode:
     """
@@ -899,6 +934,8 @@ def _build_of_clip_svp(clip: vs.VideoNode) -> vs.VideoNode:
     SVP's SmoothFps outputs at 2× the source rate.  We double the fps,
     then SelectEvery(2, [1]) to grab only the interpolated odd frames
     (the t=0.5 midpoints), then restore the original fps.
+    max_levels is computed from the clip resolution to avoid the
+    SVAnalyse 'non-valid number of levels' error on smaller resolutions.
     """
     if not hasattr(core, 'svp1') or not hasattr(core, 'svp2'):
         raise vs.Error(
