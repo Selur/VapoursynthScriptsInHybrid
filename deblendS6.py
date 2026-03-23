@@ -10,16 +10,18 @@ tracking).
 
 Performance design
 ------------------
-* Scene-change checkpoints — the background thread saves a full state
-  snapshot at every detected scene cut AND every _CHECKPOINT_INTERVAL
-  frames.  Seeking to any point only requires replaying from the
-  nearest checkpoint, not from frame 0.
+* Checkpoints — the background thread saves a full state snapshot
+  every _CHECKPOINT_INTERVAL frames.  Seeking to any point only
+  requires replaying from the nearest checkpoint, not from frame 0.
 * Demand-driven threading — the playback thread stays at most
   _LOOKAHEAD frames ahead of the consumer.  Nothing is computed until
   a frame is actually requested.
-* Inside a scene the cadence state is continuous.  At a scene cut the
-  state is reset (cadence re-locks from scratch), which is correct
-  because blend patterns don't carry across cuts.
+
+NOTE: There is NO scene-cut based state reset during normal sequential
+playback.  AviSynth's srestore has no such mechanism, and resetting on
+scene cuts (especially after long black/static sections) causes the
+Markov state to diverge badly from the AviSynth reference.
+Checkpoints are kept purely for seek support.
 
 Usage
 -----
@@ -63,6 +65,33 @@ dclip       VideoNode   Alternate clip used purely for blend detection.
                         source has noise, blocking, or ringing artefacts
                         that would otherwise interfere with the diff/motion
                         metrics.  Safe to omit for clean sources.
+                        If both dclip and denoise are given, denoise is
+                        applied on top of the supplied dclip.
+denoise     str|None    Purely spatial pre-denoise applied to dclip before
+                        building the detection thumbnails.  Only affects
+                        detection, never the output frames.
+                        Temporal denoisers must NOT be used here because
+                        they smooth exactly the inter-frame diff signal
+                        that blend detection relies on.
+                        None (default) — no denoising.
+                        "RemoveGrain" — two-pass spatial filter:
+                            pass 1: RG mode 2  (clip to neighbourhood
+                                    min/max, kills blocking/spike pixels)
+                            pass 2: RG mode 12 (3x3 weighted blur,
+                                    smooths fine grain)
+                            Fast, no extra plugins required.
+                            Good for: compressed sources with blocking,
+                            moderate grain, ringing artefacts.
+                        "NLMeans" — Non-local means spatial denoise
+                            (d=0, purely single-frame, no temporal radius).
+                            Requires the nlm_cuda or nlm_ispc plugin.
+                            h=7 on luma, chroma untouched (detection is
+                            luma-only after the thumbnail downscale).
+                            Good for: heavy film grain, analog noise where
+                            RemoveGrain is not strong enough.
+nlmeans_h   float       Strength (h) for NLMeans denoising. Default 7.0.
+                        Increase for heavier grain (10-16), decrease for
+                        light noise (3-5).  Only used when denoise="NLMeans".
 mode        int         Controls duplicate/merge detection and mec usage.
                         Default is 2.  Options:
 
@@ -81,9 +110,9 @@ mode        int         Controls duplicate/merge detection and mec usage.
                         -4  Same as 4 with inverted thresholds.
 
                         Summary of what each flag enables:
-                          abs(mode) >= 2  →  mec clip is constructed
-                          abs(mode) != 3  →  duplicate detection active
-                          abs(mode) >  2  →  merge (mec) detection active
+                          abs(mode) >= 2  ->  mec clip is constructed
+                          abs(mode) != 3  ->  duplicate detection active
+                          abs(mode) >  2  ->  merge (mec) detection active
 """
 
 from __future__ import annotations
@@ -101,16 +130,15 @@ core = vs.core
 # How far ahead of the consumer the playback thread runs.
 _LOOKAHEAD = 80
 
-# Save a state checkpoint every N frames regardless of scene changes.
+# Save a state checkpoint every N frames for seek support.
 _CHECKPOINT_INTERVAL = 200
 
-# A diff spike this many times the running median signals a scene cut.
-_SCENE_CUT_RATIO = 8.0
+# Fixed threshold matching AviSynth srestore default (thresh=16).
+# NOT auto-estimated: black/static frames at the start would corrupt any
+# bootstrap estimate and produce thr << 16, causing massive over-detection.
+_THR = 16.01
 
-# Number of frames used to refine the auto-threshold estimate.
-# The fallback value is used immediately so frame 0 is never stalled.
-_THR_BOOTSTRAP   = 60
-_THR_FALLBACK    = 16.01   # srestore's default; used until bootstrap completes
+_MAGIC_OFFSET = 1.0 / 64.0
 
 
 # ---------------------------------------------------------------------------
@@ -140,16 +168,14 @@ def _build_detection_clips(
     dclip: vs.VideoNode,
     bsize: int   = 32,
     srad:  float = 12.0,
-) -> tuple[vs.VideoNode, vs.VideoNode, vs.VideoNode, vs.VideoNode]:
+) -> tuple[vs.VideoNode, vs.VideoNode, vs.VideoNode]:
     """
-    Returns (bclp, dclp, luma_trimmed, luma_full).
+    Returns (bclp, dclp, luma_trimmed).
 
-    luma_trimmed  — the detection luma with Trim(first=2) applied.
-                    Used as the base for bclp / dclp stats.
-    luma_full     — the detection luma WITHOUT the leading trim.
-                    Used for the dc_motion diff so that frame n of
-                    luma_full corresponds to frame n of the source,
-                    matching AviSynth's  lumadifference(det, det.trim(2,0)).
+    luma_trimmed -- detection luma with Trim(first=2) applied.
+                    Used for bclp / dclp AND for dc_motion, matching
+                    AviSynth where det = det.pointresize(...).trim(2,0)
+                    and all further operations use that trimmed det.
     """
     if dclip.format.id != vs.YUV420P8:
         dclip = dclip.resize.Bicubic(format=vs.YUV420P8)
@@ -158,11 +184,7 @@ def _build_detection_clips(
     new_h = int(dclip.height / 2 / srad + 4) * 4
     small = dclip.resize.Point(new_w, new_h)
 
-    # luma_full: before the Trim — needed for dc_motion
-    luma_full = _get_plane(small, 0)
-
-    # luma: with Trim(first=2) applied — used for bclp / dclp
-    luma = luma_full.std.Trim(first=2)
+    luma = _get_plane(small, 0).std.Trim(first=2)
 
     EXPR = (core.llvmexpr.Expr if hasattr(core, 'llvmexpr') else
             core.akarin.Expr   if hasattr(core, 'akarin')   else
@@ -182,7 +204,7 @@ def _build_detection_clips(
                .std.Lut(function=lambda x: max(_cround(abs(x - 128) ** 1.1 - 1), 0))
                .resize.Bilinear(bsize, bsize))
 
-    return bclp, dclp, luma, luma_full
+    return bclp, dclp, luma
 
 
 # ---------------------------------------------------------------------------
@@ -194,26 +216,32 @@ class RawStats:
     b_min:   float
     b_max:   float
     d_max:   float
-    dc_diff: float   # already multiplied by 255
+    dc_diff: float
 
 
 # ---------------------------------------------------------------------------
-# Decision state (the Markov chain that _compute_decision mutates)
+# Decision state
 # ---------------------------------------------------------------------------
 
 def _initial_state() -> dict:
-    v = 0.015625
+    """
+    All history slots start at _MAGIC_OFFSET.
+    On frame 0 jmp=False so every slot is immediately overwritten with
+    the real frame-0 values -- matching AviSynth where the globals are
+    first written on frame 0 via the jmp=false branch.
+    """
+    v = _MAGIC_OFFSET
     return dict(
         lfr=-100, offs=0.0, ldet=-100, lpos=0,
         d32=v, d21=v, d10=v, d01=v, d12=v, d23=v, d34=v,
         m42=v, m31=v, m20=v, m11=v, m02=v, m13=v, m24=v,
-        bp2=0.125, bp1=0.125, bn0=0.125, bn1=0.125, bn2=0.125, bn3=0.125,
-        cp2=0.125, cp1=0.125, cn0=0.125, cn1=0.125, cn2=0.125, cn3=0.125,
+        bp2=v, bp1=v, bn0=v, bn1=v, bn2=v, bn3=v,
+        cp2=v, cp1=v, cn0=v, cn1=v, cn2=v, cn3=v,
     )
 
 
 # ---------------------------------------------------------------------------
-# _compute_decision — faithful port of srestore's logic
+# _compute_decision -- faithful port of srestore mode=6 logic
 # ---------------------------------------------------------------------------
 
 def _compute_decision(
@@ -247,7 +275,7 @@ def _compute_decision(
     state['ldet'] = -1 if n + pos == state['ldet'] else n + pos
 
     ## diff value shifting ##
-    d_v = s.d_max + 0.015625
+    d_v = s.d_max + _MAGIC_OFFSET
     if jmp:
         d43          = state['d32']
         state['d32'] = state['d21']
@@ -262,7 +290,9 @@ def _compute_decision(
     state['d34'] = d_v
 
     ## motion value shifting ##
-    m_v = s.dc_diff + 0.015625
+    # dc_diff already scaled to [0,255] in _fetch (PlaneStatsDiff * 255),
+    # matching AviSynth's lumadifference() range.
+    m_v = s.dc_diff
     if jmp:
         m53          = state['m42']
         state['m42'] = state['m31']
@@ -277,8 +307,12 @@ def _compute_decision(
     state['m24'] = m_v
 
     ## get blend and clear values ##
-    b_v = max(128 - s.b_min, 0.125)
-    c_v = max(s.b_max - 128, 0.125)
+    b_v = 128.0 - s.b_min   # high when bclp minimum is low
+    if b_v < 1.0:
+        b_v = 0.125
+    c_v = s.b_max - 128.0   # high when bclp maximum is high
+    if c_v < 1.0:
+        c_v = 0.125
 
     ## blend value shifting ##
     if jmp:
@@ -446,14 +480,23 @@ def _compute_decision(
     else:
         dup = 0
 
-    mer = (opos == pos and dup == 0 and abs(mode) > 2 and
-           (dbc2 * 8 < dcn2 or dbc2 * 8 < dbb2 or
-            dcn2 * 8 < dbc2 or dcn2 * 8 < dnn2 or
-            dbc2 * 2 < thr or dcn2 * 2 < thr or
-            dnn2 * 9 < dbc2 and dcn2 * 3 < dbc2 or
-            dbb2 * 9 < dcn2 and dbc2 * 3 < dcn2))
+    # mer: exact AviSynth port -- no abs(mc)>2 guard (that was a prior bug)
+    mer = (
+        opos == pos and
+        dup == 0 and
+        abs(mode) > 2 and
+        (
+            dbc2 * 8 < dcn2 or
+            dbc2 * 8 < dbb2 or
+            dcn2 * 8 < dbc2 or
+            dcn2 * 8 < dnn2 or
+            dbc2 * 2 < thr or
+            dcn2 * 2 < thr or
+            (dnn2 * 9 < dbc2 and dcn2 * 3 < dbc2) or
+            (dbb2 * 9 < dcn2 and dbc2 * 3 < dcn2)
+        )
+    )
 
-    ## deblend - doubleblend removal - postprocessing ##
     use_mec = mer and dup == 0
     target  = n + opos + dup - (1 if dup == 0 and mer and dbc2 < dcn2 else 0)
 
@@ -461,55 +504,25 @@ def _compute_decision(
 
 
 # ---------------------------------------------------------------------------
-# Scene-cut detector
-# Lightweight: just watches d_max relative to a rolling median estimate.
-# ---------------------------------------------------------------------------
-
-class SceneCutDetector:
-    """
-    Tracks a running estimate of the 'normal' diff level and flags frames
-    where d_max spikes far above it as scene cuts.
-
-    Uses an exponential moving average of the lower half of seen diffs
-    (ignoring the top half so that blends/motion don't inflate the
-    baseline).  A frame is a cut if d_max > _SCENE_CUT_RATIO * baseline.
-    """
-
-    def __init__(self) -> None:
-        self._ema   = 8.0   # initial guess; adapts quickly
-        self._alpha = 0.05  # EMA decay
-
-    def is_cut(self, d_max: float) -> bool:
-        cut = d_max > _SCENE_CUT_RATIO * self._ema
-        # Only update EMA with low-motion frames to keep baseline clean
-        if d_max < 2 * self._ema:
-            self._ema = (1 - self._alpha) * self._ema + self._alpha * d_max
-        return cut
-
-
-# ---------------------------------------------------------------------------
-# Engine: stats fetch + decision, with checkpointing and seek support
+# Engine: sequential stats fetch + decision, with checkpointing for seeks
 # ---------------------------------------------------------------------------
 
 class Engine:
     """
-    Single background thread that:
-      - fetches RawStats for each frame
-      - runs _compute_decision sequentially (preserving Markov state)
-      - saves checkpoints at scene cuts and every _CHECKPOINT_INTERVAL frames
-      - estimates thr from the first _THR_BOOTSTRAP frames it processes
-      - supports fast seeks by restarting from the nearest checkpoint
+    Single background thread that fetches RawStats and runs
+    _compute_decision sequentially, preserving the Markov state across
+    all frames without any mid-stream resets.
 
-    The playback thread is demand-driven: it only runs up to
-    _LOOKAHEAD frames ahead of whatever frame the consumer last requested.
+    Checkpoints are saved every _CHECKPOINT_INTERVAL frames solely to
+    support random-access seeks; they do not affect normal playback.
     """
 
     def __init__(
         self,
         num_frames:  int,
-        bclp_s:      vs.VideoNode,   # already PlaneStats'd
-        dclp_s:      vs.VideoNode,   # already PlaneStats'd
-        dc_motion_s: vs.VideoNode,   # already PlaneStats'd
+        bclp_s:      vs.VideoNode,
+        dclp_s:      vs.VideoNode,
+        dc_motion_s: vs.VideoNode,
         frfac:       float,
         numr:        int,
         denm:        int,
@@ -528,45 +541,29 @@ class Engine:
         self._nd_max = dclp_s.num_frames  - 1
         self._nm_max = dc_motion_s.num_frames - 1
 
-        # Results
         self._decisions: list[Optional[tuple[int, bool, bool]]] = [None] * num_frames
         self._events    = [threading.Event() for _ in range(num_frames)]
 
-        # Checkpoints: frame_index → (deep-copy of state, thr at that point)
-        self._checkpoints: dict[int, tuple[dict, float]] = {}
+        self._checkpoints: dict[int, dict] = {}
         self._cp_lock = threading.Lock()
 
-        # Auto-threshold — starts at fallback, refined after _THR_BOOTSTRAP frames
-        self._thr:         float       = _THR_FALLBACK
-        self._thr_samples: list[float] = []
-
-        # Playback-thread control
         self._head      = _LOOKAHEAD
         self._head_lock = threading.Lock()
         self._head_ev   = threading.Event()
         self._cancel    = threading.Event()
 
-        # Save checkpoint at frame 0 immediately
         st0 = _initial_state()
         with self._cp_lock:
-            self._checkpoints[0] = (copy.deepcopy(st0), _THR_FALLBACK)
+            self._checkpoints[0] = copy.deepcopy(st0)
 
         self._thread = threading.Thread(
             target=self._run, args=(0, st0), daemon=True
         )
         self._thread.start()
 
-    # ------------------------------------------------------------------
-    # thr property — always available immediately (fallback until bootstrap completes)
-    # ------------------------------------------------------------------
-
     @property
     def thr(self) -> float:
-        return self._thr
-
-    # ------------------------------------------------------------------
-    # Consumer API
-    # ------------------------------------------------------------------
+        return _THR
 
     def advance(self, n: int) -> None:
         with self._head_lock:
@@ -578,14 +575,9 @@ class Engine:
     def get(self, n: int) -> tuple[int, bool, bool]:
         self.advance(n)
         if not self._events[n].wait(timeout=0.08):
-            # Likely a seek — restart from nearest checkpoint
             self._seek_restart(n)
         self._events[n].wait()
         return self._decisions[n]
-
-    # ------------------------------------------------------------------
-    # Internal: seek restart
-    # ------------------------------------------------------------------
 
     def _seek_restart(self, n: int) -> None:
         with self._cp_lock:
@@ -593,14 +585,11 @@ class Engine:
             if not candidates:
                 return
             cp_frame = max(candidates)
-            cp_state, cp_thr = self._checkpoints[cp_frame]
-            cp_state = copy.deepcopy(cp_state)
+            cp_state = copy.deepcopy(self._checkpoints[cp_frame])
 
-        # Already computed by someone else while we were waiting?
         if self._events[n].is_set():
             return
 
-        # Cancel current thread and start a new one from the checkpoint
         self._cancel.set()
         self._thread.join(timeout=0.5)
         self._cancel = threading.Event()
@@ -608,30 +597,19 @@ class Engine:
         with self._head_lock:
             self._head = n + _LOOKAHEAD
 
-        # Restore thr from checkpoint if it has been refined
-        if cp_thr is not None:
-            self._thr = cp_thr
-
         self._thread = threading.Thread(
             target=self._run, args=(cp_frame, cp_state), daemon=True
         )
         self._thread.start()
-        # Give the new thread permission to run to n immediately
         self.advance(n)
 
-    # ------------------------------------------------------------------
-    # Background thread
-    # ------------------------------------------------------------------
-
     def _run(self, start: int, state: dict) -> None:
-        cut_detector = SceneCutDetector()
-        cancel       = self._cancel   # local ref so swap doesn't affect us
+        cancel = self._cancel
 
         for n in range(start, self._nf):
             if cancel.is_set():
                 return
 
-            # Throttle: don't run more than _LOOKAHEAD ahead of consumer
             while True:
                 if cancel.is_set():
                     return
@@ -642,47 +620,21 @@ class Engine:
                 self._head_ev.wait(timeout=0.02)
                 self._head_ev.clear()
 
-            # Fetch raw stats
             s = self._fetch(n)
 
-            # --- Auto-threshold refinement (non-blocking) ---
-            # Accumulate samples; once we have enough, refine thr in-place.
-            # Until then the fallback value is used — no frame is ever stalled.
-            if len(self._thr_samples) < _THR_BOOTSTRAP:
-                self._thr_samples.append(s.d_max)
-                if len(self._thr_samples) == _THR_BOOTSTRAP:
-                    samples = sorted(self._thr_samples)
-                    p20 = samples[max(0, int(len(samples) * 0.20) - 1)]
-                    self._thr = max(4.0, min(p20, 64.0)) + 0.01
-
-            thr = self._thr
-
-            # --- Scene cut detection ---
-            is_cut = cut_detector.is_cut(s.d_max)
-            if is_cut:
-                # Reset Markov state at the cut — cadence re-locks from scratch
-                state = _initial_state()
-                state['lfr'] = n - 1   # so jmp=True on next step
-
-            # --- Checkpoint saving ---
-            save_cp = (is_cut or
-                       n % _CHECKPOINT_INTERVAL == 0 or
-                       n == start)
-            if save_cp:
+            # Checkpoint for seek support only -- no effect on playback
+            if n % _CHECKPOINT_INTERVAL == 0 or n == start:
                 with self._cp_lock:
                     if n not in self._checkpoints:
-                        self._checkpoints[n] = (copy.deepcopy(state), thr)
+                        self._checkpoints[n] = copy.deepcopy(state)
 
-            # --- Decision ---
             decision = _compute_decision(
                 n, s, state,
-                self._frfac, self._numr, self._denm, thr, self._mode,
+                self._frfac, self._numr, self._denm, _THR, self._mode,
             )
 
             self._decisions[n] = decision
             self._events[n].set()
-
-    # ------------------------------------------------------------------
 
     def _fetch(self, n: int) -> RawStats:
         fb  = self._bclp.get_frame(min(n, self._nb_max))
@@ -692,8 +644,124 @@ class Engine:
             b_min   = float(fb.props['PlaneStatsMin']),
             b_max   = float(fb.props['PlaneStatsMax']),
             d_max   = float(fd.props['PlaneStatsMax']),
-            dc_diff = float(fdc.props['PlaneStatsDiff']) * 255.0,
+            # PlaneStatsDiff is [0.0, 1.0]; scale to [0, 255] to match
+            # AviSynth's lumadifference() which works in that range.
+            dc_diff = float(fdc.props['PlaneStatsDiff']) * 255.0 + _MAGIC_OFFSET,
         )
+
+
+# ---------------------------------------------------------------------------
+# dclip denoiser helper
+# ---------------------------------------------------------------------------
+
+def _apply_dclip_denoise(
+    dclip:     vs.VideoNode,
+    denoise:   str,
+    nlmeans_h: float = 7.0,
+) -> vs.VideoNode:
+    """
+    Apply a purely spatial denoise to dclip before detection thumbnail
+    construction.  Temporal denoisers must never be used here: they smooth
+    the inter-frame diff signal that blend detection depends on.
+
+    Parameters
+    ----------
+    dclip      Source clip (any YUV format).
+    denoise    "RemoveGrain" or "NLMeans" (case-insensitive).
+    nlmeans_h  NLMeans h strength (luma only, default 7.0).
+    """
+    method = denoise.strip().lower()
+
+    if method == "removegrain":
+        if not hasattr(core, 'zsmooth') and not hasattr(core, 'rgvs'):
+            raise vs.Error(
+                "deblendS6: denoise='RemoveGrain' requires either the "
+                "zsmooth or rgvs (RemoveGrainVS) plugin to be installed."
+            )
+        # Pass 1: mode 2 -- clip each pixel to the min/max of its 8 neighbours.
+        #   Kills isolated spike pixels from blocking and ringing without
+        #   blurring edges.
+        # Pass 2: mode 12 -- 3x3 weighted average (centre weight 4, edges 2,
+        #   corners 1 -- a mild Gaussian-like blur).  Smooths fine grain that
+        #   pass 1 leaves behind.
+        # U/V mode 1 = passthrough (copy plane unchanged).
+        # Chroma is irrelevant because _build_detection_clips extracts only
+        # the Y plane before building thumbnails.
+        # zsmooth is preferred over rgvs: supports higher bit depths natively
+        # and is generally faster.
+        _rg = core.zsmooth.RemoveGrain if hasattr(core, 'zsmooth') else core.rgvs.RemoveGrain
+        dclip = _rg(dclip, mode=[2,  1, 1])
+        dclip = _rg(dclip, mode=[12, 1, 1])
+
+    elif method == "nlmeans":
+        # Plugin priority: nlm_ispc > nlm_cuda > knlm.KNLMeansCL
+        # nlm_ispc is preferred because it is consistently faster on CPU
+        # than knlm and does not require a specific OpenCL device.
+        # nlm_cuda is second choice (GPU, fastest when available).
+        # KNLMeansCL (knlm) is the fallback — widely installed, slower.
+        #
+        # d=0  — purely spatial, NO temporal radius.  Critical: d>0 would
+        #        pull information from neighbouring frames and corrupt the
+        #        inter-frame diff signal that blend detection measures.
+        # a=2  — 5×5 search window (2*a+1 on each axis).  Small enough to
+        #        be fast on the full-res dclip; the heavy downscale that
+        #        follows makes larger windows redundant.
+        # s=3  — 7×7 comparison patch (2*s+1).
+        # h    — denoising strength on luma, user-tunable via nlmeans_h.
+        #
+        # Subsampled formats (4:2:0, 4:2:2) require separate Y and UV
+        # passes because the plugin cannot handle mixed subsampling in a
+        # single 'YUV' call.  For 4:4:4 a single 'YUV' pass is fine.
+        # We always denoise chroma too: even though _build_detection_clips
+        # discards chroma, leaving it undenoised would make the dclip
+        # format inconsistent with what downstream plugins may expect.
+        fmt        = dclip.format
+        subsampled = (fmt.subsampling_w > 0 or fmt.subsampling_h > 0)
+
+        # Common kwargs shared across all backends / passes.
+        kw = dict(d=0, a=2, s=3, h=nlmeans_h, wmode=0, wref=1.0)
+
+        if hasattr(core, 'nlm_ispc'):
+            if subsampled:
+                dclip = dclip.nlm_ispc.NLMeans(**kw, channels='Y')
+                dclip = dclip.nlm_ispc.NLMeans(**kw, channels='UV')
+            else:
+                dclip = dclip.nlm_ispc.NLMeans(**kw, channels='YUV')
+
+        elif hasattr(core, 'nlm_cuda'):
+            if subsampled:
+                dclip = dclip.nlm_cuda.NLMeans(**kw, channels='Y')
+                dclip = dclip.nlm_cuda.NLMeans(**kw, channels='UV')
+            else:
+                dclip = dclip.nlm_cuda.NLMeans(**kw, channels='YUV')
+
+        elif hasattr(core, 'knlm'):
+            # KNLMeansCL uses 'channels' spelled out differently and has no
+            # wmode/wref; it also requires device_type/device_id for OpenCL.
+            # It only supports 4:4:4 or per-plane calls for subsampled input.
+            if subsampled:
+                dclip = dclip.knlm.KNLMeansCL(d=0, a=2, s=3, h=nlmeans_h,
+                                               channels='Y')
+                dclip = dclip.knlm.KNLMeansCL(d=0, a=2, s=3, h=nlmeans_h,
+                                               channels='UV')
+            else:
+                dclip = dclip.knlm.KNLMeansCL(d=0, a=2, s=3, h=nlmeans_h,
+                                               channels='YUV')
+
+        else:
+            raise vs.Error(
+                "deblendS6: denoise='NLMeans' requires one of the following "
+                "plugins to be installed: nlm_ispc, nlm_cuda, or knlm "
+                "(KNLMeansCL)."
+            )
+
+    else:
+        raise vs.Error(
+            f"deblendS6: unknown denoise method '{denoise}'. "
+            "Valid values: 'RemoveGrain', 'NLMeans'."
+        )
+
+    return dclip
 
 
 # ---------------------------------------------------------------------------
@@ -711,6 +779,8 @@ def deblendS6(
     optical_flow_engine:  str                    = "mvtools",
     of_pel:               int                    = 2,
     of_blksize:           int                    = 16,
+    denoise:              Optional[str]           = None,
+    nlmeans_h:            float                  = 7.0,
 ) -> vs.VideoNode:
     if clip.format is None or clip.format.color_family != vs.YUV:
         raise vs.Error("deblendS6: input must be a YUV clip with fixed format")
@@ -722,6 +792,13 @@ def deblendS6(
     if dclip is None:
         dclip = clip
 
+    # Apply spatial-only denoise to dclip if requested.
+    # This happens after the dclip=None fallback so denoise="RemoveGrain"
+    # with no explicit dclip still works correctly (denoise is applied to
+    # a copy of clip used only for detection, never touching the output).
+    if denoise is not None:
+        dclip = _apply_dclip_denoise(dclip, denoise, nlmeans_h)
+
     frfac = true_fps / src_fps
 
     if abs(frfac * 1001 - _cround(frfac * 1001)) < 0.01:
@@ -732,25 +809,19 @@ def deblendS6(
         numr = _cround(frfac * 9000)
     denm = _cround(numr / frfac)
 
-    ###### source preparation ######
-    # _build_detection_clips returns luma_full (pre-trim) as the 4th value;
-    # it is used below to build dc_motion with the correct frame-0 alignment.
-    bclp, dclp_clip, dclip_small, dclip_small_full = _build_detection_clips(dclip)
+    # _build_detection_clips returns luma post-trim(2), matching AviSynth's
+    # det after .trim(2,0); used for bclp / dclp / dc_motion.
+    bclp, dclp_clip, dclip_small = _build_detection_clips(dclip)
 
-    # PlaneStats nodes (cheap — just adds stats props, lazy evaluation)
     bclp_s = bclp.std.PlaneStats()
     dclp_s = dclp_clip.std.PlaneStats()
 
-    # Motion reference: diff between frame n and frame n+2 on the small luma,
-    # matching AviSynth's  lumadifference(det, det.trim(2,0)).
-    # luma_full is used here (not the trimmed variant) so that both operands
-    # share the same frame-0 origin and the diff stays correctly aligned.
-    dclip_nxt  = (dclip_small_full.std.Trim(first=2) +
-                  dclip_small_full[-1] * 2)
-    dc_motion  = core.std.PlaneStats(
-        dclip_small_full,
-        dclip_nxt[:dclip_small_full.num_frames]
-    )
+    # dc_motion: diff between frame n and frame n+2 on the small trimmed luma.
+    # Matches AviSynth: lumadifference(det, det.trim(2,0)) where det is
+    # already post-trim(2,0).
+    det     = dclip_small
+    det_ext = det + det[-1] * 2   # pad so Trim(first=2) stays in-bounds
+    dc_motion = core.std.PlaneStats(det_ext, det_ext.std.Trim(first=2))
 
     engine = Engine(
         num_frames  = clip.num_frames,
@@ -763,16 +834,11 @@ def deblendS6(
         mode        = mode,
     )
 
-    # mec clip: 50/50 blend of frame n and frame n+1 across all planes.
-    # Matches AviSynth's
-    #   mergeluma(mergechroma(out, out.trim(1,0), 0.5), out.trim(1,0), 0.5)
-    # Used as the output clip when the merge detector (mer) fires.
     if abs(mode) >= 2:
         mec = core.std.Merge(clip, clip.std.Trim(first=1), weight=[0.5, 0.5])
     else:
         mec = clip
 
-    # Optical-flow interpolation clip (built once, evaluated lazily per frame)
     if optical_flow:
         engine_name = optical_flow_engine.lower().strip()
         if engine_name == "svp":
@@ -787,14 +853,8 @@ def deblendS6(
         engine.advance(n)
         target, use_mec, is_blend = engine.get(n)
 
-        # Clamp target to a valid frame index for all clip lookups.
-        # Mirrors AviSynth's  oclp = mer&&dup==0 ? mec : source
-        #                     opos = opos+dup-(dup==0&&mer&&dbc<dcn ? 1 : 0)
-        #                     oclp.trim(opos, 0)
         t = max(0, min(target, clip.num_frames - 1))
 
-        # On a detected blend frame, use OF interpolation if available.
-        # On non-blend frames always use the source (or mec when mer fires).
         if is_blend and of_clip is not None:
             return of_clip[max(0, min(t, of_clip.num_frames - 1))]
 
@@ -810,25 +870,20 @@ def deblendS6(
             fout.props["DeblendTarget"]  = target
             fout.props["DeblendUseMec"]  = int(use_mec)
             fout.props["DeblendIsBlend"] = int(is_blend)
-            fout.props["DeblendThr"]     = engine.thr
+            fout.props["DeblendThr"]     = _THR
             return fout
         output = output.std.ModifyFrame(output, _stamp)
 
-        # Burn a readable text overlay per frame.
-        # `pre_overlay` captures the clip *before* FrameEval redefines
-        # `output`, breaking the circular reference that caused the
-        # IndexError when using `output[n]` inside its own FrameEval.
         pre_overlay = output
 
         def _overlay(n: int) -> vs.VideoNode:
             target, use_mec, is_blend = engine.get(n)
-            thr = engine.thr
             lines = [
                 f"frame:  {n}",
                 f"target: {target}  (offset {target - n:+d})",
                 f"blend:  {'yes' if is_blend else 'no'}",
                 f"mec:    {'yes' if use_mec else 'no'}",
-                f"thr:    {thr:.2f}",
+                f"thr:    {_THR:.2f}",
             ]
             text = "\n".join(lines)
             return core.text.Text(pre_overlay[n], text, alignment=7)
@@ -852,11 +907,6 @@ def deblendS6(
 # ---------------------------------------------------------------------------
 
 def _get_mv_plugin():
-    """
-    Return the MVTools plugin namespace to use.
-    Prefers mvsf (float, higher quality) over mv (integer).
-    Raises vs.Error if neither is available.
-    """
     if hasattr(core, 'mvsf'):
         return core.mvsf
     if hasattr(core, 'mv'):
@@ -873,35 +923,13 @@ def _build_of_clip(
     pel:     int = 2,
     blksize: int = 16,
 ) -> vs.VideoNode:
-    """
-    Return a clip where every frame is a motion-compensated interpolation
-    at t=0.5 between frame[n-1] and frame[n+1].
-
-    Used as a replacement for the simple 50/50 Merge on blend frames.
-    FlowInter traces per-pixel motion vectors and warps each neighbour to
-    the mid-point, producing a sharper result on frames with lateral motion.
-
-    WHEN NOT TO USE: anime/cel animation — use the default merge instead.
-
-    Parameters
-    ----------
-    clip     Full-resolution source clip (YUV, any bit depth).
-    mv       MVTools plugin namespace (core.mv or core.mvsf).
-    pel      Sub-pixel precision: 1=pixel, 2=half-pixel, 4=quarter.
-    blksize  Block size for vector search.
-    """
     fmt_orig = clip.format
 
-    # mvsf requires single-precision float; core.mv requires 8-bit integer.
-    # Safest approach: always convert to float32 when mvsf is loaded at all,
-    # since mvsf.Super rejects non-float input regardless of which namespace
-    # 'mv' points to.
     if hasattr(core, 'mvsf'):
         target_fmt = fmt_orig.replace(bits_per_sample=32, sample_type=vs.FLOAT)
         src_work   = clip.resize.Bicubic(format=target_fmt.id)
         needs_conv = True
     else:
-        # Only core.mv available — it needs 8-bit integer
         if fmt_orig.bits_per_sample != 8 or fmt_orig.sample_type != vs.INTEGER:
             target_fmt = fmt_orig.replace(bits_per_sample=8, sample_type=vs.INTEGER)
             src_work   = clip.resize.Bicubic(format=target_fmt.id)
@@ -925,18 +953,6 @@ def _build_of_clip(
 
 
 def _build_of_clip_svp(clip: vs.VideoNode) -> vs.VideoNode:
-    """
-    Return a clip where every frame is an SVP motion-interpolated frame
-    at the midpoint between frame[n-1] and frame[n+1].
-    SVP uses adaptive block sizes and multi-level vector refinement,
-    generally producing better results than basic MVTools on live-action.
-    Requires core.svp1 and core.svp2.
-    SVP's SmoothFps outputs at 2× the source rate.  We double the fps,
-    then SelectEvery(2, [1]) to grab only the interpolated odd frames
-    (the t=0.5 midpoints), then restore the original fps.
-    max_levels is computed from the clip resolution to avoid the
-    SVAnalyse 'non-valid number of levels' error on smaller resolutions.
-    """
     if not hasattr(core, 'svp1') or not hasattr(core, 'svp2'):
         raise vs.Error(
             "deblend: optical_flow_engine='svp' requires the SVP plugin "
@@ -968,7 +984,6 @@ def _build_of_clip_svp(clip: vs.VideoNode) -> vs.VideoNode:
     doubled = core.svp2.SmoothFps(
         src8, sup['clip'], sup['data'], vecs['clip'], vecs['data'], smooth_params
     )
-    # SelectEvery(2, [1]) picks frames 1, 3, 5 … — the interpolated midpoints
     interp = doubled.std.SelectEvery(cycle=2, offsets=[1])
     if needs_conv:
         interp = interp.resize.Bicubic(
