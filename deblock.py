@@ -1,5 +1,6 @@
 import vapoursynth as vs
 from vapoursynth import core
+from typing import Optional, List
 
 import math
 from functools import partial
