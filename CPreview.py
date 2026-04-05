@@ -46,7 +46,7 @@ def CPreview(Source, CL, CR, CT, CB, Frame=False, Time=False, Type=1):
 
     PropNum = Source.get_frame(0).props.get('_SARNum', 0)
     PropDen = Source.get_frame(0).props.get('_SARDen', 0)
-    prop_name = '_Range' if core.version_number() >= 74 else '_ColorRange'
+    prop_name = '_Range' if core.core_version.release_major >= 74 else '_ColorRange'
     PropRange = Source.get_frame(0).props.get(prop_name, -1)
     PropRange = PropRange if (-1 <= PropRange <= 1) else -1
     PropChroma = None if not IsChromaSS else Source.get_frame(0).props.get("_ChromaLocation", None)
@@ -225,7 +225,7 @@ def RGBColor(clip, color=None, matrix=None, range=None):
     CPE = "\nCPreview (RGBColor):\n"
     if not isinstance(clip, vs.VideoNode): raise vs.Error(f'{CPE}clip must be a video')
     PropMatrix = clip.get_frame(0).props.get("_Matrix", -1)
-    prop_name = '_Range' if core.version_number() >= 74 else '_ColorRange'
+    prop_name = '_Range' if core.core_version.release_major >= 74 else '_ColorRange'
     PropRange = clip.get_frame(0).props.get(prop_name, -1)
 
 # -------------------------------------------------------------------------------

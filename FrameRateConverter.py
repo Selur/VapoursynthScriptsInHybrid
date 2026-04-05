@@ -364,7 +364,7 @@ def FrameRateConverter(C, newNum = None, newDen = None, preset = "normal", blkSi
 
 
 def ToGray(C):
-    prop_name = '_Range' if core.version_number() >= 74 else '_ColorRange'
+    prop_name = '_Range' if core.core_version.release_major >= 74 else '_ColorRange'
     return core.std.ShufflePlanes(clips=C, planes=0, colorfamily=vs.GRAY) \
         .std.SetFrameProp(prop_name, intval=0)
 

@@ -788,7 +788,7 @@ def BoxFilter(input: vs.VideoNode, radius: int = 16, radius_v: Optional[int] = N
 
     # process
     if input.format.sample_type == vs.FLOAT:
-        if core.version_number() < 33:
+        if core.core_version.release_major < 33:
             raise NotImplementedError(funcName + (': Please update your VapourSynth.'
                 'BoxBlur on float sample has not yet been implemented on current version.'))
         elif radius == radius_v == 2 or radius == radius_v == 3:
@@ -800,7 +800,7 @@ def BoxFilter(input: vs.VideoNode, radius: int = 16, radius_v: Optional[int] = N
                     cnorm=False, fh=-1, fv=-1, center=False, **resample_args)
                 return flt # No bitdepth conversion is required since fmtc.resample outputs the same bitdepth as input
 
-            elif core.version_number() >= 39:
+            elif core.core_version.release_major >= 39:
                 return core.std.BoxBlur(input, hradius=radius-1, vradius=radius_v-1, planes=planes)
 
             else: # BoxBlur on float sample has not been implemented

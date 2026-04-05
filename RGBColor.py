@@ -13,7 +13,7 @@ def RGBColor(clip, color=None, matrix=None, range=None):
 
     RCE = "\nRGBColor:\n"
     if not isinstance(clip, vs.VideoNode): raise vs.Error(f'{RCE}clip must be a video')
-    prop_name = '_Range' if core.version_number() >= 74 else '_ColorRange'
+    prop_name = '_Range' if core.core_version.release_major >= 74 else '_ColorRange'
     PropMatrix = clip.get_frame(0).props.get("_Matrix", -1)
     PropRange = clip.get_frame(0).props.get(prop_name, -1)
 

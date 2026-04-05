@@ -259,7 +259,7 @@ def vs_temporalfix(clip, strength=400, tr=6, denoise=False, exclude=None, debug=
     props       = clip.get_frame(0).props
     orig_format = clip.format.id
     orig_family = clip.format.color_family
-    prop_name = '_Range' if core.version_number() >= 74 else '_ColorRange'
+    prop_name = '_Range' if core.core_version.release_major >= 74 else '_ColorRange'
     orig_range  = 1 - props.get(prop_name, 0 if orig_family == vs.RGB else 1) # if not tagged, default to full for rgb, limited for yuv/gray (frame props range is inversed)
     orig_width  = clip.width
 

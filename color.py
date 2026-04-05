@@ -428,7 +428,7 @@ def RGBAdjust(rgb: vs.VideoNode, r: float=1.0, g: float=1.0, b: float=1.0, a: fl
   type = rgb.format.sample_type
   size = 2**rgb.format.bits_per_sample
   #adjusting bias values rb,gb,bb for any RGB bit depth
-  prop_name = '_Range' if core.version_number() >= 74 else '_ColorRange'
+  prop_name = '_Range' if core.core_version.release_major >= 74 else '_ColorRange'
   limited = rgb.get_frame(0).props[prop_name] == vs.RANGE_FULL
   if limited:
     if rb > 235 or rb < -235: raise ValueError(funcName + ': source is flagged as "limited" but rb is out of range [-235,235]!')  
@@ -1362,7 +1362,7 @@ def BoxFilter(input: vs.VideoNode, radius: int = 16, radius_v: Optional[int] = N
 
     # process
     if input.format.sample_type == vs.FLOAT:
-        if core.version_number() < 33:
+        if core.core_version.release_major < 33:
             raise NotImplementedError(funcName + (': Please update your VapourSynth.'
                 'BoxBlur on float sample has not yet been implemented on current version.'))
         elif radius == radius_v == 2 or radius == radius_v == 3:
@@ -1377,7 +1377,7 @@ def BoxFilter(input: vs.VideoNode, radius: int = 16, radius_v: Optional[int] = N
             elif hasattr(core, 'vszip'):
                 return core.vszip.BoxBlur(input, hradius=radius-1, vradius=radius_v-1, planes=planes)
 
-            elif core.version_number() >= 39:
+            elif core.core_version.release_major >= 39:
                 return core.std.BoxBlur(input, hradius=radius-1, vradius=radius_v-1, planes=planes)
 
             else: # BoxBlur on float sample has not been implemented
@@ -1668,7 +1668,7 @@ def SetColorSpace(clip, ChromaLocation=None, ColorRange=None, Primaries=None, Ma
     else:
         raise type_error('"ChromaLocation" must be an int or a bool!')
 
-    prop_name = '_Range' if core.version_number() >= 74 else '_ColorRange'
+    prop_name = '_Range' if core.core_version.release_major >= 74 else '_ColorRange'
     if ColorRange is None:
         pass
     elif isinstance(ColorRange, bool):
