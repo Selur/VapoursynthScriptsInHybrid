@@ -13,9 +13,9 @@ def RGBColor(clip, color=None, matrix=None, range=None):
 
     RCE = "\nRGBColor:\n"
     if not isinstance(clip, vs.VideoNode): raise vs.Error(f'{RCE}clip must be a video')
-
+    prop_name = '_Range' if core.version_number() >= 74 else '_ColorRange'
     PropMatrix = clip.get_frame(0).props.get("_Matrix", -1)
-    PropRange = clip.get_frame(0).props.get("_ColorRange", -1)
+    PropRange = clip.get_frame(0).props.get(prop_name, -1)
 
 # -------------------------------------------------------------------------------
 
@@ -23,7 +23,7 @@ def RGBColor(clip, color=None, matrix=None, range=None):
         raise vs.Error(f'{RCE}Video has an unsupported value ({PropMatrix}) for "_Matrix" in frame properties')
     if not (-1 <= PropRange <= 1):
         raise vs.Error(f'{RCE}Video has an unsupported value ' + \
-          f'({PropRange}) for "_ColorRange" in frame properties')
+          f'({PropRange}) for "{prop_name}" in frame properties')
     if (clip.format.name).endswith("H"): raise vs.Error(f'{RCE}{clip.format.name} is not supported')
     if not ((color is None) or isinstance(color, str)):
         raise vs.Error(f'{RCE}color must be a string, for example "darkblue" or "00008B"')
@@ -261,7 +261,7 @@ def RGBColor(clip, color=None, matrix=None, range=None):
     PropRangeStr = "limited" if (PropRange == 1) else "full" if (PropRange == 0) else None
 
     if (range is not None) and (PropRangeStr is not None) and (range != PropRangeStr):
-        raise vs.Error(f'{RCE}The value for "_ColorRange" ({PropRange}) ' + \
+        raise vs.Error(f'{RCE}The value for "{prop_name}" ({PropRange}) ' + \
           'in frame properties doesn\'t match the specified range')
 
     range = PropRangeStr if (PropRangeStr is not None) else range

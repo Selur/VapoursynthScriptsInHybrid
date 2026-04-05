@@ -366,7 +366,8 @@ def ContrastMask(clip, gblur=20.0, enhance=10.0):
 
     # Get the bit depth and scaling factors
     bit_depth = clip.format.bits_per_sample
-    color_range = clip.get_frame(0).props.get('_ColorRange', vs.RANGE_FULL)
+    prop_name = '_Range' if core.version_number() >= 74 else '_ColorRange'
+    color_range = clip.get_frame(0).props.get(prop_name, vs.RANGE_FULL)
 
     if color_range == vs.RANGE_LIMITED:
         max_val = 235 << (bit_depth - 8)

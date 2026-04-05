@@ -46,7 +46,8 @@ def CPreview(Source, CL, CR, CT, CB, Frame=False, Time=False, Type=1):
 
     PropNum = Source.get_frame(0).props.get('_SARNum', 0)
     PropDen = Source.get_frame(0).props.get('_SARDen', 0)
-    PropRange = Source.get_frame(0).props.get("_ColorRange", -1)
+    prop_name = '_Range' if core.version_number() >= 74 else '_ColorRange'
+    PropRange = Source.get_frame(0).props.get(prop_name, -1)
     PropRange = PropRange if (-1 <= PropRange <= 1) else -1
     PropChroma = None if not IsChromaSS else Source.get_frame(0).props.get("_ChromaLocation", None)
 
@@ -223,9 +224,9 @@ def RGBColor(clip, color=None, matrix=None, range=None):
 
     CPE = "\nCPreview (RGBColor):\n"
     if not isinstance(clip, vs.VideoNode): raise vs.Error(f'{CPE}clip must be a video')
-
     PropMatrix = clip.get_frame(0).props.get("_Matrix", -1)
-    PropRange = clip.get_frame(0).props.get("_ColorRange", -1)
+    prop_name = '_Range' if core.version_number() >= 74 else '_ColorRange'
+    PropRange = clip.get_frame(0).props.get(prop_name, -1)
 
 # -------------------------------------------------------------------------------
 
@@ -233,7 +234,7 @@ def RGBColor(clip, color=None, matrix=None, range=None):
         raise vs.Error(f'{CPE}Video has an unsupported value ({PropMatrix}) for "_Matrix" in frame properties')
     if not (-1 <= PropRange <= 1):
         raise vs.Error(f'{CPE}Video has an unsupported value ' + \
-          f'({PropRange}) for "_ColorRange" in frame properties')
+          f'({PropRange}) for "{prop_name}" in frame properties')
     if (clip.format.name).endswith("H"): raise vs.Error(f'{CPE}{clip.format.name} is not supported')
     if not ((color is None) or isinstance(color, str)):
         raise vs.Error(f'{CPE}color must be a string, for example "darkblue" or "00008B"')
@@ -471,7 +472,7 @@ def RGBColor(clip, color=None, matrix=None, range=None):
     PropRangeStr = "limited" if (PropRange == 1) else "full" if (PropRange == 0) else None
 
     if (range is not None) and (PropRangeStr is not None) and (range != PropRangeStr):
-        raise vs.Error(f'{CPE}The value for "_ColorRange" ({PropRange}) ' + \
+        raise vs.Error(f'{CPE}The value for "{prop_name}" ({PropRange}) ' + \
           'in frame properties doesn\'t match the specified range')
 
     range = PropRangeStr if (PropRangeStr is not None) else range

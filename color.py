@@ -428,7 +428,8 @@ def RGBAdjust(rgb: vs.VideoNode, r: float=1.0, g: float=1.0, b: float=1.0, a: fl
   type = rgb.format.sample_type
   size = 2**rgb.format.bits_per_sample
   #adjusting bias values rb,gb,bb for any RGB bit depth
-  limited = rgb.get_frame(0).props['_ColorRange'] == 1
+  prop_name = '_Range' if core.version_number() >= 74 else '_ColorRange'
+  limited = rgb.get_frame(0).props[prop_name] == vs.RANGE_FULL
   if limited:
     if rb > 235 or rb < -235: raise ValueError(funcName + ': source is flagged as "limited" but rb is out of range [-235,235]!')  
     if gb > 235 or gb < -235: raise ValueError(funcName + ': source is flagged as "limited" but gb is out of range [-235,235]!')
@@ -1667,14 +1668,15 @@ def SetColorSpace(clip, ChromaLocation=None, ColorRange=None, Primaries=None, Ma
     else:
         raise type_error('"ChromaLocation" must be an int or a bool!')
 
+    prop_name = '_Range' if core.version_number() >= 74 else '_ColorRange'
     if ColorRange is None:
         pass
     elif isinstance(ColorRange, bool):
         if ColorRange is False:
-            clip = RemoveFrameProp(clip, '_ColorRange')
+            clip = RemoveFrameProp(clip, prop_name)
     elif isinstance(ColorRange, int):
         if ColorRange >= 0 and ColorRange <=1:
-            clip = core.std.SetFrameProp(clip, prop='_ColorRange', intval=ColorRange)
+            clip = core.std.SetFrameProp(clip, prop=prop_name, intval=ColorRange)
         else:
             raise value_error('valid range of "ColorRange" is [0, 1]!')
     else:
