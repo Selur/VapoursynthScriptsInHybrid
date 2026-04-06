@@ -459,7 +459,7 @@ def QTGMC(
     DenoiseMC = fallback(DenoiseMC,           [ True,       True,      False,     False,    False  ][npNum])
     NoiseTR = fallback(NoiseTR,               [ 2,          1,         1,         1,        0      ][npNum])
     NoiseDeint = fallback(NoiseDeint,         ['Generate', 'Bob',      '',        '',       ''     ][npNum]).lower()
-    StabilizeNoise = fallback(StabilizeNoise, [ True,       True,      True,      False,    False  ][npNum])
+    StabilizeNoise = fallback(StabilizeNoise, [ True,       True,      True,      False,    False  ][npNum])    
     # fmt: on
 
     # The basic source-match step corrects and re-runs the interpolation of the input clip. So it initially uses same interpolation settings as the main preset
@@ -791,7 +791,33 @@ def QTGMC(
                 ]
             )
         if Denoiser == 'bm3d':
-            dnWindow = mvf.BM3D(noiseWindow, radius1=NoiseTR, sigma=[Sigma if plane in CNplanes else 0 for plane in range(3)])
+            # Build sigma array for plane processing
+            sigma_list = [Sigma if 0 in CNplanes else 0,
+                         Sigma if 1 in CNplanes else 0, 
+                         Sigma if 2 in CNplanes else 0]
+            
+            # Ensure float32 input for bm3d
+            if noiseWindow.format.sample_type != vs.FLOAT:
+                bm3d_input = depth(noiseWindow, 32, sample_type=vs.FLOAT)
+            else:
+                bm3d_input = noiseWindow
+            
+            # Apply BM3D basic + final estimate (equivalent to mvsfunc refine=1)
+            if NoiseTR <= 0:
+                # Spatial-only BM3D
+                basic = core.bm3d.Basic(bm3d_input, sigma=sigma_list, profile="fast")
+                dnWindow = core.bm3d.Final(bm3d_input, ref=basic, sigma=sigma_list, profile="fast")
+            else:
+                # V-BM3D with temporal processing
+                basic_v = core.bm3d.VBasic(bm3d_input, sigma=sigma_list, radius=NoiseTR, profile="fast")
+                basic = core.bm3d.VAggregate(basic_v, radius=NoiseTR, sample=1)
+                final_v = core.bm3d.VFinal(bm3d_input, ref=basic, sigma=sigma_list, radius=NoiseTR, profile="fast")
+                dnWindow = core.bm3d.VAggregate(final_v, radius=NoiseTR, sample=1)
+            
+            # Restore original format
+            if dnWindow.format.id != noiseWindow.format.id:
+                dnWindow = depth(dnWindow, noiseWindow.format.bits_per_sample, 
+                                sample_type=noiseWindow.format.sample_type)
         elif Denoiser == 'dfttest':
           if opencl:
             if hasattr(core, 'dfttest2_nvrtc'):  
@@ -1202,28 +1228,29 @@ def QTGMC_Interpolate(
     
     if opencl:
         if hasattr(core, 'sneedif'):
-          nnedi3 = partial(core.sneedif.NNEDI3, field=field, device=device, **nnedi3_args)
+            nnedi3 = partial(core.sneedif.NNEDI3, field=field, device=device, **nnedi3_args)
         else:
-          nnedi3 = partial(core.nnedi3cl.NNEDI3CL, field=field, device=device, **nnedi3_args)
+            nnedi3 = partial(core.nnedi3cl.NNEDI3CL, field=field, device=device, **nnedi3_args)
+        
         if hasattr(core, 'eedi3vk'):
-              eedi3 = partial(core.eedi3vk.EEDI3, field=field, planes=planes, mdis=EdiMaxD, device=device, **eedi3_args)
-        elif hasattr(core, 'eedi3m.EEDI3CL'):
-          eedi3 = partial(core.eedi3m.EEDI3CL, field=field, planes=planes, mdis=EdiMaxD, device=device, **eedi3_args)
+            eedi3 = partial(core.eedi3vk.EEDI3, field=field, planes=planes, mdis=EdiMaxD, device=device, **eedi3_args)
+        elif hasattr(core, 'eedi3m') and hasattr(core.eedi3m, 'EEDI3CL'):
+            eedi3 = partial(core.eedi3m.EEDI3CL, field=field, planes=planes, mdis=EdiMaxD, device=device, **eedi3_args)
         else:
-          eedi3 = partial(core.eedi3m.EEDI3, field=field, planes=planes, mdis=EdiMaxD, **eedi3_args)
+            eedi3 = partial(core.eedi3m.EEDI3, field=field, planes=planes, mdis=EdiMaxD, **eedi3_args)
     else:
-       if hasattr(core, 'znedi3'):
-         nnedi3 = partial(core.znedi3.nnedi3, field=field, **nnedi3_args)
-       else:
-         nnedi3 = partial(core.nnedi3.nnedi3, field=field, **nnedi3_args)
-  
-       if hasattr(core, 'eedi3vk'):
-          eedi3 = partial(core.eedi3vk.EEDI3, field=field, planes=planes, mdis=EdiMaxD, device=device, **eedi3_args)
-       elif hasattr(core, 'eedi3m.EEDI3CL'):
-          eedi3 = partial(core.eedi3m.EEDI3CL, field=field, planes=planes, mdis=EdiMaxD, device=device, **eedi3_args)
-       else:
-          eedi3 = partial(core.eedi3m.EEDI3, field=field, planes=planes, mdis=EdiMaxD, **eedi3_args)
-
+        if hasattr(core, 'znedi3'):
+            nnedi3 = partial(core.znedi3.nnedi3, field=field, **nnedi3_args)
+        else:
+            nnedi3 = partial(core.nnedi3.nnedi3, field=field, **nnedi3_args)
+        
+        if hasattr(core, 'eedi3vk'):
+            eedi3 = partial(core.eedi3vk.EEDI3, field=field, planes=planes, mdis=EdiMaxD, device=device, **eedi3_args)
+        elif hasattr(core, 'eedi3m') and hasattr(core.eedi3m, 'EEDI3CL'):
+            eedi3 = partial(core.eedi3m.EEDI3CL, field=field, planes=planes, mdis=EdiMaxD, device=device, **eedi3_args)
+        else:
+            eedi3 = partial(core.eedi3m.EEDI3, field=field, planes=planes, mdis=EdiMaxD, **eedi3_args)
+            
     if InputType == 1:
         return Input
     elif EdiMode == 'nnedi3':
@@ -1564,7 +1591,8 @@ def QTGMC_GetUserGlobal(Prefix: str, Name: str) -> Union[vs.VideoNode, None]:
     global QTGMC_globals
     return QTGMC_globals.get(f'{Prefix}_{Name}')
 
-def Gauss(clip: vs.VideoNode, p: Optional[float] = None, sigma: Optional[float] = None, planes: Optional[Union[int, Sequence[int]]] = None) -> vs.VideoNode:
+def Gauss(clip: vs.VideoNode, p: Optional[float] = None, sigma: Optional[float] = None, 
+          planes: Optional[Union[int, Sequence[int]]] = None) -> vs.VideoNode:
     if not isinstance(clip, vs.VideoNode):
         raise vs.Error('Gauss: this is not a clip')
 
@@ -1586,18 +1614,20 @@ def Gauss(clip: vs.VideoNode, p: Optional[float] = None, sigma: Optional[float] 
     if not taps % 2:
         taps += 1
 
-    # Gaussian kernel.
+    # Gaussian kernel - calculate half including center
+    half = taps // 2
     kernel = []
-    for x in range(int(math.floor(taps / 2))):
+    for x in range(half + 1):  # 0 to half (inclusive)
         kernel.append(1.0 / (math.sqrt(2.0 * math.pi) * sigma) * math.exp(-(x * x) / (2 * sigma * sigma)))
 
-    # Renormalize to -1023...1023.
-    for i in range(1, len(kernel)):
-        kernel[i] *= 1023 / kernel[0]
-    kernel[0] = 1023
+    # Renormalize to 0...1023.
+    max_val = kernel[0]
+    for i in range(len(kernel)):
+        kernel[i] = int(kernel[i] * 1023.0 / max_val)
 
-    # Symmetry.
-    kernel = kernel[::-1] + kernel[1:]
+    # Symmetry: mirror left side (excluding center), keep right side (excluding center)
+    # [k2, k1, k0, k1, k2] for taps=5
+    kernel = kernel[:0:-1] + kernel  # Reverse all except [0], then add full kernel
 
     return clip.std.Convolution(matrix=kernel, planes=planes, mode='hv')
     
