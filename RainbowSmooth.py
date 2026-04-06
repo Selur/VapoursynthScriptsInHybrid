@@ -2,7 +2,6 @@ import vapoursynth as vs
 from vapoursynth import core
 from typing import List
 import masked
-import mvsfunc as mvf
 
 def RainbowSmooth(clip, radius=3, lthresh=0, hthresh=220, mask="original"):
     core = vs.core
@@ -22,7 +21,7 @@ def RainbowSmooth(clip, radius=3, lthresh=0, hthresh=220, mask="original"):
             mask = masked.kirsch(clip)
         elif mask == "retinex_edgemask":
             mask = masked.retinex_edgemask(clip)
-            mask = mvf.Depth(mask, clip.format.bits_per_sample)
+            mask = Depth(mask, clip.format.bits_per_sample)
 
     lderain = clip
 
@@ -130,3 +129,28 @@ def split(clip: vs.VideoNode, /) -> List[vs.VideoNode]:
     :return:      List of planes from the input `clip`.
     """
     return [plane(clip, x) for x in range(clip.format.num_planes)]
+
+def Depth(src, bits, dither_type='error_diffusion', range=None, range_in=None):
+    src_f = src.format
+    src_cf = src_f.color_family
+    src_st = src_f.sample_type
+    src_bits = src_f.bits_per_sample
+    src_sw = src_f.subsampling_w
+    src_sh = src_f.subsampling_h
+    dst_st = vs.INTEGER if bits < 32 else vs.FLOAT
+
+    if isinstance(range, str):
+        range = RANGEDICT[range]
+
+    if isinstance(range_in, str):
+        range_in = RANGEDICT[range_in]
+
+    if (src_bits, range_in) == (bits, range):
+        return src
+    out_f = core.register_format(src_cf, dst_st, bits, src_sw, src_sh)
+    return core.resize.Point(src, format=out_f.id, dither_type=dither_type, range=range, range_in=range_in)
+
+
+TYPEDICT = {vs.VideoNode: 'a clip', int: 'an int', float: 'a float', bool: 'a bool', str: 'a str', list: 'a list'}
+
+RANGEDICT = {'limited': 0, 'full': 1}
