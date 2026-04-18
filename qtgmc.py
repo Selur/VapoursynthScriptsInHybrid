@@ -1233,7 +1233,7 @@ def QTGMC_Interpolate(
             nnedi3 = partial(core.nnedi3cl.NNEDI3CL, field=field, device=device, **nnedi3_args)
         
         if hasattr(core, 'eedi3vk'):
-            eedi3 = partial(core.eedi3vk.EEDI3, field=field, planes=planes, mdis=EdiMaxD, device=device, **eedi3_args)
+            eedi3 = partial(core.eedi3vk.EEDI3, field=field, planes=planes, mdis=EdiMaxD, device_id=device, **eedi3_args)
         elif hasattr(core, 'eedi3m') and hasattr(core.eedi3m, 'EEDI3CL'):
             eedi3 = partial(core.eedi3m.EEDI3CL, field=field, planes=planes, mdis=EdiMaxD, device=device, **eedi3_args)
         else:
@@ -1245,7 +1245,7 @@ def QTGMC_Interpolate(
             nnedi3 = partial(core.nnedi3.nnedi3, field=field, **nnedi3_args)
         
         if hasattr(core, 'eedi3vk'):
-            eedi3 = partial(core.eedi3vk.EEDI3, field=field, planes=planes, mdis=EdiMaxD, device=device, **eedi3_args)
+            eedi3 = partial(core.eedi3vk.EEDI3, field=field, planes=planes, mdis=EdiMaxD, device_id=device, **eedi3_args)
         elif hasattr(core, 'eedi3m') and hasattr(core.eedi3m, 'EEDI3CL'):
             eedi3 = partial(core.eedi3m.EEDI3CL, field=field, planes=planes, mdis=EdiMaxD, device=device, **eedi3_args)
         else:
