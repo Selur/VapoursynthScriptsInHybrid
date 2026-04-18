@@ -5,7 +5,7 @@
 # Based on plugins and functions from many different people. See function comments and readme requirements for details.
 
 import vapoursynth as vs
-from .vs_temporalfix_utils import *
+from vs_temporalfix_utils import *
 
 core = vs.core
 
