@@ -554,31 +554,40 @@ def SpotLess(
     denoised = clip
     for _ in range(iterations):
         supclip    = ref or (core.std.Convolution(denoised, [1,2,1,2,4,2,1,2,1])
-                             if blur else denoised)
-        sup        = S(supclip,  hpad=ablksize, vpad=ablksize,
-                       pel=pel, sharp=ssharp, rfilter=rfilter)
-        sup_render = S(denoised, levels=1,
-                       pel=pel, sharp=ssharp, rfilter=rfilter)
+                             if blur else denoised) 
+                             
+        sup        = S(supclip, hpad=ablksize, vpad=ablksize,
+                     pel=pel, sharp=ssharp, rfilter=rfilter)
+
+        if blur or ref is not None:
+            sup_render = S(denoised, hpad=ablksize, vpad=ablksize,
+                          pel=pel, sharp=ssharp, rfilter=rfilter, levels=1)
+        else:
+            sup_render = sup  # Safe: same source
 
         bv, fv = [], []
+
         kw = dict(search=asearch, blksize=ablksize, overlap=aoverlap,
-                  chroma=chroma, truemotion=truemotion, pglobal=pglobal)
+                chroma=chroma, truemotion=truemotion, pglobal=pglobal)
+
         for d in range(1, radT + 1):
-            bv.append(A(sup, isb=True,  delta=d, **kw))
-            fv.append(A(sup, isb=False, delta=d, **kw))
+          bv.append(A(sup, isb=True,  delta=d, **kw))
+          fv.append(A(sup, isb=False, delta=d, **kw))
 
         if rec:
-            kw2 = dict(blksize=rblksize, overlap=roverlap,
-                       search=rsearch, truemotion=truemotion)
-            for d in range(1, radT + 1):
-                bv[d-1] = R(sup, bv[d-1], **kw2)
-                fv[d-1] = R(sup, fv[d-1], **kw2)
+          kw2 = dict(blksize=rblksize, overlap=roverlap,
+                     search=rsearch, truemotion=truemotion)
 
-        bc, fc = [], []
-        for d in range(1, radT + 1):
-            thresh = thsad if d == 1 else thsad2
-            bc.append(C(denoised, sup_render, bv[d-1], thsad=thresh))
-            fc.append(C(denoised, sup_render, fv[d-1], thsad=thresh))
+          bv = [R(sup, b, **kw2) for b in bv]
+          fv = [R(sup, f, **kw2) for f in fv]
+
+        bc = []
+        fc = []
+
+        for d in range(radT):
+          thresh = thsad if d == 0 else thsad2
+          bc.append(C(denoised, sup_render, bv[d], thsad=thresh))
+          fc.append(C(denoised, sup_render, fv[d], thsad=thresh))
 
         ic = core.std.Interleave(bc + [denoised] + fc)
 
@@ -587,7 +596,7 @@ def SpotLess(
         elif smoother == 'zsmooth':  out = core.zsmooth.TemporalMedian(ic, radius=radT)
         else: raise ValueError(f"Unknown smoother '{smoother}'")
 
-        denoised = core.std.SelectEvery(out, radT * 2 + 1, radT)
+        denoised = core.std.SelectEvery(out, 2 * radT + 1, radT)
 
     if mStart: denoised = core.std.Trim(denoised, radT, denoised.num_frames - 1)
     if mEnd:   denoised = core.std.Trim(denoised, 0,    denoised.num_frames - 1 - radT)
