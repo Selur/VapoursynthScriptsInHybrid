@@ -6,6 +6,19 @@ import importlib
 from functools import partial
 from typing import Optional, Union, Sequence
 
+
+def _expr_fn():
+    """Pick the best available Expr plugin."""
+    if hasattr(core, 'akarin'):    return core.akarin.Expr
+    if hasattr(core, 'llvmexpr'): return core.llvmexpr.Expr
+    if hasattr(core, 'cranexpr'): return core.cranexpr.Expr
+    return core.std.Expr
+
+def _boxblur_fn():
+    """Pick the best available BoxBlur."""
+    if hasattr(core, 'vszip'): return core.vszip.BoxBlur
+    return core.std.BoxBlur
+
 ################################################################################################
 ###                                                                                          ###
 ###                       LimitedSharpenFaster MOD : function LSFmod()                       ###
@@ -1265,3 +1278,68 @@ def LimitFilter(flt, src, ref=None, thr=None, elast=None, brighten_thr=None, thr
     # Output
     return clip
 ################################################################################################################################
+
+# aWarpSharp2 replacement based on vapoursynth-awarp
+def AWarpSharp2(
+    clip: vs.VideoNode,
+    thresh: int = 128,
+    blur: int = 2,
+    type: int = 0,
+    depth: list[int] = [16, 8, 8],
+    chroma: int = 0,
+    planes: list[int] | None = None
+) -> vs.VideoNode:
+
+    if not hasattr(core, 'awarp'):
+        raise ValueError("AWarp plugin not found! Install via: pip install vapoursynth-awarp")
+
+    BoxBlur = _boxblur_fn()
+    Expr = _expr_fn()
+
+    is_gray = clip.format.color_family == vs.GRAY
+
+    # Default planes: all
+    if planes is None:
+        planes = [0] if is_gray else [0, 1, 2]
+
+    # Normalise depth to a 3-element list
+    if isinstance(depth, int):
+        depth = [depth, depth // 2, depth // 2]
+    while len(depth) < 3:
+        depth.append(depth[-1])
+
+    # --- Edge detection (thresh approximated via Binarize)
+    if hasattr(core, 'edgemasks'):
+        mask = core.edgemasks.Sobel(clip, planes=[0])
+    else:
+        luma = core.std.ShufflePlanes(clip, planes=0, colorfamily=vs.GRAY)
+        luma8 = core.resize.Point(luma, format=vs.GRAY8)
+        mask_gray = core.std.Sobel(luma8)
+        mask = core.resize.Point(mask_gray, format=luma.format)
+
+    # Apply thresh: suppress weak edges (approximates ASobel thresh behaviour)
+    if thresh < 255:
+        max_val = (1 << clip.format.bits_per_sample) - 1
+        thr_scaled = int(thresh / 255 * max_val)
+        mask = core.std.Binarize(mask, threshold=thr_scaled)
+
+    # --- Mask blur (type=0: two-pass box, type=1: single-pass — approximated)
+    hpasses = 2 if type == 0 else 1
+    mask = BoxBlur(mask, hradius=blur, vradius=blur, hpasses=hpasses, vpasses=hpasses)
+
+    # --- chroma=0: use luma mask to warp chroma planes (mask_first_plane=True)
+    #     chroma=1: create individual mask per chroma channel (mask_first_plane=False)
+    mask_first_plane = (chroma == 0)
+
+    # --- depth_h per plane: luma=depth[0], chroma=depth[1]/depth[2]
+    # AWarp applies subsampling factor automatically when depth_v is omitted,
+    # so passing depth[0] for luma and depth[1] for chroma is sufficient.
+    depth_h = depth[0] if is_gray else [depth[0], depth[1], depth[2]]
+
+    return core.awarp.AWarp(
+        clip,
+        mask=mask,
+        depth_h=depth_h,
+        mask_first_plane=mask_first_plane,
+        planes=planes,
+    )
