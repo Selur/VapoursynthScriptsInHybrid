@@ -420,7 +420,11 @@ def MLD_helper(clip, srch, tr, thSAD, rec, chroma, soft):
             return D3(RG, sup2, bv1, fv1, bv2, fv2, bv3, fv3, thsad=thSAD, plane=plane)
     else:
         return mvmulti.DegrainN(RG, sup2, vec, tr=tr, thsad=thSAD, plane=plane)
-
+def _boxblur_fn():
+    """Pick the best available BoxBlur."""
+    if hasattr(core, 'vszip'): return core.vszip.BoxBlur
+    return core.std.BoxBlur
+    
 def TemporalDegrain2(clip, degrainTR=1, degrainPlane=4, grainLevel=2, grainLevelSetup=False, meAlg=4, meAlgPar=None, meSubpel=None, meBlksz=None, meTM=False,
     limitSigma=None, limitBlksz=None, fftThreads=None, postFFT=0, postTR=1, postSigma=1, postMix=0, postBlkSize=None, knlDevId=0, ppSAD1=None, ppSAD2=None, 
     ppSCD1=None, thSCD2=128, DCT=0, SubPelInterp=2, SrchClipPP=None, GlobalMotion=True, ChromaMotion=True, rec=False, extraSharp=False, outputStage=2, neo=True):
@@ -656,7 +660,10 @@ def TemporalDegrain2(clip, degrainTR=1, degrainPlane=4, grainLevel=2, grainLevel
     if SrchClipPP == 1:
         spatialBlur = core.resize.Bilinear(clip, m4(w/2), m4(h/2)).std.Convolution(matrix=mat, planes=CMplanes).resize.Bilinear(w, h)
     elif SrchClipPP > 1:
-        spatialBlur = core.tcanny.TCanny(clip, sigma=2, mode=-1, planes=CMplanes)
+        if hasattr(core,'tcanny'):
+          spatialBlur = core.tcanny.TCanny(clip, sigma=2, mode=-1, planes=CMplanes)
+        else:
+          spatialBlur = _boxblur_fn(clip, planes=CMplanes, hradius=2, hpasses=3, vradius=2, vpasses=3)
         spatialBlur = core.std.Merge(spatialBlur, clip, [0.1] if ChromaMotion or isGRAY else [0.1, 0])
     else:
         spatialBlur = clip
@@ -1178,7 +1185,11 @@ def KNLMeansCL(
 
 def _sharpen(clip, strength, planes):
     core = vs.core
-    blur = core.tcanny.TCanny(clip, sigma=strength, mode=-1, planes=planes)
+    if hasattr(core,'tcanny'):
+      blur = core.tcanny.TCanny(clip, sigma=strength, mode=-1, planes=planes)
+    else:
+      radius = max(1, round(strength * 1.5))
+      blur = _boxblur_fn()(clip, planes=planes, hradius=radius, hpasses=3, vradius=radius, vpasses=3)
     EXPR = core.llvmexpr.Expr if hasattr(core, 'llvmexpr') else core.akarin.Expr if hasattr(core, 'akarin') else core.cranexpr.Expr if hasattr(core, 'cranexpr') else core.std.Expr
     return EXPR([clip, blur], "x x + y -")
 
@@ -1227,7 +1238,11 @@ def mcdegrainsharp(clip, frames=2, bblur=0.3, csharp=0.3, bsrch=True, thsad=400,
     else:
         planes = plane
     
-    c2 = core.tcanny.TCanny(clip, sigma=bblur, mode=-1, planes=planes)
+    if hasattr(core,'tcanny'):
+      c2 = core.tcanny.TCanny(clip, sigma=bblur, mode=-1, planes=planes)
+    else:
+      radius = max(1, round(bblur * 1.5))
+      c2 = _boxblur_fn()(clip, planes=planes, hradius=radius, hpasses=3, vradius=radius, vpasses=3)
 
     if bsrch is True:
         super_a = core.mv.Super(c2, pel=2, sharp=1)

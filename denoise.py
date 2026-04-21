@@ -570,7 +570,11 @@ def MCTemporalDenoise(i, radius=None, pfMode=3, sigma=None, twopass=None, useTTm
     ### OUTPUT
     return smP.std.Crop(**crop_args)
 
-
+def _boxblur_fn():
+    """Pick the best available BoxBlur."""
+    if hasattr(core, 'vszip'): return core.vszip.BoxBlur
+    return core.std.BoxBlur
+    
 def mClean(clip, thSAD=400, chroma=True, sharp=10, rn=14, deband=0, depth=0, strength=20, outbits=None, icalc=True, rgmode=18):
     """
     From: https://forum.doom9.org/showthread.php?t=174804 by burfadel
@@ -731,7 +735,13 @@ def mClean(clip, thSAD=400, chroma=True, sharp=10, rn=14, deband=0, depth=0, str
         if sharp <= 50:
             clsharp = core.std.MakeDiff(clean, Blur(clean2, amountH=0.08+0.03*sharp))
         else:
+          
+          if hasattr(core,'tcanny'):
             clsharp = core.std.MakeDiff(clean, clean2.tcanny.TCanny(sigma=(sharp-46)/4, mode=-1))
+          else:
+            radius = max(1, round(((sharp-46)/4) * 1.5))
+            clsharp = core.std.MakeDiff(clean, _boxblur_fn(clean2, hradius=radius, hpasses=3, vradius=radius, vpasses=3))
+
         clsharp = core.std.MergeDiff(clean2, RE(TM(clsharp), clsharp, 12))
 
     # If selected, combining ReNoise

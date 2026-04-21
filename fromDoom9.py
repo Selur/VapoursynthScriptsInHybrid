@@ -2,6 +2,11 @@ from vapoursynth import core
 import vapoursynth as vs
 import math
 
+def _boxblur_fn():
+    """Pick the best available BoxBlur."""
+    if hasattr(core, 'vszip'): return core.vszip.BoxBlur
+    return core.std.BoxBlur
+
 # DeStripe works on YUVXXXPY
 # "low frequency" stripes/bands removal filter
 # optional: https://github.com/AkarinVS/vapoursynth-plugin/releases
@@ -325,10 +330,7 @@ def VHSClean(clip: vs.VideoNode, ths: int=100, blur_sharp=True) -> vs.VideoNode:
   #phase 4. Recover quick flying objects and water drops
   EXPR = core.llvmexpr.Expr if hasattr(core, 'llvmexpr') else core.akarin.Expr if hasattr(core, 'akarin') else core.cranexpr.Expr if hasattr(core, 'cranexpr') else core.std.Expr
   mx=EXPR([blur(clip=x4, blur_radius=1.5),blur(clip=x3, blur_radius=1.5)],expr="y x - abs 12 >  255 0 ?")
-  if hasattr(vs.core, 'vszip'):
-    return core.std.MaskedMerge(clipa=x4,clipb=x3,mask=core.vszip.BoxBlur(mx,2),planes=[0, 1, 2])
-  else:
-    return core.std.MaskedMerge(clipa=x4,clipb=x3,mask=core.std.BoxBlur(mx,2),planes=[0, 1, 2])
+  return core.std.MaskedMerge(clipa=x4,clipb=x3,mask=_boxblur_f()n(mx,2),planes=[0, 1, 2])
     
     
 # masked CAS port of MCAS by Atak_Snajpera https://forum.doom9.org/showthread.php?p=2003218#post2003218
@@ -342,10 +344,8 @@ def maskedCAS(clip: vs.VideoNode, strength: float=0.2):
     raise vs.Error('strength not valid (range: [0-1]')
   import misc
   iMask = core.std.Levels(clip=clip, min_in=0, gamma=2, max_in=2 << clip.format.bits_per_sample -1)
-  if hasattr(vs.core, 'vszip'):
-    eMask = core.std.Sobel(clip=iMask, planes=[0]).std.InvertMask().std.Levels(min_in=0, gamma=2, max_in=2 << clip.format.bits_per_sample -1).vszip.BoxBlur()  
-  else:
-    eMask = core.std.Sobel(clip=iMask, planes=[0]).std.InvertMask().std.Levels(min_in=0, gamma=2, max_in=2 << clip.format.bits_per_sample -1).std.BoxBlur()
+  eMask = core.std.Sobel(clip=iMask, planes=[0]).std.InvertMask().std.Levels(min_in=0, gamma=2, max_in=2 << clip.format.bits_per_sample -1)
+  eMask = _boxblur_fn()(eMask)
   sharp = core.cas.CAS(clip=clip, sharpness=1)
   return misc.Overlay(base=clip, overlay=sharp, mask=eMask, opacity=strength)
   
@@ -362,7 +362,12 @@ def ContrastMask(clip, gblur=20.0, enhance=10.0):
     v2 = core.std.Invert(v2)
 
     # Apply Gaussian blur
-    v2 = core.tcanny.TCanny(v2, sigma=50, sigma_v=50+gblur, mode=-1)
+    if hasattr(core,'tcanny'):
+      v2 = core.tcanny.TCanny(v2, sigma=50, sigma_v=50+gblur, mode=-1)
+    else:
+      radius_h = max(1, round(50 * 1.5))
+      radius_v = max(1, round((50 + gblur) * 1.5))
+      v2 = _boxblur_fn()(v2, hradius=radius_h, hpasses=3, vradius=radius_v, vpasses=3)
 
     # Get the bit depth and scaling factors
     bit_depth = clip.format.bits_per_sample
@@ -400,7 +405,17 @@ def HaloBuster(input: vs.VideoNode, a: int = 32, h: float = 6.4, thr: float = 1.
     clean = core.knlm.KNLMeansCL(gray, d=0, a=a, s=0, h=h)
     
     # Apply TCanny for edge detection
-    mask = core.tcanny.TCanny(clean, sigma=1.5, mode=1)
+    if hasattr(core, 'tcanny'):
+        mask = core.tcanny.TCanny(clean, sigma=1.5, mode=1)
+    else:
+        blurred = _boxblur_fn()(clean, hradius=2, hpasses=3, vradius=2, vpasses=3)
+        if hasattr(core, 'edgemasks'):
+            mask = core.edgemasks.Sobel(blurred)
+        else:
+            blurred8 = core.resize.Point(blurred, format=vs.GRAY8)
+            mask = core.std.Sobel(blurred8)
+            mask = core.resize.Point(mask, format=gray_format)
+    
     max_pixel_value = (1 << gray.format.bits_per_sample) - 1
     mask = core.std.Lut(mask, function=lambda x: int(min(max((x / max_pixel_value - 0.24) * 3.2, 0.0), 1.0) * max_pixel_value))
     mask = core.std.Maximum(mask)

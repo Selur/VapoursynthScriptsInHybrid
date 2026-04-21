@@ -69,6 +69,11 @@ def kirsch2(clip_y: vs.VideoNode) -> vs.VideoNode:
 def scale8(x, newmax):
         return x * newmax // 0xFF
 
+def _boxblur_fn():
+    """Pick the best available BoxBlur."""
+    if hasattr(core, 'vszip'): return core.vszip.BoxBlur
+    return core.std.BoxBlur
+
 def CartoonEdges(clip, low=0, high=255):
     """Should behave like mt_edge(mode="cartoon")"""
     valuerange = (1 << clip.format.bits_per_sample)
@@ -113,7 +118,12 @@ def dehalo_mask(src: vs.VideoNode, expand: float = 0.5, iterations: int = 2, brz
     luma = get_y(src_b)
     EXPR = core.llvmexpr.Expr if hasattr(core, 'llvmexpr') else core.akarin.Expr if hasattr(core, 'akarin') else core.cranexpr.Expr if hasattr(core, 'cranexpr') else core.std.Expr
     vEdge = EXPR([luma, luma.std.Maximum().std.Maximum()], [f'y x - {shift} - 128 *'])
-    mask1 = EXPR(vEdge.tcanny.TCanny(sigma=sqrt(expand*2), mode=-1), ['x 16 *'])
+    if hasattr(core,'tcanny'):
+      mask1 = EXPR(vEdge.tcanny.TCanny(sigma=sqrt(expand*2), mode=-1), ['x 16 *'])
+    else:
+      radius = max(1, round(math.sqrt(expand * 2) * 1.5))
+      mask1 = EXPR(_boxblur_fn()(vEdge, hradius=radius, hpasses=3, vradius=radius, vpasses=3), ['x 16 *'])
+        
     mask2 = iterate(vEdge, core.std.Maximum, iterations)
     mask2 = iterate(mask2, core.std.Minimum, iterations)
     mask2 = mask2.std.Invert().std.Binarize(80)

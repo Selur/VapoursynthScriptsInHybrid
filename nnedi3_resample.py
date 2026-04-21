@@ -575,6 +575,11 @@ def SigmoidDirect(src, thr=0.5, cont=6.5, planes=[0, 1, 2]):
 import functools
 from typing import Sequence
 
+def _boxblur_fn():
+    """Pick the best available BoxBlur."""
+    if hasattr(core, 'vszip'): return core.vszip.BoxBlur
+    return core.std.BoxBlur
+
 def SSIM_downsample(clip: vs.VideoNode, w: int, h: int, smooth: Union[float, Union[vs.Func, Callable[..., vs.VideoNode]]] = 1,
                     kernel: Optional[str] = None, use_fmtc: bool = False, gamma: bool = False,
                     fulls: bool = False, fulld: bool = False, curve: str = '709', sigmoid: bool = False,
@@ -653,7 +658,11 @@ def SSIM_downsample(clip: vs.VideoNode, w: int, h: int, smooth: Union[float, Uni
     elif isinstance(smooth, int):
         Filter = functools.partial(BoxFilter, radius=smooth+1)
     elif isinstance(smooth, float):
-        Filter = functools.partial(core.tcanny.TCanny, sigma=smooth, mode=-1)
+        if hasattr(core, 'tcanny'):
+            Filter = functools.partial(core.tcanny.TCanny, sigma=smooth, mode=-1)
+        else:
+            radius = max(1, round(smooth * 1.5))
+            Filter = functools.partial(_boxblur_fn(), hradius=radius, hpasses=3, vradius=radius, vpasses=3)
     else:
         raise TypeError(funcName + ': \"smooth\" must be a int, float or a function!')
 
