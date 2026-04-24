@@ -406,7 +406,7 @@ def YAHR(clp: vs.VideoNode, blur: int = 2, depth: int = 32) -> vs.VideoNode:
     
     w1 = Padding(clp, 6, 6, 6, 6)
     if hasattr(core,'warp'):
-      w1 = core.warp.AWarpSharp2(main, blur=blur, depth=depth)
+      w1 = core.warp.AWarpSharp2(w1, blur=blur, depth=depth)
     else:
       import sharpen
       w1 = sharpen.AWarpSharp2(w1, blur=blur, depth=depth)

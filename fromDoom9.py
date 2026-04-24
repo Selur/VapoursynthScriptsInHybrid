@@ -330,7 +330,7 @@ def VHSClean(clip: vs.VideoNode, ths: int=100, blur_sharp=True) -> vs.VideoNode:
   #phase 4. Recover quick flying objects and water drops
   EXPR = core.llvmexpr.Expr if hasattr(core, 'llvmexpr') else core.akarin.Expr if hasattr(core, 'akarin') else core.cranexpr.Expr if hasattr(core, 'cranexpr') else core.std.Expr
   mx=EXPR([blur(clip=x4, blur_radius=1.5),blur(clip=x3, blur_radius=1.5)],expr="y x - abs 12 >  255 0 ?")
-  return core.std.MaskedMerge(clipa=x4,clipb=x3,mask=_boxblur_f()n(mx,2),planes=[0, 1, 2])
+  return core.std.MaskedMerge(clipa=x4,clipb=x3,mask=_boxblur_f()(mx,2),planes=[0, 1, 2])
     
     
 # masked CAS port of MCAS by Atak_Snajpera https://forum.doom9.org/showthread.php?p=2003218#post2003218
