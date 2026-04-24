@@ -672,7 +672,13 @@ def SRFComb2(
     # ------------------------------------------------------------------
     # aWarpSharp2 chroma sharpening
     # ------------------------------------------------------------------
-    spati_comb_c = core.warp.AWarpSharp2(spati_comb_c, depth=[16, 8, 8], chroma=1, planes=[1, 2])
+    
+    
+    if hasattr(core, 'warp'):
+      spati_comb_c = core.warp.AWarpSharp2(spati_comb_c, depth=[16, 8, 8], chroma=1, planes=[1, 2])
+    else:
+      import sharpen
+      spati_comb_c = sharpen.AWarpSharp2(spati_comb_c, depth=[16, 8, 8], chroma=1, planes=[1, 2])
 
     # Combined luma+chroma combmask for the final merge
     chm_uv_resized = _scale_chroma_mask(chm, ouvm_sub.width, ouvm_sub.height, is_sub)

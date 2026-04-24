@@ -124,8 +124,15 @@ def EdgeCleaner(c: vs.VideoNode, strength: int = 10, rep: bool = True, rmode: in
 
     if smode > 0:
         strength += 4
-
-    main = Padding(c, 6, 6, 6, 6).warp.AWarpSharp2(blur=1, depth=cround(strength / 2)).std.Crop(6, 6, 6, 6)
+    
+    main = Padding(c, 6, 6, 6, 6)
+    if hasattr(core,'warp'):
+      main = core.warp.AWarpSharp2(main, blur=1, depth=cround(strength / 2))
+    else:
+      import sharpen
+      main = sharpen.AWarpSharp2(main, blur=1, depth=cround(strength / 2))
+    main = core.std.Crop(main, 6, 6, 6, 6)      
+     
     if rep:
       if hasattr(core, 'zsmooth'):
         main = core.zsmooth.Repair(main, c, mode=rmode)
@@ -396,7 +403,15 @@ def YAHR(clp: vs.VideoNode, blur: int = 2, depth: int = 32) -> vs.VideoNode:
 
     b1 = MinBlur(clp, 2).std.Convolution(matrix=[1, 2, 1, 2, 4, 2, 1, 2, 1])
     b1D = core.std.MakeDiff(clp, b1)
-    w1 = Padding(clp, 6, 6, 6, 6).warp.AWarpSharp2(blur=blur, depth=depth).std.Crop(6, 6, 6, 6)
+    
+    w1 = Padding(clp, 6, 6, 6, 6)
+    if hasattr(core,'warp'):
+      w1 = core.warp.AWarpSharp2(main, blur=blur, depth=depth)
+    else:
+      import sharpen
+      w1 = sharpen.AWarpSharp2(w1, blur=blur, depth=depth)
+    w1 = core.std.Crop(w1, 6, 6, 6, 6)      
+    
     w1b1 = MinBlur(w1, 2).std.Convolution(matrix=[1, 2, 1, 2, 4, 2, 1, 2, 1])
     w1b1D = core.std.MakeDiff(w1, w1b1)
     if hasattr(core, 'zsmooth'):

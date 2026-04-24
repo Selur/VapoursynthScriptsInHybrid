@@ -115,7 +115,17 @@ def Toon(input, str=1.0, l_thr=2, u_thr=12, blur=2, depth=32):
 
     last = core.std.MakeDiff(input.std.Maximum().std.Minimum(), input)
     EXPR = core.llvmexpr.Expr if hasattr(core, 'llvmexpr') else core.akarin.Expr if hasattr(core, 'akarin') else core.cranexpr.Expr if hasattr(core, 'cranexpr') else core.std.Expr
-    last = EXPR([last, Padding(last, 6, 6, 6, 6).warp.AWarpSharp2(blur=blur, depth=depth).std.Crop(6, 6, 6, 6)], expr=['x y min'])
+    
+    
+    sharpened = Padding(last, 6, 6, 6, 6)
+    if hasattr(core,'warp'):
+      sharpened = core.warp.AWarpSharp2(main, blur=blur, depth=depth)
+    else:
+      import sharpen
+      sharpened = sharpen.AWarpSharp2(sharpened, blur=blur, depth=depth)
+    sharpened = core.std.Crop(sharpened, 6, 6, 6, 6)      
+    
+    last = EXPR([last, sharpened], expr=['x y min'])
     expr = f'y {lthr} <= {neutral} y {uthr} >= x {uthr8} y {multiple} / - 128 * x {multiple} / y {multiple} / {lthr8} - * + {ludiff} / {multiple} * ? {neutral} - {str} * {neutral} + ?'
     last = core.std.MakeDiff(input, EXPR([last, last.std.Maximum()], expr=[expr]))
 

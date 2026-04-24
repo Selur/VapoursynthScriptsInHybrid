@@ -8,10 +8,18 @@ from typing import Sequence, Union, Optional
 
 from vsutil import scale_value
 
+
+def _boxblur_fn():
+    """Pick the best available BoxBlur."""
+    if hasattr(core, 'vszip'): return core.vszip.BoxBlur
+    return core.std.BoxBlur
+    
+
 def STPresso(
     clp: vs.VideoNode,
     limit: int = 3,
     bias: int = 24,
+    
     RGmode: Union[int, vs.VideoNode] = 4,
     tthr: int = 12,
     tlimit: int = 3,
@@ -420,11 +428,8 @@ def MLD_helper(clip, srch, tr, thSAD, rec, chroma, soft):
             return D3(RG, sup2, bv1, fv1, bv2, fv2, bv3, fv3, thsad=thSAD, plane=plane)
     else:
         return mvmulti.DegrainN(RG, sup2, vec, tr=tr, thsad=thSAD, plane=plane)
-def _boxblur_fn():
-    """Pick the best available BoxBlur."""
-    if hasattr(core, 'vszip'): return core.vszip.BoxBlur
-    return core.std.BoxBlur
-    
+
+
 def TemporalDegrain2(clip, degrainTR=1, degrainPlane=4, grainLevel=2, grainLevelSetup=False, meAlg=4, meAlgPar=None, meSubpel=None, meBlksz=None, meTM=False,
     limitSigma=None, limitBlksz=None, fftThreads=None, postFFT=0, postTR=1, postSigma=1, postMix=0, postBlkSize=None, knlDevId=0, ppSAD1=None, ppSAD2=None, 
     ppSCD1=None, thSCD2=128, DCT=0, SubPelInterp=2, SrchClipPP=None, GlobalMotion=True, ChromaMotion=True, rec=False, extraSharp=False, outputStage=2, neo=True):
