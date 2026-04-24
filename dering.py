@@ -555,6 +555,319 @@ def _limit_filter_expr(defref, thr, elast, largen_thr, value_range):
             limitExpr = f" {flt} {ref} > " + limitExprLargen + " " + limitExpr + " ? "
 
     return limitExpr
+    
+    
+
+def _expr2(clips: vs.VideoNode | list[vs.VideoNode], expr: str | list[str]) -> vs.VideoNode:
+    """Expr — prefers llvmexpr → akarin → cranexpr → std."""
+    if hasattr(core, "llvmexpr"):
+        return core.llvmexpr.Expr(clips, expr)
+    if hasattr(core, "akarin"):
+        return core.akarin.Expr(clips, expr)
+    if hasattr(core, "cranexpr"):
+        return core.cranexpr.Expr(clips, expr)
+    raise RuntimeError(
+            "AntiRingLR requires akarin, llvmexpr, or cranexpr — "
+            "none found. Install akarin, llvmexpr or cranexpr into your VS plugins folder."
+    )
+
+def AntiRingLR(
+    cl: vs.VideoNode,
+    planes: str = "all",
+    weightL: float = 0.25,
+    offsetL: int = 1,
+    weightR: float = 0.25,
+    offsetR: int = 1,
+    knee: float = 0.7,
+    pr2: float = 0.5,
+    pr3: float = 0.5,
+) -> vs.VideoNode:
+    """
+    Hans' Ringing Remover — VapourSynth port.
+    Output format always matches input format.
+
+    Parameters
+    ----------
+    cl      : Input clip.
+    planes  : "luma", "chroma", or "all".
+    weightL : Left-side correction intensity  (0.15 – 0.7; 0.0 = inactive).
+    offsetL : Left-side distance from edge    (1 – 3).
+    weightR : Right-side correction intensity.
+    offsetR : Right-side distance from edge   (1 – 3).
+    knee    : Softness of the on/off curve    (0.2 – 1.5).
+    pr2     : Protection for radius-2 signal components (0.0 – 1.5).
+    pr3     : Protection for radius-3 signal components (0.0 – 1.5).
+    """
+
+ 
+
+    fmt_in   = cl.format
+    is_gray  = fmt_in.color_family == vs.GRAY
+    work_fmt = vs.GRAYS if is_gray else vs.YUV444PS
+
+    cl_f = core.resize.Bicubic(cl, format=work_fmt)
+
+    pr2_coeff = pr2 * 0.36
+    pr3_coeff = pr3 * 0.3
+    scale     = 10.0 / knee
+    bias      = 0.5  * knee
+
+    s128 = 128.0 / 255.0
+    s64  =  64.0 / 255.0
+    s127 = 127.0 / 255.0
+
+    luma_L = (
+        "x[2,0] x[1,0] - dup * 0.75 * "
+        "x[1,0] x - dup * + "
+        "x x[-1,0] - dup * + "
+        "x[-1,0] x[-2,0] - dup * 0.75 * + sqrt "
+    )
+
+    prot_L = (
+        f"x[3,0] x[1,0] - dup * 0.66 * x[2,0] x[0,0] - dup * + "
+        f"x[1,0] x[-1,0] - dup * + x[0,0] x[-2,0] - dup * 0.66 * + sqrt {pr2_coeff} * - "
+        f"x[3,0] x[0,0] - dup * 0.5 * x[2,0] x[-1,0] - dup * + "
+        f"x[1,0] x[-2,0] - dup * + x[0,0] x[-3,0] - dup * 0.66 * + sqrt {pr3_coeff} * - "
+    )
+
+    sigmoid_correct_L = (
+        f"{scale} / {bias} - 0.0 max "
+        f"dup 1.0 - swap 1.0 + / 1.0 + {s128} * 1.0 min "
+        f"x[{offsetL},0] x[{2 + offsetL},0] - * {weightL} * -{s64} max {s127} min "
+    )
+
+    luma_R = (
+        "x[2,0] x[1,0] - dup * 0.75 * "
+        "x[1,0] x - dup * + "
+        "x x[-1,0] - dup * + "
+        "x[-1,0] x[-2,0] - dup * 0.75 * + sqrt "
+    )
+
+    prot_R = (
+        f"x[-3,0] x[-1,0] - dup * 0.66 * x[-2,0] x[0,0] - dup * + "
+        f"x[-1,0] x[1,0] - dup * + x[0,0] x[2,0] - dup * 0.66 * + sqrt {pr2_coeff} * - "
+        f"x[-3,0] x[0,0] - dup * 0.5 * x[-2,0] x[1,0] - dup * + "
+        f"x[-1,0] x[2,0] - dup * + x[0,0] x[3,0] - dup * 0.66 * + sqrt {pr3_coeff} * - "
+    )
+
+    sigmoid_correct_R = (
+        f"{scale} / {bias} - 0.0 max "
+        f"dup 1.0 - swap 1.0 + / 1.0 + {s128} * 1.0 min "
+        f"x[{-offsetR},0] x[{-2 - offsetR},0] - * {weightR} * -{s64} max {s127} min + x + "
+    )
+
+    expr = (
+        luma_L + prot_L + sigmoid_correct_L
+        + luma_R + prot_R + sigmoid_correct_R
+    )
+
+    do_luma   = planes in ("luma",   "all")
+    do_chroma = planes in ("chroma", "all")
+
+    expr_y = expr if do_luma   else "x"
+    expr_u = expr if do_chroma else "x"
+    expr_v = expr if do_chroma else "x"
+    expr_list = [expr_y] if is_gray else [expr_y, expr_u, expr_v]
+
+    result = _expr2(cl_f, expr_list)
+
+    return core.resize.Bicubic(result, format=fmt_in)
+    
+    
+def AntiRingLRUD(
+    cl: vs.VideoNode,
+    planes: str = "all",
+    weightL: float = 0.25,
+    offsetL: int = 1,
+    weightR: float = 0.25,
+    offsetR: int = 1,
+    knee: float = 0.7,
+    pr2: float = 0.5,
+    pr3: float = 0.5
+) -> vs.VideoNode:
+    """
+    Hans' Ringing Remover — horizontal + vertical pass.
+    Applies AntiRingLR twice: once normally (fixes left/right ringing),
+    and once on a 90°-rotated clip (fixes up/down ringing).
+    """
+
+    # Pass 1 — horizontal ringing
+    result = AntiRingLR(cl, planes=planes,
+                        weightL=weightL, offsetL=offsetL,
+                        weightR=weightR, offsetR=offsetR,
+                        knee=knee, pr2=pr2, pr3=pr3)
+
+    # Pass 2 — vertical ringing via 90° rotation
+    rotated = core.std.Transpose(result)
+    rotated = AntiRingLR(rotated, planes=planes,
+                         weightL=weightL, offsetL=offsetL,
+                         weightR=weightR, offsetR=offsetR,
+                         knee=knee, pr2=pr2, pr3=pr3)
+    result = core.std.Transpose(rotated)
+
+    return result
+
+
+
+def AntiRingLR2(
+    cl: vs.VideoNode,
+    planes: str = "luma",
+    weightL: float = 0.25,
+    offsetL: int = 1,
+    weightR: float = 0.25,
+    offsetR: int = 1,
+    knee: float = 0.7,
+    pr2: float = 0.5,
+    pr3: float = 0.5,
+) -> vs.VideoNode:
+    """
+    Hans' Ringing Remover v2
+    Extends AntiRingLR with a secondary right-side correction pass
+    (weightR * 0.6, offset+1) that suppresses a second artifact lobe.
+
+    Parameters
+    ----------
+    cl      : Input clip.
+    planes  : "luma", "chroma", or "all".
+    weightL : Left-side correction intensity  (0.15 – 0.7; 0.0 = inactive).
+    offsetL : Left-side distance from edge    (1 – 3).
+    weightR : Right-side correction intensity.
+    offsetR : Right-side distance from edge   (1 – 3).
+    knee    : Softness of the on/off curve    (0.2 – 1.5).
+    pr2     : Protection for radius-2 signal components (0.0 – 1.5).
+    pr3     : Protection for radius-3 signal components (0.0 – 1.5).
+    """
+
+    fmt_in   = cl.format
+    is_gray  = fmt_in.color_family == vs.GRAY
+    work_fmt = vs.GRAYS if is_gray else vs.YUV444PS
+
+    cl_f = core.resize.Bicubic(cl, format=work_fmt)
+
+    pr2_coeff  = pr2 * 0.36
+    pr3_coeff  = pr3 * 0.3
+    scale      = 10.0 / knee
+    bias       = 0.5  * knee
+    weightR2   = weightR * 0.6
+
+    s128 = 128.0 / 255.0
+    s64  =  64.0 / 255.0
+    s127 = 127.0 / 255.0
+
+    # --- Left-side block ---
+    luma_L = (
+        "x[2,0] x[1,0] - dup * 0.75 * "
+        "x[1,0] x - dup * + "
+        "x x[-1,0] - dup * + "
+        "x[-1,0] x[-2,0] - dup * 0.75 * + sqrt "
+    )
+    prot_L = (
+        f"x[3,0] x[1,0] - dup * 0.66 * x[2,0] x[0,0] - dup * + "
+        f"x[1,0] x[-1,0] - dup * + x[0,0] x[-2,0] - dup * 0.66 * + sqrt {pr2_coeff} * - "
+        f"x[3,0] x[0,0] - dup * 0.5 * x[2,0] x[-1,0] - dup * + "
+        f"x[1,0] x[-2,0] - dup * + x[0,0] x[-3,0] - dup * 0.66 * + sqrt {pr3_coeff} * - "
+    )
+    sigmoid_correct_L = (
+        f"{scale} / {bias} - 0.0 max "
+        f"dup 1.0 - swap 1.0 + / 1.0 + {s128} * 1.0 min "
+        f"x[{offsetL},0] x[{2 + offsetL},0] - * {weightL} * -{s64} max {s127} min "
+    )
+
+    # --- Right-side primary block ---
+    luma_R = (
+        "x[2,0] x[1,0] - dup * 0.75 * "
+        "x[1,0] x - dup * + "
+        "x x[-1,0] - dup * + "
+        "x[-1,0] x[-2,0] - dup * 0.75 * + sqrt "
+    )
+    prot_R = (
+        f"x[-3,0] x[-1,0] - dup * 0.66 * x[-2,0] x[0,0] - dup * + "
+        f"x[-1,0] x[1,0] - dup * + x[0,0] x[2,0] - dup * 0.66 * + sqrt {pr2_coeff} * - "
+        f"x[-3,0] x[0,0] - dup * 0.5 * x[-2,0] x[1,0] - dup * + "
+        f"x[-1,0] x[2,0] - dup * + x[0,0] x[3,0] - dup * 0.66 * + sqrt {pr3_coeff} * - "
+    )
+    sigmoid_correct_R = (
+        f"{scale} / {bias} - 0.0 max "
+        f"dup 1.0 - swap 1.0 + / 1.0 + {s128} * 1.0 min "
+        f"x[{-offsetR},0] x[{-2 - offsetR},0] - * {weightR} * -{s64} max {s127} min + "
+    )
+
+    # --- Right-side secondary block (offset+1, weight*0.6, subtracted) ---
+    # Targets the second ringing lobe one pixel further right.
+    # AviSynth original uses a shifted luma window: x[1,0]..x[-3,0]
+    luma_R2 = (
+        "x[1,0] x[0,0] - dup * 0.75 * "
+        "x[0,0] x[-1,0] - dup * + "
+        "x[-1,0] x[-2,0] - dup * + "
+        "x[-2,0] x[-3,0] - dup * 0.75 * + sqrt "
+    )
+    prot_R2 = (
+        f"x[-4,0] x[-2,0] - dup * 0.66 * x[-3,0] x[-1,0] - dup * + "
+        f"x[-2,0] x[0,0] - dup * + x[-1,0] x[1,0] - dup * 0.66 * + sqrt {pr2_coeff} * - "
+        f"x[-4,0] x[-1,0] - dup * 0.5 * x[-3,0] x[0,0] - dup * + "
+        f"x[-2,0] x[1,0] - dup * + x[-1,0] x[2,0] - dup * 0.66 * + sqrt {pr3_coeff} * - "
+    )
+    sigmoid_correct_R2 = (
+        f"{scale} / {bias} - 0.0 max "
+        f"dup 1.0 - swap 1.0 + / 1.0 + {s128} * 1.0 min "
+        f"x[{-1 - offsetR},0] x[{-3 - offsetR},0] - * {weightR2} * -{s64} max {s127} min - "
+    )
+
+    expr = (
+        luma_L + prot_L + sigmoid_correct_L
+        + luma_R + prot_R + sigmoid_correct_R
+        + luma_R2 + prot_R2 + sigmoid_correct_R2
+        + "x + "
+    )
+
+    do_luma   = planes in ("luma",   "all")
+    do_chroma = planes in ("chroma", "all")
+
+    expr_y = expr if do_luma   else "x"
+    expr_u = expr if do_chroma else "x"
+    expr_v = expr if do_chroma else "x"
+    expr_list = [expr_y] if is_gray else [expr_y, expr_u, expr_v]
+
+    result = _expr2(cl_f, expr_list)
+
+    return core.resize.Bicubic(result, format=fmt_in)
+    
+    
+def AntiRingLR2UD(
+    cl: vs.VideoNode,
+    planes: list[int] | None = None,
+    weightL: float = 0.25,
+    offsetL: int = 1,
+    weightR: float = 0.25,
+    offsetR: int = 1,
+    knee: float = 0.7,
+    pr2: float = 0.5,
+    pr3: float = 0.5,
+) -> vs.VideoNode:
+    """
+    Hans' Ringing Remover v2 — horizontal + vertical pass.
+    Applies AntiRingLR2 twice: once normally (fixes left/right ringing),
+    and once on a 90°-rotated clip (fixes up/down ringing).
+
+    planes : List of plane indices to process. Default [0] = luma only.
+    """
+
+    if planes is None:
+        planes = [0]
+
+    result = AntiRingLR2(cl, planes=planes,
+                         weightL=weightL, offsetL=offsetL,
+                         weightR=weightR, offsetR=offsetR,
+                         knee=knee, pr2=pr2, pr3=pr3)
+
+    rotated = core.std.Transpose(result)
+    rotated = AntiRingLR2(rotated, planes=planes,
+                          weightL=weightL, offsetL=offsetL,
+                          weightR=weightR, offsetR=offsetR,
+                          knee=knee, pr2=pr2, pr3=pr3)
+    return core.std.Transpose(rotated)
+    
+    
 ################################################################################################################################
 
 def AvsPrewitt(clip: vs.VideoNode, planes: Optional[Union[int, Sequence[int]]] = None) -> vs.VideoNode:
