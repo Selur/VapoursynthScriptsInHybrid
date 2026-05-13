@@ -1,31 +1,3 @@
-"""
-dot-crawl and rainbow artefact reduction.
-
-Requirements
-------------
-  mv          https://github.com/Mr-Z-2697/vapoursynth-mvtools
-  zsmooth     https://github.com/adworacz/zsmooth
-  warp        https://github.com/dubhater/vapoursynth-awarpsharp2
-  neo_fft3d   https://github.com/HomeOfAviSynthPlusEvolution/neo_FFT3D
-  fft3dfilter https://github.com/myrsloik/VapourSynth-FFT3DFilter  (fallback for neo_fft3d)
-  bilateralgpu https://github.com/WolframRhodium/VapourSynth-BilateralGPU
-  vszip       https://github.com/dnjulek/vapoursynth-zip
-  bilateral   https://github.com/HomeOfVapourSynthEvolution/VapourSynth-Bilateral (fallback)
-  llvmexpr    https://github.com/Sunflower-Dolls/Vapoursynth-llvmexpr
-  akarin      https://github.com/AkarinVS                           (fallback)
-  cranexpr    https://github.com/sgt0/cranexpr                      (fallback)
-  rgvs        (fallback Repair for SRFComb)
-
-Optional Python modules
------------------------
-  color.py    https://github.com/Selur/VapoursynthScriptsInHybrid/blob/master/color.py
-              Provides Tweak() for an accurate chroma-activity mask.
-              If not importable, a simpler approximation is used as fallback.
-  sharpen.py  https://github.com/Selur/VapoursynthScriptsInHybrid/blob/master/sharpen.py
-              Provides ContraSharpening() for post-degrain detail recovery.
-              If not importable, contra-sharpening is silently skipped.
-"""
-
 from __future__ import annotations
 import math
 import vapoursynth as vs
@@ -41,7 +13,6 @@ try:
     from sharpen import ContraSharpening as _contra_sharpening  # type: ignore
 except ImportError:
     _contra_sharpening = None
-
 
 # ---------------------------------------------------------------------------
 # Plugin wrappers — each wrapper tries the fastest available backend first
@@ -76,23 +47,14 @@ def _box_blur(
 
 
 def _repair(clip: vs.VideoNode, ref: vs.VideoNode, mode: int) -> vs.VideoNode:
-    """Repair — prefers zsmooth, falls back to rgvs."""
+    """Repair — prefers zsmooth, falls back to rgvs.
+    Note: mode semantics differ slightly between backends; modes 1–3 are
+    safe across both. Mode 5 in rgvs ≠ mode 5 in zsmooth — avoid mode 5
+    if portability across backends matters.
+    """
     if hasattr(core, "zsmooth"):
         return core.zsmooth.Repair(clip, ref, mode)
     return core.rgvs.Repair(clip, ref, mode)
-
-
-def _checkmate(clip: vs.VideoNode) -> vs.VideoNode:
-    """Checkmate deinterlacing-artefact removal via vszip (no-op if unavailable)."""
-    if not hasattr(core, "vszip"):
-        return clip
-    bits = clip.format.bits_per_sample
-    if bits != 8:
-        fmt8 = clip.format.replace(bits_per_sample=8)
-        clip8 = core.resize.Point(clip, format=fmt8)
-        result = core.vszip.Checkmate(clip8)
-        return core.resize.Point(result, format=clip.format)
-    return core.vszip.Checkmate(clip)
 
 
 def _fft3d(clip: vs.VideoNode, **kwargs) -> vs.VideoNode:
@@ -319,6 +281,7 @@ def SRFComb(
     DotCrawlThSAD: int = 500,
     RainbowThSAD: int = 500,
     SpatialDeDotCraw: bool = True,
+    tff: bool | None = None,
 ) -> vs.VideoNode:
     """
     SRFComb by real.finder — field-space version.
@@ -329,7 +292,7 @@ def SRFComb(
 
     Requires: mv, rgvs/zsmooth, std, resize core plugins,
               color.Tweak (optional, falls back to approximation if unavailable)
-    Optional: zsmooth (faster Repair), vszip (faster BoxBlur + Checkmate)
+    Optional: zsmooth (faster Repair), vszip (Checkmate + faster BoxBlur)
 
     Parameters
     ----------
@@ -339,15 +302,27 @@ def SRFComb(
         SAD threshold for rainbow motion compensation.
     SpatialDeDotCraw : bool
         Enable spatial luma de-dot-crawl pre-processing step.
+    tff : bool, optional
+        True = top-field-first, False = bottom-field-first.
+        When omitted, auto-detected from the ``_FieldBased`` frame property.
     """
     fmt = clip.format
     assert fmt is not None,             "SRFComb: clip must have a known format"
     assert fmt.color_family != vs.RGB,  "SRFComb: Planar YUV input only"
     assert fmt.color_family != vs.GRAY, "SRFComb: does not work with Greyscale video"
 
+    # Resolve field order from frame property when not explicitly given
+    if tff is None:
+        field_based = clip.get_frame(0).props.get('_FieldBased', 2)
+        # _FieldBased: 0 = progressive, 1 = BFF, 2 = TFF
+        tff = (field_based != 1)  # treat progressive/unknown as TFF
+
     fullchr = fmt.subsampling_w == 0 and fmt.subsampling_h == 0  # 4:4:4
     chr420  = fmt.subsampling_w == 1 and fmt.subsampling_h == 1  # 4:2:0
     chr422  = fmt.subsampling_w == 1 and fmt.subsampling_h == 0  # 4:2:2
+
+    if not (fullchr or chr420 or chr422):
+        raise ValueError("SRFComb: unsupported chroma subsampling (only 4:4:4, 4:2:2, 4:2:0)")
 
     peak  = (1 << fmt.bits_per_sample) - 1
     half  = 1 << (fmt.bits_per_sample - 1)
@@ -357,7 +332,7 @@ def SRFComb(
     thSADC = RainbowThSAD
 
     # Everything works in field-space until the final Weave
-    separated = core.std.SeparateFields(clip, tff=True)
+    separated = core.std.SeparateFields(clip, tff=tff)
     ogs = separated
 
     # --- LumaSpatialDeDot (field-space) ---
@@ -372,14 +347,15 @@ def SRFComb(
     else:
         LumaSpatialDeDot = separated
 
-    # --- pre: luma processing chain ---
+    # --- pre: luma processing chain (frame-space, then separated) ---
     ogy    = core.std.ShufflePlanes(clip, 0, vs.GRAY)
     dedc   = _repair(ogy, _box_blur(ogy, hradius=1, hpasses=1, vradius=1, vpasses=1), 1)
     tr1    = _repair(dedc, ogy, 3)
-    cm     = _checkmate(tr1)
+    # Checkmate: suppress residual interlacing artefacts if vszip present
+    cm     = core.vszip.Checkmate(tr1) if hasattr(core, "vszip") else tr1
     tr2    = _repair(cm, ogy, 3)
     rep    = _repair(tr2, ogy, 1)
-    rep_sf   = core.std.SeparateFields(rep, tff=True)
+    rep_sf   = core.std.SeparateFields(rep, tff=tff)
     ablurred = _box_blur(rep_sf,   hradius=1, hpasses=1, vradius=0, vpasses=0)
     blurred2 = _box_blur(ablurred, hradius=1, hpasses=3, vradius=0, vpasses=0)
     pre_y    = core.std.Convolution(blurred2, [0, -1, 0, -1, 5, -1, 0, -1, 0])
@@ -392,7 +368,7 @@ def SRFComb(
     )
 
     # --- preymask: horizontal edge mask on separated luma ---
-    ogy_sf    = core.std.SeparateFields(ogy, tff=True)
+    ogy_sf    = core.std.SeparateFields(ogy, tff=tff)
     ogy_vblur = _box_blur(ogy_sf, vradius=1, vpasses=3, hradius=0, hpasses=0)
     ogy_vshrp = core.std.Convolution(ogy_vblur, [0, -1, 0, -1, 5, -1, 0, -1, 0])
     preymask  = core.std.Convolution(ogy_vshrp, [0, 0, 0, -1, 0, 1, 0, 0, 0])
@@ -407,11 +383,14 @@ def SRFComb(
         sat0  = _color_tweak(ogs, sat=0.0,  coring=False)
         sat10 = _color_tweak(ogs, sat=10.0, coring=False)
     else:
-        # Fallback approximation when color.py is unavailable
-        sat0  = core.std.ShufflePlanes(
-            [core.std.BlankClip(ogs, color=[0, half, half]),
-             core.std.ShufflePlanes(ogs, 1, vs.GRAY),
-             core.std.ShufflePlanes(ogs, 2, vs.GRAY)],
+        # Fallback approximation when color.py is unavailable.
+        # sat=0 → U and V set to mid-grey (half), luma preserved.
+        # sat=10 → no accurate boost available; use original chroma as approximation.
+        blank_uv = core.std.BlankClip(
+            core.std.ShufflePlanes(ogs, 1, vs.GRAY), color=[half]
+        )
+        sat0 = core.std.ShufflePlanes(
+            [ogs, blank_uv, blank_uv],
             [0, 0, 0], vs.YUV,
         )
         sat10 = ogs  # simplified; true sat=10 boost not available without color.py
@@ -430,11 +409,15 @@ def SRFComb(
     # Upscale cuvmask to full luma field dimensions
     field_w = ogs.width
     field_h = ogs.height
-    shift_val = 0.25 if (chr422 or chr420) else (None if fullchr else 0.375)
-    cuvmaskf  = core.resize.Bilinear(
-        cuvmask, field_w, field_h,
-        src_left=shift_val if shift_val is not None else 0,
-    )
+    if chr422 or chr420:
+        shift_val = 0.25
+    elif fullchr:
+        shift_val = 0.0
+    else:
+        # Should not be reached due to format check above, but be explicit
+        raise ValueError("SRFComb: unsupported chroma subsampling")
+
+    cuvmaskf = core.resize.Bilinear(cuvmask, field_w, field_h, src_left=shift_val)
 
     # --- premask: intersection of chroma activity and pre edge ---
     premask = _expr([cuvmaskf, precmask], "x y min")
@@ -448,13 +431,16 @@ def SRFComb(
     ycombmask = core.std.Inflate(ycombmask)
 
     # uvcombmask: downscale premask to chroma dimensions, then back up for MaskedMerge
-    cuv_w     = diff_u.width
-    cuv_h     = diff_u.height
-    neg_shift = -0.25 if (chr422 or chr420) else (None if fullchr else -0.375)
-    uvcombmask = core.resize.Bilinear(
-        premask, cuv_w, cuv_h,
-        src_left=neg_shift if neg_shift is not None else 0,
-    )
+    cuv_w = diff_u.width
+    cuv_h = diff_u.height
+    if chr422 or chr420:
+        neg_shift = -0.25
+    elif fullchr:
+        neg_shift = 0.0
+    else:
+        raise ValueError("SRFComb: unsupported chroma subsampling")
+
+    uvcombmask      = core.resize.Bilinear(premask, cuv_w, cuv_h, src_left=neg_shift)
     uvcombmask_full = core.resize.Bilinear(uvcombmask, field_w, field_h)
 
     # --- pre2: blend pre into ogs on luma using premask ---
@@ -472,8 +458,8 @@ def SRFComb(
     degrained = core.mv.Degrain1(lastLSD, super_lsd, bv1, fv1, thsad=thSAD, thsadc=thSADC)
 
     # --- Final merge: ycombmask on luma, uvcombmask on chroma ---
-    merged = core.std.MaskedMerge(ogs,    degrained, ycombmask,        planes=[0])
-    merged = core.std.MaskedMerge(merged, degrained, uvcombmask_full,  planes=[1, 2])
+    merged = core.std.MaskedMerge(ogs,    degrained, ycombmask,       planes=[0])
+    merged = core.std.MaskedMerge(merged, degrained, uvcombmask_full, planes=[1, 2])
 
     return _weave_fields(merged)
 
@@ -481,6 +467,37 @@ def SRFComb(
 # ---------------------------------------------------------------------------
 # Public function: SRFComb2
 # ---------------------------------------------------------------------------
+
+"""
+SRFComb2 — VapourSynth port of the AviSynth function by real.finder (Doom9).
+https://forum.doom9.org/showthread.php?t=186908 + https://github.com/realfinder/AVS-Stuff/blob/master/avs%202.6%20and%20up/SRFComb.avsi
+Spatial/temporal dot-crawl and rainbow suppression for analogue captures.
+Handles both interlaced and progressive sources.
+
+Requirements
+------------
+  mv          https://github.com/Mr-Z-2697/vapoursynth-mvtools
+  zsmooth     https://github.com/adworacz/zsmooth
+  warp        https://github.com/dubhater/vapoursynth-awarpsharp2
+  neo_fft3d   https://github.com/HomeOfAviSynthPlusEvolution/neo_FFT3D
+  fft3dfilter https://github.com/myrsloik/VapourSynth-FFT3DFilter  (fallback for neo_fft3d)
+  bilateralgpu https://github.com/WolframRhodium/VapourSynth-BilateralGPU
+  vszip       https://github.com/dnjulek/vapoursynth-zip
+  bilateral   https://github.com/HomeOfVapourSynthEvolution/VapourSynth-Bilateral (fallback)
+  llvmexpr    https://github.com/Sunflower-Dolls/Vapoursynth-llvmexpr
+  akarin      https://github.com/AkarinVS                           (fallback)
+  cranexpr    https://github.com/sgt0/cranexpr                      (fallback)
+
+Optional Python modules
+-----------------------
+  color.py    https://github.com/Selur/VapoursynthScriptsInHybrid/blob/master/color.py
+              Provides Tweak() for an accurate chroma-activity mask (ouvm).
+              If not importable, a simpler approximation is used as fallback.
+  sharpen.py  https://github.com/Selur/VapoursynthScriptsInHybrid/blob/master/sharpen.py
+              Provides ContraSharpening() for post-degrain detail recovery.
+              If not importable, contra-sharpening is silently skipped.
+"""
+
 
 def SRFComb2(
     clip: vs.VideoNode,
@@ -505,9 +522,11 @@ def SRFComb2(
         For interlaced material the clip should *not* be pre-separated;
         fields are separated internally.
     dedot : bool, optional
-        Enable luma (dot-crawl) reduction. Defaults to *progressive*.
+        Enable luma (dot-crawl) reduction. Defaults to True for progressive,
+        False for interlaced.
     derainbow : bool, optional
-        Enable chroma (rainbow) reduction. Defaults to *progressive*.
+        Enable chroma (rainbow) reduction. Defaults to True for progressive,
+        False for interlaced.
     thsad : int, optional
         SAD threshold for dot-crawl motion compensation.
         Defaults to 700 (progressive) or 500 (interlaced).
@@ -518,16 +537,29 @@ def SRFComb2(
         Hint that the source is PAL (25 fps). Affects mask expansion
         direction. Auto-detected from frame-rate when not given.
     progressive : bool, optional
-        Force progressive (True) or interlaced (False) handling.
-        When omitted, auto-detected from the _FieldBased frame property.
+        Force progressive (``True``) or interlaced (``False``) handling.
+        When omitted, auto-detected from the ``_FieldBased`` frame
+        property (0 = progressive, 1 = BFF, 2 = TFF). Override this
+        if the source is mistagged.
     contrasharp : bool
         Apply contra-sharpening after motion compensation to recover
-        detail lost during degrain (default True).
+        detail lost during degrain (default ``True``).
+
+    Returns
+    -------
+    vs.VideoNode
+        Processed clip in the same format as the input.
+
+    Raises
+    ------
+    ValueError
+        If the input is not planar YUV, or is greyscale.
     """
+
     if clip.format.color_family != vs.YUV:
-        raise ValueError("srfcomb2: YUV planar input required")
+        raise ValueError("SRFComb2: YUV planar input required")
     if clip.format.num_planes == 1:
-        raise ValueError("srfcomb2: greyscale input is not supported")
+        raise ValueError("SRFComb2: greyscale input is not supported")
 
     # ------------------------------------------------------------------
     # Resolve defaults
@@ -536,19 +568,18 @@ def SRFComb2(
         field_based = clip.get_frame(0).props.get('_FieldBased', 0)
         progressive = field_based == 0
     else:
-        field_based = 0 if progressive else 2
+        field_based = 0 if progressive else 2  # assume TFF if forced interlaced
 
     dedot     = progressive if dedot     is None else dedot
     derainbow = progressive if derainbow is None else derainbow
     thsad     = (700 if progressive else 500) if thsad  is None else thsad
     thsadc    = (700 if progressive else 500) if thsadc is None else thsadc
-
     if pal is None:
         fps = clip.fps_num / clip.fps_den if clip.fps_den else 0
         pal = abs(fps - 25.0) < 0.1
 
-    ss     = clip.format.subsampling_w
-    is_sub = ss > 0  # True for 4:2:0 / 4:2:2
+    ss     = clip.format.subsampling_w  # 0 = 4:4:4, 1 = 4:2:2 / 4:2:0
+    is_sub = ss > 0                     # True for 420 / 422
 
     # ------------------------------------------------------------------
     # Field separation (interlaced path)
@@ -560,11 +591,12 @@ def SRFComb2(
     # Luma edge / comb mask
     # ------------------------------------------------------------------
     e_h = core.std.Convolution(oY, [0, 0, 0, -16, 0, 16, 0, 0, 0], saturate=False)
-    e_v = core.std.Convolution(oY, [0,  0,  0,   0, 2, -2, 0, 0, 0], saturate=False)
+    e_v = core.std.Convolution(oY, [0,  0,  0,  0, 2, -2, 0, 0, 0], saturate=False)
 
     luma_edge = _mt_logic(e_h, e_v, "min")
     luma_mask = _mt_logic(luma_edge, core.std.Invert(oY), "min")
 
+    # AviSynth uses horizontal-only expand for PAL; vertical+horizontal for NTSC
     if pal:
         luma_mask = _mt_expand(luma_mask, 2)
     else:
@@ -573,10 +605,18 @@ def SRFComb2(
 
     # ------------------------------------------------------------------
     # UV difference mask (ouvm) — chroma activity map
+    #
+    # AviSynth: MakeDiff(Tweak(sat=0), Tweak(sat=PAL?20:10))
+    # The diff between a fully desaturated clip and a heavily boosted one
+    # is zero where chroma is already neutral and grows with colour content.
+    # The U and V channels of that diff are then mapped through:
+    #   x == range_half → 0,  else abs(range_half - x) * 2.28
+    # and the per-pixel max of U and V is used as the activity signal.
     # ------------------------------------------------------------------
     mid = 1 << (clip.format.bits_per_sample - 1)
 
     if _color_tweak is not None:
+        # Accurate path — uses color.Tweak
         tweak_zero  = _color_tweak(fields, sat=0)
         tweak_boost = _color_tweak(fields, sat=20 if pal else 10)
         chroma_diff = core.std.MakeDiff(tweak_zero, tweak_boost)
@@ -588,12 +628,14 @@ def SRFComb2(
         ouvm_v      = core.std.SelectEvery(uv_mapped, 2, [1])
         ouvm_sub    = _mt_logic(ouvm_u, ouvm_v, "max")
     else:
+        # Fallback — raw plane deviation from mid-grey
         u_plane  = core.std.ShufflePlanes(fields, 1, vs.GRAY)
         v_plane  = core.std.ShufflePlanes(fields, 2, vs.GRAY)
         u_dev    = _expr([u_plane], f"x {mid} - abs 2.28 *")
         v_dev    = _expr([v_plane], f"x {mid} - abs 2.28 *")
         ouvm_sub = _mt_logic(u_dev, v_dev, "max")
 
+    # Resize ouvm to luma dimensions for mask combination
     ouvm      = _scale_chroma_mask(ouvm_sub, oY.width, oY.height, is_sub)
     luma_mask = _mt_logic(luma_mask, _mt_binarize(ouvm, 30), "min")
 
@@ -614,23 +656,46 @@ def SRFComb2(
         detail = core.std.MakeDiff(oY, blur)
         cle_y  = core.std.MergeDiff(cle_y, _expr([detail], "x 0.25 *"))
     else:
+        # ABlur(blur=2) ≈ horizontal-only blur
         cle_y = core.std.Merge(cle_y, core.warp.ABlur(oY, blur=2))
 
-    cle_y_woven = cle_y if progressive else _weave_fields(cle_y)
-    cle_y_woven = _checkmate(cle_y_woven)
-    cle_y_woven = core.zsmooth.TemporalRepair(cle_y_woven, cle_y_woven, mode=3)
+    # ------------------------------------------------------------------
+    # Luma repair chain
+    # ------------------------------------------------------------------
+    if progressive:
+        # Progressive: no field separation involved, operate directly on frames.
+        cle_y_rep = cle_y
 
-    if not progressive:
-        cle_y_sep   = core.std.SeparateFields(cle_y_woven)
-        cle_y_woven = core.zsmooth.Repair(cle_y_sep, cle_y, mode=3)
-        cle_y_woven = _weave_fields(cle_y_woven)
+        # Checkmate: suppress residual interlacing artefacts if vszip present
+        cle_y_rep = core.vszip.Checkmate(cle_y_rep)
+
+        # TemporalRepair: constrain temporally; reference is original unfiltered luma
+        cle_y_rep = core.zsmooth.TemporalRepair(cle_y_rep, oY, mode=3)
+
+        # Repair: constrain spatially to original luma
+        cle_y_rep = _repair(cle_y_rep, oY, mode=3)
+
+        cle_y_woven = cle_y_rep  # no weave needed for progressive
     else:
-        cle_y_woven = core.zsmooth.Repair(cle_y_woven, oY, mode=3)
+        # Interlaced: weave field pairs into frames for temporal operations,
+        # then re-separate for field-level spatial repair, then re-weave.
+        cle_y_woven = _weave_fields(cle_y)
+        cle_y_woven = core.vszip.Checkmate(cle_y_woven)
 
+        # TemporalRepair on woven frames; reference is woven original luma
+        oY_woven    = _weave_fields(oY)
+        cle_y_woven = core.zsmooth.TemporalRepair(cle_y_woven, oY_woven, mode=3)
+
+        # Repair at field level: re-separate so dimensions match cle_y, then re-weave
+        cle_y_sep   = core.std.SeparateFields(cle_y_woven)
+        cle_y_woven = _repair(cle_y_sep, cle_y, mode=3)
+        cle_y_woven = _weave_fields(cle_y_woven)
+
+    # Replace luma in fields clip with repaired luma, then apply luma mask
     luma_cleaned_yuv = core.std.ShufflePlanes(
         [cle_y_woven, fields, fields], [0, 1, 2], vs.YUV
     )
-    merged = core.std.MaskedMerge(fields, luma_cleaned_yuv, luma_mask)
+    luma_merged = core.std.MaskedMerge(fields, luma_cleaned_yuv, luma_mask)
 
     # ------------------------------------------------------------------
     # Chroma comb mask
@@ -644,17 +709,17 @@ def SRFComb2(
     chm = _mt_inflate(chm)
 
     # ------------------------------------------------------------------
-    # Chroma denoise (FFT3D)
+    # Chroma denoise (FFT3D, sigma2/3/4 only → chroma planes)
     # ------------------------------------------------------------------
     chroma_clean = _fft3d(
-        merged,
+        luma_merged,
         sigma =0,
         sigma2=11 if progressive else 22,
         sigma3= 5 if progressive else 11,
         sigma4=22 if progressive else 44,
         bt=1,
     )
-    spati_comb_c = core.std.MaskedMerge(merged, chroma_clean, chm)
+    spati_comb_c = core.std.MaskedMerge(luma_merged, chroma_clean, chm)
 
     # ------------------------------------------------------------------
     # UV bilateral smoothing
@@ -663,22 +728,20 @@ def SRFComb2(
     v_in = core.std.ShufflePlanes(spati_comb_c, 2, vs.GRAY)
     uv_interleaved = core.std.Interleave([u_in, v_in])
     uv_filtered    = _bilateral(uv_interleaved, sigmaS=1.4, sigmaR=0.028)
-    u_filtered = core.std.SelectEvery(uv_filtered, 2, [0])
-    v_filtered = core.std.SelectEvery(uv_filtered, 2, [1])
-    spati_comb_c = core.std.ShufflePlanes(
+    u_filtered     = core.std.SelectEvery(uv_filtered, 2, [0])
+    v_filtered     = core.std.SelectEvery(uv_filtered, 2, [1])
+    spati_comb_c   = core.std.ShufflePlanes(
         [spati_comb_c, u_filtered, v_filtered], [0, 0, 0], vs.YUV
     )
 
     # ------------------------------------------------------------------
     # aWarpSharp2 chroma sharpening
     # ------------------------------------------------------------------
-    
-    
     if hasattr(core, 'warp'):
-      spati_comb_c = core.warp.AWarpSharp2(spati_comb_c, depth=[16, 8, 8], chroma=1, planes=[1, 2])
+        spati_comb_c = core.warp.AWarpSharp2(spati_comb_c, depth=[16, 8, 8], chroma=1, planes=[1, 2])
     else:
-      import sharpen
-      spati_comb_c = sharpen.AWarpSharp2(spati_comb_c, depth=[16, 8, 8], chroma=1, planes=[1, 2])
+        import sharpen
+        spati_comb_c = sharpen.AWarpSharp2(spati_comb_c, depth=[16, 8, 8], chroma=1, planes=[1, 2])
 
     # Combined luma+chroma combmask for the final merge
     chm_uv_resized = _scale_chroma_mask(chm, ouvm_sub.width, ouvm_sub.height, is_sub)
@@ -687,7 +750,7 @@ def SRFComb2(
     )
 
     # ------------------------------------------------------------------
-    # Motion compensation
+    # Motion compensation — separate search super and degrain super
     # ------------------------------------------------------------------
     if progressive:
         super_search  = core.mv.Super(spati_comb_c, rfilter=4)
@@ -719,49 +782,51 @@ def SRFComb2(
         degrain = core.std.Interleave([even_d, odd_d])
 
     # ------------------------------------------------------------------
-    # Motion mask (only when dedot or derainbow is active)
+    # Motion mask + selective degrain merge
     # ------------------------------------------------------------------
     if dedot or derainbow:
         if progressive:
-            mmask_bv = core.mv.Mask(fields, bv, kind=0, ml=1, ysc=255)
-            mmask_fv = core.mv.Mask(fields, fv, kind=0, ml=1, ysc=255)
+            mmask_bv    = core.mv.Mask(fields, bv, kind=0, ml=1, ysc=255)
+            mmask_fv    = core.mv.Mask(fields, fv, kind=0, ml=1, ysc=255)
+            motion_mask = _mt_logic(mmask_bv, mmask_fv, "max")
         else:
-            mmask_bv_e = core.mv.Mask(even_o, bv_e, kind=0, ml=1, ysc=255)
-            mmask_fv_e = core.mv.Mask(even_o, fv_e, kind=0, ml=1, ysc=255)
-            mmask_bv_o = core.mv.Mask(odd_o,  bv_o, kind=0, ml=1, ysc=255)
-            mmask_fv_o = core.mv.Mask(odd_o,  fv_o, kind=0, ml=1, ysc=255)
-            mmask_e    = _mt_logic(mmask_bv_e, mmask_fv_e, "max")
-            mmask_o    = _mt_logic(mmask_bv_o, mmask_fv_o, "max")
-            mmask_bv   = core.std.Interleave([mmask_e, mmask_o])
-            mmask_fv   = mmask_bv
+            mmask_bv_e  = core.mv.Mask(even_o, bv_e, kind=0, ml=1, ysc=255)
+            mmask_fv_e  = core.mv.Mask(even_o, fv_e, kind=0, ml=1, ysc=255)
+            mmask_bv_o  = core.mv.Mask(odd_o,  bv_o, kind=0, ml=1, ysc=255)
+            mmask_fv_o  = core.mv.Mask(odd_o,  fv_o, kind=0, ml=1, ysc=255)
+            mmask_e     = _mt_logic(mmask_bv_e, mmask_fv_e, "max")
+            mmask_o     = _mt_logic(mmask_bv_o, mmask_fv_o, "max")
+            motion_mask = core.std.Interleave([mmask_e, mmask_o])
 
-        motion_mask = _mt_logic(mmask_bv, mmask_fv, "max") if progressive else mmask_bv
-
+        # TemporalSoften + expand to smooth and widen the motion mask
         ts          = _temporal_soften(motion_mask, 2, 255, 255, 0, 2)
         motion_mask = _mt_logic(motion_mask, _mt_expand(ts, 1), "max")
         motion_mask = _mt_expand(motion_mask, 1)
         motion_mask = _mt_expand_horizontal(motion_mask)
         motion_mask = _mt_inflate(motion_mask)
 
+        # ContraSharpening on the spatial clean to recover detail after degrain
         if contrasharp and _contra_sharpening is not None:
             sharp = _contra_sharpening(spati_comb_c, degrain)
         else:
             sharp = spati_comb_c
 
-        merged = core.std.MaskedMerge(
-            degrain, sharp, motion_mask,
-            planes=(
-                [0]      if dedot     and not derainbow else
-                [1, 2]   if derainbow and not dedot     else
-                [0, 1, 2]
-            ),
-        )
+        # MaskedMerge(A, B, mask): A where mask=0, B where mask=255.
+        # motion_mask is bright where motion exists.
+        # We want degrain (motion-compensated) where there IS motion,
+        # and sharp (spatial clean) where there is NOT — so degrain is B.
+        if dedot and derainbow:
+            mc_merged = core.std.MaskedMerge(sharp, degrain, motion_mask, planes=[0, 1, 2])
+        elif dedot:
+            mc_merged = core.std.MaskedMerge(sharp, degrain, motion_mask, planes=[0])
+        else:  # derainbow only
+            mc_merged = core.std.MaskedMerge(sharp, degrain, motion_mask, planes=[1, 2])
     else:
-        merged = degrain
+        mc_merged = degrain
 
     # ------------------------------------------------------------------
     # Final merge: blend result back over original via full combmask
     # ------------------------------------------------------------------
-    final = core.std.MaskedMerge(fields, merged, full_comb_mask)
+    final = core.std.MaskedMerge(fields, mc_merged, full_comb_mask)
 
     return final if progressive else _weave_fields(final)
