@@ -478,7 +478,7 @@ def SpotLess(
     truemotion: bool = True,
     rfilter: int = None,
     blur: bool = False,
-    smoother: str = 'tmedian',
+    smoother: str = 'zsmooth',
     ref: vs.VideoNode = None,
     mStart: bool = False,
     mEnd: bool = False,
@@ -625,7 +625,7 @@ def SpotDelta(
     asearch: Optional[int] = None,
     truemotion: bool = False,
     blur: bool = False,
-    smoother: str = 'tmedian',
+    smoother: str = 'zsmooth',
 
     # SpotLess – advanced motion analysis
     thsad2: Optional[int] = None,      # SAD threshold at radius > 1 (None = same as thsad)

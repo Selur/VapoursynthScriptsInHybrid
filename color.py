@@ -215,7 +215,7 @@ def SmoothLevels(
         raise vs.Error('SmoothLevels: RGB format is not supported')
 
     core = vs.core
-    EXPR = core.akarin.Expr if hasattr(core, 'akarin') else core.std.Expr
+    EXPR = core.llvmexpr.Expr if hasattr(core, 'llvmexpr') else core.akarin.Expr if hasattr(core, 'akarin') else core.cranexpr.Expr if hasattr(core, 'cranexpr') else core.std.Expr
     
     # Precompute format-dependent values
     bits = input.format.bits_per_sample
@@ -314,7 +314,7 @@ def SmoothLevels(
     process = RemoveGrain(diff)
     
     if useDB:
-        deband_func = core.neo_f3kdb.Deband if hasattr(core, 'neo_f3kdb') else core.f3kdb.Deband
+        deband_func =  core.vszip.Deband if hasattr(core, 'vszip') else core.neo_f3kdb.Deband if hasattr(core, 'neo_f3kdb') else core.f3kdb.Deband
         deband_expr = f'x {neutral[1]} - {Mfactor} / {neutral[1]} +'
         process = deband_func(EXPR(process, expr=[deband_expr]), grainy=0, grainc=0, output_depth=bits)
         smth = core.std.MakeDiff(limitI, process)
