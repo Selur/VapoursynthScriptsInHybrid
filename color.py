@@ -517,7 +517,10 @@ def AutoGain(
 
     # Plane statistics + scene detection
     stats = core.std.PlaneStats(Y)
-    sc    = core.misc.SCDetect(Y, threshold=sc_threshold)
+    if hasattr(core,'misc'):
+      sc    = core.misc.SCDetect(Y, threshold=sc_threshold)
+    else:
+      sc    = misc.SCDetect(Y, threshold=sc_threshold)
     prop_src = core.std.CopyFrameProps(sc, stats)
 
     # Determine peak value
@@ -615,7 +618,10 @@ def AutoGainZ(
     )
 
     # Scene detection
-    sc = core.misc.SCDetect(Y, threshold=sc_threshold)
+    if hasattr(core,'misc'):
+      sc    = core.misc.SCDetect(Y, threshold=sc_threshold)
+    else:
+      sc    = misc.SCDetect(Y, threshold=sc_threshold)
 
     # Combine stats + scene detection properties
     prop_src = core.std.CopyFrameProps(sc, stats)

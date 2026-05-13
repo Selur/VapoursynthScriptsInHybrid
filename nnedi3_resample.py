@@ -665,7 +665,7 @@ def SSIM_downsample(clip: vs.VideoNode, w: int, h: int, smooth: Union[float, Uni
     elif isinstance(smooth, float):
         if hasattr(core, 'tcanny'):
             Filter = functools.partial(core.tcanny.TCanny, sigma=smooth, mode=-1)
-        else if 'GaussBlur' in globals():
+        elif 'GaussBlur' in globals():
             Filter = functools.partial(GaussBlur, sigma=smooth)
         else:
             radius = max(1, round(smooth * 1.5))

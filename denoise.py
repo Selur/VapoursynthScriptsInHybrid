@@ -743,7 +743,7 @@ def mClean(clip, thSAD=400, chroma=True, sharp=10, rn=14, deband=0, depth=0, str
           
           if hasattr(core,'tcanny'):
             clsharp = core.std.MakeDiff(clean, clean2.tcanny.TCanny(sigma=(sharp-46)/4, mode=-1))
-          else if 'GaussBlur' in globals():
+          elif 'GaussBlur' in globals():
             clsharp = core.std.MakeDiff(clean, GaussBlur(clean2, sigma=(sharp-46)/4))
           else:
             radius = max(1, round(((sharp-46)/4) * 1.5))

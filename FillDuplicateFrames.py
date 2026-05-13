@@ -36,7 +36,13 @@ class FillDuplicateFrames:
       self.mode = mode
       self.frames = frames
       if sceneThr > 0 and method.lower() == 'rife':
-        clip = core.misc.SCDetect(clip=clip,threshold=sceneThr)
+        if hasattr(core,'misc'):
+          clip = core.misc.SCDetect(clip=clip,threshold=sceneThr)
+        else:
+          import misc
+          clip = misc.SCDetect(clip=clip,threshold=sceneThresh)
+        
+        
       if method == 'Replace' and not frames:
         raise ValueError(f'FillDuplicateFrames: "frames" needs to be set when using \'{self.method}\'!')
 

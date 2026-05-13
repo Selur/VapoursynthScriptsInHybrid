@@ -217,7 +217,41 @@ def ShiftLinesHorizontally(clip: vs.VideoNode, shift: int, ymin: int, ymax: int)
         parts.append(clip.std.CropAbs(width=width, height=height-ymax-1, left=0, top=ymax+1))
     
     return core.std.StackVertical(parts)
-    
+
+def SCDetect(
+    clip,
+    threshold=0.1,
+    plane=0
+):
+    """
+    Replacement for core.misc.SCDetect using std.PlaneStats.
+
+    Args:
+        clip        : Input clip
+        threshold   : Scene change threshold
+        plane       : Plane to analyze (default: 0 / luma)
+
+    Returns:
+        VapourSynth clip with:
+            _SceneChangePrev
+            _SceneChangeNext
+        frame properties set.
+    """
+
+    stats = core.std.PlaneStats(clip, plane=plane)
+
+    def _set_scenechange(n, f):
+        fout = f.copy()
+
+        diff = float(f.props.get("PlaneStatsDiff", 0.0))
+        scenechange = int(diff > threshold)
+
+        fout.props["_SceneChangePrev"] = scenechange
+        fout.props["_SceneChangeNext"] = scenechange
+
+        return fout
+
+    return core.std.ModifyFrame(stats, stats, _set_scenechange)    
 
 def scene_aware(
     clip: vs.VideoNode,
@@ -241,7 +275,10 @@ def scene_aware(
     elif clip.format.sample_type == vs.FLOAT and clip.format.bits_per_sample != 32:
         sc_src = core.resize.Bicubic(clip, format=vs.YUV420P8)
 
-    sc = core.misc.SCDetect(sc_src, threshold=sc_threshold)
+    if hasattr(code,'misc'):
+      sc = core.misc.SCDetect(sc_src, threshold=sc_threshold)
+    else: 
+      sc = SCDetect(sc_src, threshold=sc_threshold)
     sc_frames = [i for i in range(clip.num_frames) if sc.get_frame(i).props._SceneChangePrev == 1]
 
     # --- Remove very short segments

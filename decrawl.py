@@ -159,8 +159,11 @@ def SCDetect(clip: vs.VideoNode, threshold: float = 0.1) -> vs.VideoNode:
     sc = clip
     if clip.format.color_family == vs.RGB:
         sc = clip.resize.Point(format=vs.GRAY8, matrix_s='709')
-
-    sc = sc.misc.SCDetect(threshold=threshold)
+    if hasattr(core,'misc'):
+        sc = sc.misc.SCDetect(threshold=threshold)
+    else:
+        import misc
+        sc = misc.SCDetect(sc,threshold=threshold)
     if clip.format.color_family == vs.RGB:
         sc = clip.std.ModifyFrame(clips=[clip, sc], selector=copy_property)
 

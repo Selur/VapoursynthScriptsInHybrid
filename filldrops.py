@@ -89,8 +89,12 @@ def FillSingleDrops(clip, thresh=0.3, method="mv", rifeModel=22, rifeTTA=False, 
   if clip.format.color_family != vs.YUV:
     raise ValueError('FillSingleDrops requires YUV input')
     
-  if sceneThresh > 0 and (method == "rife" or method == "gmfssfortuna"):
-    clip = core.misc.SCDetect(clip=clip,threshold=sceneThresh)
+  if sceneThresh != 0 and (method == "rife" or method == "gmfssfortuna"):
+    if hasattr(core,'misc'):
+      clip = core.misc.SCDetect(clip=clip,threshold=sceneThresh)
+    else:
+      import misc
+      clip = misc.SCDetect(clip=clip,threshold=sceneThresh)
     
   def selectFunc(n, f):
     if f.props['PlaneStatsDiff'] > thresh or n == 0 or n >= clip.num_frames -1 :
@@ -127,7 +131,11 @@ def InsertSingle(clip, afterEveryX=2, method="mv", rifeModel=0, rifeTTA=False, r
     raise ValueError('InsertSingle requires YUV input')  
   
   if sceneThresh > 0 and (method == "rife" or method == "gmfssfortuna"):
-    clip = core.misc.SCDetect(clip=clip,threshold=sceneThresh)
+    if hasattr(core,'misc'):
+      clip = core.misc.SCDetect(clip=clip,threshold=sceneThresh)
+    else:
+      import misc
+      clip = misc.SCDetect(clip=clip,threshold=sceneThresh)
        
   def selectFunc(n):
     if n == 0 or n%afterEveryX != 0:
@@ -158,7 +166,11 @@ def ReplaceSingle(clip, frameList, method="mv", rifeModel=0, rifeTTA=False, rife
     if clip.format.color_family != vs.YUV:
        raise ValueError('ReplaceSingle requires YUV input')
     if sceneThresh != 0 and (method == "rife" or method == "gmfssfortuna"):
-       clip = core.misc.SCDetect(clip=clip, threshold=sceneThresh)
+       if hasattr(core,'misc'):
+         clip = core.misc.SCDetect(clip=clip,threshold=sceneThresh)
+       else:
+         import misc
+         clip = misc.SCDetect(clip=clip,threshold=sceneThresh)
 
     def selectFunc(n):
       if n in frameList:
