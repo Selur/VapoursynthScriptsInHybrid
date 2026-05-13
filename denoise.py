@@ -503,7 +503,9 @@ def MCTemporalDenoise(i, radius=None, pfMode=3, sigma=None, twopass=None, useTTm
             # SAD_m = core.std.Interleave([SAD_f6m, SAD_f5m, SAD_f4m, SAD_f3m, SAD_f2m, SAD_f1m, b, SAD_b1m, SAD_b2m, SAD_b3m, SAD_b4m, SAD_b5m, SAD_b6m])
 
         if hasattr(core,'zsmooth'):
-          sm = c.zsmooth.TTempSmooth(maxr=radius, thresh=[255], mdiff=[1], strength=radius + 1, scthresh=99.9, fp=False, planes=planes)
+          import misc
+          c = misc.SCDetect(c, threshold=99.9)
+          sm = core.zsmooth.TTempSmooth(c, maxr=radius, thresh=[255], mdiff=[1], strength=radius + 1, scthresh=-1, fp=False, planes=planes)
         else:
           sm = c.ttmpsm.TTempSmooth(maxr=radius, thresh=[255], mdiff=[1], strength=radius + 1, scthresh=99.9, fp=False, planes=planes)
         return sm.std.SelectEvery(cycle=radius * 2 + 1, offsets=[radius])
@@ -567,7 +569,9 @@ def MCTemporalDenoise(i, radius=None, pfMode=3, sigma=None, twopass=None, useTTm
         # mF = core.std.Expr([mM, mE], expr=['x y max']).std.Convolution(matrix=[1, 1, 1, 1, 1, 1, 1, 1, 1])
         mF = mE.std.Convolution(matrix=[1, 1, 1, 1, 1, 1, 1, 1, 1])
         if has_zsmooth:
-          TTc = smP.zsmooth.TTempSmooth(maxr=maxr, mdiff=[255], strength=TTstr, planes=planes)
+          import misc
+          smP = misc.SCDetect(smP, threshold=12)
+          TTc = smP.zsmooth.TTempSmooth(maxr=maxr, mdiff=[255], strength=TTstr, scthresh=-1, planes=planes)
         else:
           TTc = smP.ttmpsm.TTempSmooth(maxr=maxr, mdiff=[255], strength=TTstr, planes=planes)
         smP = core.std.MaskedMerge(TTc, smP, mF, planes=planes)
@@ -767,7 +771,15 @@ def mClean(clip, thSAD=400, chroma=True, sharp=10, rn=14, deband=0, depth=0, str
     # Combining result of luma and chroma cleaning
     output = core.std.ShufflePlanes([clean2, filt], [0, 1, 2], vs.YUV)
     output = core.std.Merge(c, output, 0.2+0.04*strength) if strength < 20 else output
-    return core.std.MergeDiff(output, core.std.MakeDiff(output.warp.AWarpSharp2(128, 3, 1, depth2, 1), output.warp.AWarpSharp2(128, 2, 1, depth, 1))) if depth else output
+    if hasattr(core,'warp'):
+       s1 = output.warp.AWarpSharp2(128, 3, 1, depth2, 1)
+       s2 = output.warp.AWarpSharp2(128, 2, 1, depth, 1)
+    else:
+       import sharpen
+       s1 = sharpen.AWarpSharp2(output, 128, 3, 1, depth2, 1)
+       s2 = sharpen.AWarpSharp2(output, 128, 2, 1, depth, 1)
+    return core.std.MergeDiff(output, core.std.MakeDiff(s1, s2)) if depth else output  
+    
 
     
 # port of Avisynth EZdenoise 

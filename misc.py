@@ -218,11 +218,27 @@ def ShiftLinesHorizontally(clip: vs.VideoNode, shift: int, ymin: int, ymax: int)
     
     return core.std.StackVertical(parts)
 
-def SCDetect(
-    clip,
-    threshold=0.1,
-    plane=0
-):
+def SCDetectMisc(clip: vs.VideoNode, threshold: float = 0.1) -> vs.VideoNode:
+    def copy_property(n: int, f: vs.VideoFrame) -> vs.VideoFrame:
+        fout = f[0].copy()
+        fout.props['_SceneChangePrev'] = f[1].props['_SceneChangePrev']
+        fout.props['_SceneChangeNext'] = f[1].props['_SceneChangeNext']
+        return fout
+
+    if not isinstance(clip, vs.VideoNode):
+        raise vs.Error('SCDetect: this is not a clip')
+
+    sc = clip
+    if clip.format.color_family == vs.RGB:
+        sc = clip.resize.Point(format=vs.GRAY8, matrix_s='709')
+    sc = core.misc.SCDetect(sc,threshold=threshold)
+    
+    if clip.format.color_family == vs.RGB:
+        sc = clip.std.ModifyFrame(clips=[clip, sc], selector=copy_property)
+
+    return sc
+
+def SCDetect(clip, threshold=0.1, plane=0):
     """
     Replacement for core.misc.SCDetect using std.PlaneStats.
 
@@ -237,6 +253,11 @@ def SCDetect(
             _SceneChangeNext
         frame properties set.
     """
+    if hasattr(core, 'misc'):
+        if plane == 0:
+            return SCDetectMisc(clip, threshold=threshold)
+
+        return core.misc.SCDetect(clip, threshold=threshold)
 
     stats = core.std.PlaneStats(clip, plane=plane)
 
@@ -251,7 +272,7 @@ def SCDetect(
 
         return fout
 
-    return core.std.ModifyFrame(stats, stats, _set_scenechange)    
+    return core.std.ModifyFrame(stats, stats, _set_scenechange)
 
 def scene_aware(
     clip: vs.VideoNode,
@@ -275,7 +296,7 @@ def scene_aware(
     elif clip.format.sample_type == vs.FLOAT and clip.format.bits_per_sample != 32:
         sc_src = core.resize.Bicubic(clip, format=vs.YUV420P8)
 
-    if hasattr(code,'misc'):
+    if hasattr(core,'misc'):
       sc = core.misc.SCDetect(sc_src, threshold=sc_threshold)
     else: 
       sc = SCDetect(sc_src, threshold=sc_threshold)
@@ -393,3 +414,13 @@ def DelayAudio(audio_clip: vs.AudioNode, delay_ms: float) -> vs.AudioNode:
         return core.std.AudioSplice([silence, audio_clip])
     else: # negative delay → trim start
         return core.std.AudioTrim(audio_clip, first=delay_samples)
+
+def AverageFrames(
+    clip: vs.VideoNode, weights: Union[float, Sequence[float]], scenechange: Optional[float] = None, planes: Optional[Union[int, Sequence[int]]] = None
+) -> vs.VideoNode:
+    if not isinstance(clip, vs.VideoNode):
+        raise vs.Error('AverageFrames: this is not a clip')
+
+    if scenechange:
+        clip = SCDetect(clip, threshold=scenechange)
+    return clip.std.AverageFrames(weights=weights, scenechange=scenechange, planes=planes)

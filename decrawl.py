@@ -106,8 +106,8 @@ def LUTDeCrawl(input, ythresh=10, cthresh=10, maxdiff=50, scnchg=25, usemaxdiff=
     fixed_y = core.std.Merge(average_y, input_y)
 
     output = core.std.ShufflePlanes([core.std.MaskedMerge(input_y, fixed_y, themask), input], planes=[0, 1, 2], colorfamily=input.format.color_family)
-
-    input = SCDetect(input, threshold=scnchg / 255)
+    import misc
+    input = misc.SCDetect(input, threshold=scnchg / 255)
     output = output.std.FrameEval(eval=partial(YDifferenceFromPrevious, clips=[input, output]), prop_src=input)
     output = output.std.FrameEval(eval=partial(YDifferenceToNext, clips=[input, output]), prop_src=input)
 
@@ -145,26 +145,3 @@ def GetPlane(clip, plane=None):
 
     # Process
     return core.std.ShufflePlanes(clip, plane, vs.GRAY)
-    
-def SCDetect(clip: vs.VideoNode, threshold: float = 0.1) -> vs.VideoNode:
-    def copy_property(n: int, f: vs.VideoFrame) -> vs.VideoFrame:
-        fout = f[0].copy()
-        fout.props['_SceneChangePrev'] = f[1].props['_SceneChangePrev']
-        fout.props['_SceneChangeNext'] = f[1].props['_SceneChangeNext']
-        return fout
-
-    if not isinstance(clip, vs.VideoNode):
-        raise vs.Error('SCDetect: this is not a clip')
-
-    sc = clip
-    if clip.format.color_family == vs.RGB:
-        sc = clip.resize.Point(format=vs.GRAY8, matrix_s='709')
-    if hasattr(core,'misc'):
-        sc = sc.misc.SCDetect(threshold=threshold)
-    else:
-        import misc
-        sc = misc.SCDetect(sc,threshold=threshold)
-    if clip.format.color_family == vs.RGB:
-        sc = clip.std.ModifyFrame(clips=[clip, sc], selector=copy_property)
-
-    return sc

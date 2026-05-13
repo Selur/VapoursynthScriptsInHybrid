@@ -1369,10 +1369,15 @@ def QTGMC_Generate2ndFieldNoise(Input: vs.VideoNode, InterleavedClip: vs.VideoNo
     origNoise = Input.std.SeparateFields(tff=TFF)
     noiseMax = origNoise.std.Maximum(planes=planes).std.Maximum(planes=planes, coordinates=[0, 0, 0, 1, 1, 0, 0, 0])
     noiseMin = origNoise.std.Minimum(planes=planes).std.Minimum(planes=planes, coordinates=[0, 0, 0, 1, 1, 0, 0, 0])
+    GRAIN = core.noise.Add if hasattr(core, 'noise') else core.grain.Add
     random = (
         InterleavedClip.std.SeparateFields(tff=TFF)
         .std.BlankClip(color=[neutral] * Input.format.num_planes)
-        .grain.Add(var=1800, uvar=1800 if ChromaNoise else 0)
+    )
+    random = GRAIN(
+        random,
+        var=1800,
+        uvar=1800 if ChromaNoise else 0
     )
     expr = f'x {neutral} - y * {scale_value(256, 8, bits)} / {neutral} +'
     EXPR = core.llvmexpr.VkExpr if hasattr(core, 'llvmexpr') else (core.akarin.Expr if hasattr(core, 'akarin') else core.std.Expr)

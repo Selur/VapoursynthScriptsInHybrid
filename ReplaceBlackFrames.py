@@ -40,11 +40,8 @@ class ReplaceBlackFrames:
       if (method == 'interpolateRIFE') and clip.format.id != vs.RGBS:
         raise ValueError(f'ReplaceBlackFrames: "clip" color format need to be RGBS when RIFE is used!\n{clip.format}')
       if (method == 'interpolateRIFE') and rifeSC != 0:
-        if hasattr(core,'misc'):
-          self.clip = core.misc.SCDetect(clip=clip,threshold=rifeSC)
-        else:
-          import misc
-          self.clip = core.misc.SCDetect(clip=clip,threshold=rifeSC)
+        import misc
+        self.clip = misc.SCDetect(clip=clip,threshold=rifeSC)
       self.clip = core.std.PlaneStats(clip)
 
   def previous(self, n, f):

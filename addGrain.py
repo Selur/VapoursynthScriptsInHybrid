@@ -75,21 +75,28 @@ def GrainFactory3(clp, g1str=7.0, g2str=5.0, g3str=3.0, g1shrp=60, g2shrp=66, g3
     th3 = scale(th3, peak)
     th4 = scale(th4, peak)
 
-    grainlayer1 = clp.std.BlankClip(width=sx1, height=sy1, color=[neutral]).grain.Add(var=g1str, seed=seed)
+    grainlayer1 = clp.std.BlankClip(width=sx1, height=sy1, color=[neutral])
+    GRAIN = core.noise.Add if hasattr(core, 'noise') else core.grain.Add
+    if hasattr(core, 'noise'):
+      grainlayer1 = GRAIN(grainlayer1, var=g1str, seed=seed)
+    else: 
+      grainlayer1 = GRAIN(grainlayer1, var=g1str, seed=seed)
     if g1size != 1 and (sx1 != ox or sy1 != oy):
         if g1size > 1.5:
             grainlayer1 = grainlayer1.resize.Bicubic(sx1a, sy1a, filter_param_a=b1a, filter_param_b=c1a).resize.Bicubic(ox, oy, filter_param_a=b1a, filter_param_b=c1a)
         else:
             grainlayer1 = grainlayer1.resize.Bicubic(ox, oy, filter_param_a=b1, filter_param_b=c1)
 
-    grainlayer2 = clp.std.BlankClip(width=sx2, height=sy2, color=[neutral]).grain.Add(var=g2str, seed=seed)
+    grainlayer2 = clp.std.BlankClip(width=sx2, height=sy2, color=[neutral])
+    grainlayer2 = GRAIN(grainlayer2, var=g2str, seed=seed)
     if g2size != 1 and (sx2 != ox or sy2 != oy):
         if g2size > 1.5:
             grainlayer2 = grainlayer2.resize.Bicubic(sx2a, sy2a, filter_param_a=b2a, filter_param_b=c2a).resize.Bicubic(ox, oy, filter_param_a=b2a, filter_param_b=c2a)
         else:
             grainlayer2 = grainlayer2.resize.Bicubic(ox, oy, filter_param_a=b2, filter_param_b=c2)
 
-    grainlayer3 = clp.std.BlankClip(width=sx3, height=sy3, color=[neutral]).grain.Add(var=g3str, seed=seed)
+    grainlayer3 = clp.std.BlankClip(width=sx3, height=sy3, color=[neutral])
+    grainlayer3 = GRAIN(grainlayer3, var=g3str, seed=seed)
     if g3size != 1 and (sx3 != ox or sy3 != oy):
         if g3size > 1.5:
             grainlayer3 = grainlayer3.resize.Bicubic(sx3a, sy3a, filter_param_a=b3a, filter_param_b=c3a).resize.Bicubic(ox, oy, filter_param_a=b3a, filter_param_b=c3a)
@@ -101,9 +108,10 @@ def GrainFactory3(clp, g1str=7.0, g2str=5.0, g3str=3.0, g1shrp=60, g2shrp=66, g3
     EXPR = core.llvmexpr.Expr if hasattr(core, 'llvmexpr') else core.akarin.Expr if hasattr(core, 'akarin') else core.cranexpr.Expr if hasattr(core, 'cranexpr') else core.std.Expr
     grainlayer = core.std.MaskedMerge(core.std.MaskedMerge(grainlayer1, grainlayer2, EXPR(clp, expr=[expr1])), grainlayer3, EXPR(clp, expr=[expr2]))
     if temp_avg > 0:
-        grainlayer = core.std.Merge(grainlayer, AverageFrames(grainlayer, weights=[1] * 3), weight=[tmpavg])
+        import misc
+        grainlayer = core.std.Merge(grainlayer, misc.AverageFrames(grainlayer, weights=[1] * 3), weight=[tmpavg])
     if ontop_grain > 0:
-        grainlayer = grainlayer.grain.Add(var=ontop_grain, seed=seed)
+        grainlayer = GRAIN(grainlayer, var=ontop_grain, seed=seed)
 
     result = core.std.MakeDiff(clp, grainlayer)
 
@@ -143,37 +151,7 @@ def GetPlane(clip, plane=None):
 
     # Process
     return core.std.ShufflePlanes(clip, plane, vs.GRAY)
-    
-def AverageFrames(
-    clip: vs.VideoNode, weights: Union[float, Sequence[float]], scenechange: Optional[float] = None, planes: Optional[Union[int, Sequence[int]]] = None
-) -> vs.VideoNode:
-    if not isinstance(clip, vs.VideoNode):
-        raise vs.Error('AverageFrames: this is not a clip')
 
-    if scenechange:
-        clip = SCDetect(clip, threshold=scenechange)
-    return clip.std.AverageFrames(weights=weights, scenechange=scenechange, planes=planes)
     
     
-def SCDetect(clip: vs.VideoNode, threshold: float = 0.1) -> vs.VideoNode:
-    def copy_property(n: int, f: vs.VideoFrame) -> vs.VideoFrame:
-        fout = f[0].copy()
-        fout.props['_SceneChangePrev'] = f[1].props['_SceneChangePrev']
-        fout.props['_SceneChangeNext'] = f[1].props['_SceneChangeNext']
-        return fout
 
-    if not isinstance(clip, vs.VideoNode):
-        raise vs.Error('SCDetect: this is not a clip')
-
-    sc = clip
-    if clip.format.color_family == vs.RGB:
-        sc = clip.resize.Point(format=vs.GRAY8, matrix_s='709')
-    if hasattr(core,'misc'):
-      sc = sc.misc.SCDetect(threshold=threshold)
-    else:
-      import misc
-      sc = misc.SCDetect(sc,threshold=threshold)
-    if clip.format.color_family == vs.RGB:
-        sc = clip.std.ModifyFrame(clips=[clip, sc], selector=copy_property)
-
-    return sc
