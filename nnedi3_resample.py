@@ -7,6 +7,11 @@ from typing import Union, Optional, Callable, Dict, Any
 
 __version__ = '2'
 
+try:
+    from gaussblur import GaussBlur
+except ImportError:
+    GaussBlur = None
+
 
 def nnedi3_resample(input, target_width=None, target_height=None, src_left=None, src_top=None, src_width=None, src_height=None, csp=None, mats=None, matd=None, cplaces=None, cplaced=None, fulls=None, fulld=None, curves=None, curved=None, sigmoid=None, scale_thr=None, nsize=None, nns=None, qual=None, etype=None, pscrn=None, opt=None, int16_prescreener=None, int16_predictor=None, exp=None, kernel=None, invks=False, taps=None, invkstaps=3, a1=None, a2=None, chromak_up=None, chromak_up_taps=None, chromak_up_a1=None, chromak_up_a2=None, chromak_down=None, chromak_down_invks=False, chromak_down_invkstaps=3, chromak_down_taps=None, chromak_down_a1=None, chromak_down_a2=None, mode=None, device=None):
     funcName = 'nnedi3_resample'
@@ -660,6 +665,8 @@ def SSIM_downsample(clip: vs.VideoNode, w: int, h: int, smooth: Union[float, Uni
     elif isinstance(smooth, float):
         if hasattr(core, 'tcanny'):
             Filter = functools.partial(core.tcanny.TCanny, sigma=smooth, mode=-1)
+        else if 'GaussBlur' in globals():
+            Filter = functools.partial(GaussBlur, sigma=smooth)
         else:
             radius = max(1, round(smooth * 1.5))
             Filter = functools.partial(_boxblur_fn(), hradius=radius, hpasses=3, vradius=radius, vpasses=3)

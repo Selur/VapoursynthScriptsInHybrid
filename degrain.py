@@ -8,6 +8,10 @@ from typing import Sequence, Union, Optional
 
 from vsutil import scale_value
 
+try:
+    from gaussblur import GaussBlur
+except ImportError:
+    GaussBlur = None
 
 def _boxblur_fn():
     """Pick the best available BoxBlur."""
@@ -667,8 +671,10 @@ def TemporalDegrain2(clip, degrainTR=1, degrainPlane=4, grainLevel=2, grainLevel
     elif SrchClipPP > 1:
         if hasattr(core,'tcanny'):
           spatialBlur = core.tcanny.TCanny(clip, sigma=2, mode=-1, planes=CMplanes)
+        elif 'GaussBlur' in globals():
+          spatialBlur = GaussBlur(clip, sigma=2, planes=CMplanes)
         else:
-          spatialBlur = _boxblur_fn(clip, planes=CMplanes, hradius=2, hpasses=3, vradius=2, vpasses=3)
+          spatialBlur = _boxblur_fn()(clip, planes=CMplanes, hradius=2, hpasses=3, vradius=2, vpasses=3)
         spatialBlur = core.std.Merge(spatialBlur, clip, [0.1] if ChromaMotion or isGRAY else [0.1, 0])
     else:
         spatialBlur = clip
@@ -1192,6 +1198,8 @@ def _sharpen(clip, strength, planes):
     core = vs.core
     if hasattr(core,'tcanny'):
       blur = core.tcanny.TCanny(clip, sigma=strength, mode=-1, planes=planes)
+    elif 'GaussBlur' in globals():
+      blur = GaussBlur(clip, sigma=2, planes=planes)
     else:
       radius = max(1, round(strength * 1.5))
       blur = _boxblur_fn()(clip, planes=planes, hradius=radius, hpasses=3, vradius=radius, vpasses=3)
@@ -1245,6 +1253,8 @@ def mcdegrainsharp(clip, frames=2, bblur=0.3, csharp=0.3, bsrch=True, thsad=400,
     
     if hasattr(core,'tcanny'):
       c2 = core.tcanny.TCanny(clip, sigma=bblur, mode=-1, planes=planes)
+    elif 'GaussBlur' in globals():
+      c2 = GaussBlur(clip, sigma=bblur, planes=planes)
     else:
       radius = max(1, round(bblur * 1.5))
       c2 = _boxblur_fn()(clip, planes=planes, hradius=radius, hpasses=3, vradius=radius, vpasses=3)

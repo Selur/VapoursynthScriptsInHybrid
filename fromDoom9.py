@@ -2,6 +2,11 @@ from vapoursynth import core
 import vapoursynth as vs
 import math
 
+try:
+    from gaussblur import GaussBlur
+except ImportError:
+    GaussBlur = None
+
 def _boxblur_fn():
     """Pick the best available BoxBlur."""
     if hasattr(core, 'vszip'): return core.vszip.BoxBlur
@@ -364,6 +369,8 @@ def ContrastMask(clip, gblur=20.0, enhance=10.0):
     # Apply Gaussian blur
     if hasattr(core,'tcanny'):
       v2 = core.tcanny.TCanny(v2, sigma=50, sigma_v=50+gblur, mode=-1)
+    elif 'GaussBlur' in globals():
+      v2 = GaussBlur(v2, sigma=50, sigma_v=50+gblur)
     else:
       radius_h = max(1, round(50 * 1.5))
       radius_v = max(1, round((50 + gblur) * 1.5))
@@ -412,9 +419,8 @@ def HaloBuster(input: vs.VideoNode, a: int = 32, h: float = 6.4, thr: float = 1.
         if hasattr(core, 'edgemasks'):
             mask = core.edgemasks.Sobel(blurred)
         else:
-            blurred8 = core.resize.Point(blurred, format=vs.GRAY8)
-            mask = core.std.Sobel(blurred8)
-            mask = core.resize.Point(mask, format=gray_format)
+            mask = core.std.Sobel(blurred, planes=0)
+
     
     max_pixel_value = (1 << gray.format.bits_per_sample) - 1
     mask = core.std.Lut(mask, function=lambda x: int(min(max((x / max_pixel_value - 0.24) * 3.2, 0.0), 1.0) * max_pixel_value))

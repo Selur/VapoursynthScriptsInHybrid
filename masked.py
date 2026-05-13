@@ -2,6 +2,11 @@ import vapoursynth as vs
 from typing import Union, List, Optional, Tuple
 core = vs.core
 
+try:
+    from gaussblur import GaussBlur
+except ImportError:
+    GaussBlur = None
+
 # collection of Mask filters.
 
 # Use retinex to greatly improve the accuracy of the edge detection in dark scenes.
@@ -15,7 +20,9 @@ def retinex_edgemask(src: vs.VideoNode, sigma: int=1, draft: bool=False) -> vs.V
         ret = EXPR(luma, 'x 65535 / sqrt 65535 *')
     else:
         ret = core.retinex.MSRCP(luma, sigma=[50, 200, 350], upper_thr=0.005)
-    mask = EXPR([kirsch(luma), ret.tcanny.TCanny(mode=1, sigma=sigma).std.Minimum(coordinates=[1, 0, 1, 0, 0, 1, 0, 1])], 'x y +')
+    
+    if hasattr(core,'tcanny'):
+      mask = EXPR([kirsch(luma), ret.tcanny.TCanny(mode=1, sigma=sigma).std.Minimum(coordinates=[1, 0, 1, 0, 0, 1, 0, 1])], 'x y +')
     return mask
 
 
@@ -120,6 +127,7 @@ def dehalo_mask(src: vs.VideoNode, expand: float = 0.5, iterations: int = 2, brz
     vEdge = EXPR([luma, luma.std.Maximum().std.Maximum()], [f'y x - {shift} - 128 *'])
     if hasattr(core,'tcanny'):
       mask1 = EXPR(vEdge.tcanny.TCanny(sigma=sqrt(expand*2), mode=-1), ['x 16 *'])
+      
     else:
       radius = max(1, round(math.sqrt(expand * 2) * 1.5))
       mask1 = EXPR(_boxblur_fn()(vEdge, hradius=radius, hpasses=3, vradius=radius, vpasses=3), ['x 16 *'])
