@@ -218,61 +218,59 @@ def ShiftLinesHorizontally(clip: vs.VideoNode, shift: int, ymin: int, ymax: int)
     
     return core.std.StackVertical(parts)
 
-def SCDetectMisc(clip: vs.VideoNode, threshold: float = 0.1) -> vs.VideoNode:
-    def copy_property(n: int, f: vs.VideoFrame) -> vs.VideoFrame:
-        fout = f[0].copy()
-        fout.props['_SceneChangePrev'] = f[1].props['_SceneChangePrev']
-        fout.props['_SceneChangeNext'] = f[1].props['_SceneChangeNext']
-        return fout
-
-    if not isinstance(clip, vs.VideoNode):
-        raise vs.Error('SCDetect: this is not a clip')
-
-    sc = clip
-    if clip.format.color_family == vs.RGB:
-        sc = clip.resize.Point(format=vs.GRAY8, matrix_s='709')
-    sc = core.misc.SCDetect(sc,threshold=threshold)
-    
-    if clip.format.color_family == vs.RGB:
-        sc = clip.std.ModifyFrame(clips=[clip, sc], selector=copy_property)
-
-    return sc
-
-def SCDetect(clip, threshold=0.1, plane=0):
+def SCDetect(clip: vs.VideoNode, threshold: float = 0.1, plane: int = 0) -> vs.VideoNode:
     """
-    Replacement for core.misc.SCDetect using std.PlaneStats.
+    Scene change detection with _SceneChangePrev/_SceneChangeNext frame properties.
+    Uses core.misc.SCDetect if available (plane=0 only), otherwise falls back to
+    a std.PlaneStats-based reimplementation.
 
     Args:
-        clip        : Input clip
-        threshold   : Scene change threshold
-        plane       : Plane to analyze (default: 0 / luma)
+        clip      : Input clip
+        threshold : Scene change threshold (default: 0.1, must be 0.0–1.0)
+        plane     : Plane to analyze; only honoured in fallback path —
+                    misc.SCDetect always uses plane 0
 
     Returns:
-        VapourSynth clip with:
-            _SceneChangePrev
-            _SceneChangeNext
-        frame properties set.
+        Clip with _SceneChangePrev and _SceneChangeNext frame properties set.
     """
-    if hasattr(core, 'misc'):
-        if plane == 0:
-            return SCDetectMisc(clip, threshold=threshold)
+    if not isinstance(clip, vs.VideoNode):
+        raise vs.Error('SCDetect: this is not a clip')
+    if not (0.0 <= threshold <= 1.0):
+        raise vs.Error('SCDetect: threshold must be between 0.0 and 1.0')
+    if clip.num_frames < 2:
+        raise vs.Error('SCDetect: clip must have more than one frame')
+
+    if hasattr(core, 'misc') and plane == 0:
+        if clip.format.color_family == vs.RGB:
+            sc = clip.resize.Point(format=vs.GRAY8, matrix_s='709')
+            sc = core.misc.SCDetect(sc, threshold=threshold)
+
+            def _copy_props(n: int, f: list[vs.VideoFrame]) -> vs.VideoFrame:
+                fout = f[0].copy()
+                fout.props['_SceneChangePrev'] = f[1].props['_SceneChangePrev']
+                fout.props['_SceneChangeNext'] = f[1].props['_SceneChangeNext']
+                return fout
+
+            return clip.std.ModifyFrame(clips=[clip, sc], selector=_copy_props)
 
         return core.misc.SCDetect(clip, threshold=threshold)
 
-    stats = core.std.PlaneStats(clip, plane=plane)
+    # prev_stats[n] = diff(frame_{n-1}, frame_n)  → SceneChangePrev
+    # next_stats[n] = diff(frame_n,     frame_{n+1}) → SceneChangeNext
+    prev_shifted = clip.std.DuplicateFrames(0).std.Trim(last=clip.num_frames - 1)
+    prev_stats = core.std.PlaneStats(prev_shifted, clip, plane=plane)
+    next_stats = core.std.PlaneStats(clip, clip.std.Trim(first=1), plane=plane)
 
-    def _set_scenechange(n, f):
-        fout = f.copy()
-
-        diff = float(f.props.get("PlaneStatsDiff", 0.0))
-        scenechange = int(diff > threshold)
-
-        fout.props["_SceneChangePrev"] = scenechange
-        fout.props["_SceneChangeNext"] = scenechange
-
+    def _set_sc_props(n: int, f: list[vs.VideoFrame]) -> vs.VideoFrame:
+        fout = f[0].copy()
+        fout.props['_SceneChangePrev'] = int(float(f[1].props.get('PlaneStatsDiff', 0.0)) > threshold)
+        fout.props['_SceneChangeNext'] = int(float(f[2].props.get('PlaneStatsDiff', 0.0)) > threshold)
         return fout
 
-    return core.std.ModifyFrame(stats, stats, _set_scenechange)
+    return clip.std.ModifyFrame(
+        clips=[clip, prev_stats, next_stats],
+        selector=_set_sc_props
+    )
 
 def scene_aware(
     clip: vs.VideoNode,

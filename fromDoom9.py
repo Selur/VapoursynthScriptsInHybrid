@@ -114,9 +114,6 @@ def StabilizeIT(clip: vs.VideoNode, div: float=2.0, initZoom: float=1.0, zoomMax
 # By default it is disabled (maybe for preset = 1 it is not necessary to activate it)
 def Small_Deflicker(clip: vs.VideoNode, width: int=0, height: int=0, preset: int=2, cnr: bool=False,rep: bool=True):
   
-  import misc
-  clip = misc.SCDetect(clip)
-  
   if width == 0:
     width = toMod(clip.width/4,16)
   if height == 0:
@@ -154,14 +151,23 @@ def toMod(value: int, factor: int=16):
 
 # Deflicker Presets
 def deflickerPreset1(sm: vs.VideoNode, zsmooth: bool=False):
+  if hasattr(core,'msmoosh'):
+    SMOOTH = core.msmoosh.MSmooth 
+  else:
+    import msmoosh
+    SMOOTH = msmoosh.MSmooth 
+  
   if zsmooth:
-    smm = core.zsmooth.TemporalSoften(clip=sm,radius=1, threshold=[6,9,9],scenechange=10,scalep=True)
+    sm = misc.SCDetect(sm, threshold=0.1)
+    smm = core.zsmooth.TemporalSoften(clip=sm,radius=1, threshold=[6,9,9],scenechange=-1,scalep=True)
   else:
     smm = core.focus2.TemporalSoften2(clip=sm,radius=1,luma_threshold=6,chroma_threshold=9,scenechange=10,mode=2)
-  smm = core.msmoosh.MSmooth(clip=smm,threshold=0.8,strength=25.0,planes=[1,2])
+  smm = SMOOTH(clip=smm,threshold=0.8,strength=25.0,planes=[1,2])
   smm = core.std.Merge(smm, sm, 0.25)
   smm = core.std.Merge(smm, sm, 0.25)
   if zsmooth:
+    import misc
+    sm = misc.SCDetect(sm,threshold=0.06)
     smm = core.zsmooth.TemporalSoften(clip=sm,radius=2, threshold=[3,5,5],scenechange=6,scalep=True)
   else:
     smm = core.focus2.TemporalSoften2(clip=sm,radius=2,luma_threshold=3,chroma_threshold=5,scenechange=6,mode=2)
@@ -169,36 +175,56 @@ def deflickerPreset1(sm: vs.VideoNode, zsmooth: bool=False):
   return smm
 
 def deflickerPreset2(sm: vs.VideoNode, chroma: bool, zsmooth: bool=False):
+  if hasattr(core,'msmoosh'):
+    SMOOTH = core.msmoosh.MSmooth 
+  else:
+    import msmoosh
+    SMOOTH = msmoosh.MSmooth 
+    
   if zsmooth:
-    smm = core.zsmooth.TemporalSoften(clip=sm,radius=1, threshold=[12,255,255],scenechange=24,scalep=True)
+    import misc
+    sm = misc.SCDetect(sm,threshold=0.24)
+    smm = core.zsmooth.TemporalSoften(clip=sm,radius=1, threshold=[12,255,255],scenechange=-1,scalep=True)
   else:
     smm = core.focus2.TemporalSoften2(clip=sm,radius=1,luma_threshold=12,chroma_threshold=255,scenechange=24,mode=2)
-  smm = core.msmoosh.MSmooth(clip=smm,threshold=0.8,strength=25.0,planes=[1,2])
+  smm = SMOOTH(clip=smm,threshold=0.8,strength=25.0,planes=[1,2])
   smm = core.std.Merge(smm, sm, 0.25)
   smm = core.std.Merge(smm, sm, 0.25)
   if zsmooth:
-    smm = core.zsmooth.TemporalSoften(clip=sm,radius=2, threshold=[7,255,255],scenechange=20,scalep=True)
+    import misc
+    sm = misc.SCDetect(sm,threshold=0.2)
+    smm = core.zsmooth.TemporalSoften(clip=sm,radius=2, threshold=[7,255,255],scenechange=-1,scalep=True)
   else:
     smm = core.focus2.TemporalSoften2(clip=sm,radius=2,luma_threshold=7,chroma_threshold=255,scenechange=20,mode=2)
-  smm = core.msmoosh.MSmooth(clip=smm,threshold=2.0,strength=1.0,planes=[1,2])
+  smm = SMOOTH(clip=smm,threshold=2.0,strength=1.0,planes=[1,2])
 
   if chroma:
     return core.cnr2.Cnr2(smm, mode="ooo", ln=5, un=40, vn=40, scdthr=2.0)
   return smm
 
 def deflickerPreset3(sm: vs.VideoNode, chroma: bool, zsmooth: bool=False):
+  if hasattr(core,'msmoosh'):
+    SMOOTH = core.msmoosh.MSmooth 
+  else:
+    import msmoosh
+    SMOOTH = msmoosh.MSmooth 
+    
   if zsmooth:
-    smm = core.zsmooth.TemporalSoften(clip=sm,radius=1, threshold=[32,255,255],scenechange=24,scalep=True)
+    import misc
+    sm = misc.SCDetect(sm,threshold=0.24)
+    smm = core.zsmooth.TemporalSoften(clip=sm,radius=1, threshold=[32,255,255],scenechange=-1,scalep=True)
   else:
     smm = core.focus2.TemporalSoften2(clip=sm,radius=1,luma_threshold=32,chroma_threshold=255,scenechange=24,mode=2)
-  smm = core.msmoosh.MSmooth(clip=smm,threshold=0.8,strength=25.0,planes=[1,2])
+  smm = SMOOTH(clip=smm,threshold=0.8,strength=25.0,planes=[1,2])
   smm = core.std.Merge(smm, sm, 0.25)
   smm = core.std.Merge(smm, sm, 0.25)
   if zsmooth:
-    smm = core.zsmooth.TemporalSoften(clip=sm,radius=1, threshold=[12,255,255],scenechange=20,scalep=True)
+    import misc
+    sm = misc.SCDetect(sm,threshold=0.2)
+    smm = core.zsmooth.TemporalSoften(clip=sm,radius=1, threshold=[12,255,255],scenechange=-1,scalep=True)
   else:
     smm = core.focus2.TemporalSoften2(clip=sm,radius=2,luma_threshold=12,chroma_threshold=255,scenechange=20,mode=2)
-  smm = core.msmoosh.MSmooth(clip=smm,threshold=2.0,strength=1.0,planes=[1,2])
+  smm = SMOOTH(clip=smm,threshold=2.0,strength=1.0,planes=[1,2])
 
   if chroma:
     return core.cnr2.Cnr2(smm, mode="ooo", ln=10, lm=255, un=35, vn=35, scdthr=2.0)
