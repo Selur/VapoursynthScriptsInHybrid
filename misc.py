@@ -221,7 +221,7 @@ def ShiftLinesHorizontally(clip: vs.VideoNode, shift: int, ymin: int, ymax: int)
 def SCDetect(clip: vs.VideoNode, threshold: float = 0.1, plane: int = 0) -> vs.VideoNode:
     """
     Scene change detection with _SceneChangePrev/_SceneChangeNext frame properties.
-    Uses core.misc.SCDetect if available (plane=0 only), otherwise falls back to
+    Uses core.misc.SCDetect or core.scd.Detect if available (plane=0 only), otherwise falls back to
     a std.PlaneStats-based reimplementation.
 
     Args:
@@ -240,7 +240,21 @@ def SCDetect(clip: vs.VideoNode, threshold: float = 0.1, plane: int = 0) -> vs.V
     if clip.num_frames < 2:
         raise vs.Error('SCDetect: clip must have more than one frame')
 
-    if hasattr(core, 'misc') and plane == 0:
+    if hasattr(core,'scd'):
+       if clip.format.color_family == vs.RGB:
+            sc = clip.resize.Point(format=vs.GRAY8, matrix_s='709')
+            sc = core.misc.SCDetect(sc, threshold=threshold)
+
+            def _copy_props(n: int, f: list[vs.VideoFrame]) -> vs.VideoFrame:
+                fout = f[0].copy()
+                fout.props['_SceneChangePrev'] = f[1].props['_SceneChangePrev']
+                fout.props['_SceneChangeNext'] = f[1].props['_SceneChangeNext']
+                return fout
+
+            return clip.std.ModifyFrame(clips=[clip, sc], selector=_copy_props)
+
+        return core.scd.Detect(clip, thresh=threshold)
+    elif hasattr(core, 'misc') and plane == 0:
         if clip.format.color_family == vs.RGB:
             sc = clip.resize.Point(format=vs.GRAY8, matrix_s='709')
             sc = core.misc.SCDetect(sc, threshold=threshold)
@@ -294,7 +308,9 @@ def scene_aware(
     elif clip.format.sample_type == vs.FLOAT and clip.format.bits_per_sample != 32:
         sc_src = core.resize.Bicubic(clip, format=vs.YUV420P8)
 
-    if hasattr(core,'misc'):
+    if hasattr(core,'scd'):
+      sc = core.scd.Detect(sc_src, thresh=sc_threshold)
+    elif hasattr(core,'misc'):
       sc = core.misc.SCDetect(sc_src, threshold=sc_threshold)
     else: 
       sc = SCDetect(sc_src, threshold=sc_threshold)

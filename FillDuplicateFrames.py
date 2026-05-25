@@ -36,8 +36,11 @@ class FillDuplicateFrames:
       self.mode = mode
       self.frames = frames
       if sceneThr > 0 and method.lower() == 'rife':
-         import misc
-         clip = misc.SCDetect(clip=clip,threshold=sceneThresh)
+         if hasattr(core,'scd'):
+           clip = core.scd.Detect(clip, thresh=sceneThresh) 
+         else:
+           import misc
+           clip = misc.SCDetect(clip=clip,threshold=sceneThresh)
         
         
       if method == 'Replace' and not frames:

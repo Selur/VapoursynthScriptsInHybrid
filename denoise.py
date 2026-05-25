@@ -502,7 +502,10 @@ def MCTemporalDenoise(i, radius=None, pfMode=3, sigma=None, twopass=None, useTTm
             c = core.std.Interleave([f6c, f5c, f4c, f3c, f2c, f1c, i, b1c, b2c, b3c, b4c, b5c, b6c])
             # SAD_m = core.std.Interleave([SAD_f6m, SAD_f5m, SAD_f4m, SAD_f3m, SAD_f2m, SAD_f1m, b, SAD_b1m, SAD_b2m, SAD_b3m, SAD_b4m, SAD_b5m, SAD_b6m])
 
-        if hasattr(core,'zsmooth'):
+        if hasattr(core,'scd'):
+          c = core.scd.Detect(c, thresh=0.999)
+          sm = core.zsmooth.TTempSmooth(c, maxr=radius, thresh=[255], mdiff=[1], strength=radius + 1, scthresh=-1, fp=False, planes=planes)
+        elif hasattr(core,'zsmooth'):
           import misc
           c = misc.SCDetect(c, threshold=0.999)
           sm = core.zsmooth.TTempSmooth(c, maxr=radius, thresh=[255], mdiff=[1], strength=radius + 1, scthresh=-1, fp=False, planes=planes)
