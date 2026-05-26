@@ -19,3 +19,55 @@ def DeSpot(o):
     clip = clip.rgvs.Clense()
   
   return clip.std.SelectEvery(cycle=3, offsets=1)
+
+# Requires
+# zsmooth: https://github.com/adworacz/zsmooth
+# RemoveDirt: https://github.com/pinterf/RemoveDirt
+def RemoveSpots(clip: vs.VideoNode, grey: bool = False, limit: int = 16) -> vs.VideoNode:
+    planes = [0] if grey else [0, 1, 2]
+    clensed = core.zsmooth.Clense(clip, planes=planes)
+    sbegin  = core.zsmooth.ForwardClense(clip, planes=planes)
+    send    = core.zsmooth.BackwardClense(clip, planes=planes)
+    if hasattr(core, 'removedirt') and hasattr(core.removedirt, 'SCSelect'):
+        scenechange = core.removedirt.SCSelect(clip, sbegin, send, clensed)  # input -> clip
+        RESTORE     = core.removedirt.RestoreMotionBlocks
+    else:
+        scenechange = core.rmd.SCSelect(clip, sbegin, send, clensed)         # input -> clip
+        RESTORE     = core.rmd.RestoreMotionBlocks
+    rep_mode = [limit if p in planes else 0 for p in range(clip.format.num_planes)]
+    alt     = core.zsmooth.Repair(scenechange, clip, mode=rep_mode)          # sc_selected -> scenechange
+    restore = core.zsmooth.Repair(clensed,     clip, mode=rep_mode)
+    corrected = RESTORE(
+        clensed, restore,
+        neighbour=clip,
+        alternative=alt,
+        gmthreshold=70,
+        dist=1,
+        dmode=2,
+        noise=10,
+        noisy=12,
+        grey=grey,
+    )
+    return corrected
+
+# Requires
+# zsmooth: https://github.com/adworacz/zsmooth
+# RemoveDirt: https://github.com/pinterf/RemoveDirt
+# mvtools: https://github.com/Mr-Z-2697/vapoursynth-mvtools
+def RemoveSpotsMC3X(clip: vs.VideoNode, limit: int = 6, grey: bool = False) -> vs.VideoNode:
+    sup   = core.mv.Super(clip, pel=2)
+    bvec  = core.mv.Analyse(sup, isb=False, blksize=8, delta=1, truemotion=True)
+    fvec  = core.mv.Analyse(sup, isb=True,  blksize=8, delta=1, truemotion=True)
+
+    backw = core.mv.Flow(clip, sup, bvec)
+    forw  = core.mv.Flow(clip, sup, fvec)
+
+    clp = core.std.Interleave([backw, clip, forw])
+
+    clp = RemoveSpots(clp, grey=grey, limit=limit)
+    clp = RemoveSpots(clp, grey=grey, limit=limit)
+    clp = RemoveSpots(clp, grey=grey, limit=limit)
+
+    clp = core.std.SelectEvery(clp, cycle=3, offsets=[1])
+
+    return clp
