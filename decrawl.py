@@ -106,11 +106,11 @@ def LUTDeCrawl(input, ythresh=10, cthresh=10, maxdiff=50, scnchg=25, usemaxdiff=
     fixed_y = core.std.Merge(average_y, input_y)
 
     output = core.std.ShufflePlanes([core.std.MaskedMerge(input_y, fixed_y, themask), input], planes=[0, 1, 2], colorfamily=input.format.color_family)
-    if hasattr(core,'scd');
-     input = core.scd.Detect(input, thresh=scnchg / 255)
+    if hasattr(core,'scd'):
+      input = core.scd.Detect(input, thresh=scnchg / 255)
     else:
-     import misc
-     input = misc.SCDetect(input, threshold=scnchg / 255)
+      import misc
+      input = misc.SCDetect(input, threshold=scnchg / 255)
     output = output.std.FrameEval(eval=partial(YDifferenceFromPrevious, clips=[input, output]), prop_src=input)
     output = output.std.FrameEval(eval=partial(YDifferenceToNext, clips=[input, output]), prop_src=input)
 
