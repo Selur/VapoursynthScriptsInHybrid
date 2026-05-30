@@ -763,7 +763,7 @@ def SpotDelta(
     # ── SpotLess ──────────────────────────────────────────────────────────
     _blksz    = ablksize or (32 if clip.width > 1920 else 16 if clip.width > 960 else 8)
     _olap     = aoverlap or (_blksz // 2)
-    _schparam = asearch  or (_olap  // 2)
+    _schparam = asearch  or min(_olap // 2, 7)
 
     sl_kw = dict(
         radT=radT, thsad=thsad, thsad2=thsad2, pel=pel, chroma=chroma,
