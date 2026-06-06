@@ -1723,3 +1723,115 @@ def SetColorSpace(clip, ChromaLocation=None, ColorRange=None, Primaries=None, Ma
     # Output
     return clip
 ################################################################################################################################
+
+
+import vapoursynth as vs
+
+core = vs.core
+
+
+def FixChromaticAberration(clip,
+                           red=1.0,
+                           green=1.0,
+                           blue=1.0,
+                           x=None,
+                           y=None,
+                           resizer=None):
+    """
+    VapourSynth port of the Avisynth FixChromaticAberration function.
+
+    Parameters
+    ----------
+    clip : vs.VideoNode
+        Input clip.
+    red, green, blue : float
+        Per-channel scale factors.
+        >1.0 expands the channel outward.
+        <1.0 contracts the channel inward.
+    x, y : float or None
+        Center point for scaling.
+        Defaults to image center.
+    resizer : callable or None
+        Resize function. Defaults to core.resize.Lanczos.
+
+    Returns
+    -------
+    vs.VideoNode
+    """
+
+    if resizer is None:
+        resizer = core.resize.Lanczos
+
+    # Ensure RGB format
+    if clip.format.color_family != vs.RGB:
+        c = core.resize.Bicubic(
+            clip,
+            format=vs.RGBS
+        )
+    else:
+        c = clip
+
+    w = c.width
+    h = c.height
+
+    if x is None:
+        x = w * 0.5
+    if y is None:
+        y = h * 0.5
+
+    x = max(0, min(x, w - 1))
+    y = max(0, min(y, h - 1))
+
+    def process_channel(scale):
+        if scale == 1.0:
+            return c
+
+        sw = round(scale * w)
+        sh = round(scale * h)
+
+        sl = round((scale - 1.0) * x)
+        st = round((scale - 1.0) * y)
+
+        if scale > 1.0:
+            # Enlarge then crop
+            resized = resizer(c, width=sw, height=sh)
+
+            return core.std.CropAbs(
+                resized,
+                width=w,
+                height=h,
+                left=sl,
+                top=st
+            )
+
+        else:
+            # Shrink then restore canvas and resize back
+            bordered = core.std.AddBorders(
+                c,
+                left=-sl,
+                top=-st,
+                right=w - sw + sl,
+                bottom=h - sh + st
+            )
+
+            return resizer(
+                bordered,
+                width=w,
+                height=h
+            )
+
+    rc = process_channel(red)
+    gc = process_channel(green)
+    bc = process_channel(blue)
+
+    # Extract planes
+    r = core.std.ShufflePlanes(rc, planes=0, colorfamily=vs.GRAY)
+    g = core.std.ShufflePlanes(gc, planes=1, colorfamily=vs.GRAY)
+    b = core.std.ShufflePlanes(bc, planes=2, colorfamily=vs.GRAY)
+
+    # Recombine
+    return core.std.ShufflePlanes(
+        [r, g, b],
+        planes=[0, 0, 0],
+        colorfamily=vs.RGB
+    )
