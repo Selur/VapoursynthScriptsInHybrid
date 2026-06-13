@@ -88,11 +88,18 @@ def Deblock_QED(
     if remX or remY:
         strongD2 = strongD2.resize.Point(sw + remX, sh + remY, src_width=sw + remX, src_height=sh + remY)
     expr = f'x {neutral} - 1.01 * {neutral} +'
-    strongD3 = (
-        EXPR(strongD2, expr=expr if uv > 2 or is_gray else [expr, ''])
-        .dctf.DCTFilter(factors=[1, 1, 0, 0, 0, 0, 0, 0], planes=planes)
-        .std.Crop(right=remX, bottom=remY)
-    )
+    if hasattr(core,'zsmooth'):
+      strongD3 = (
+          EXPR(strongD2, expr=expr if uv > 2 or is_gray else [expr, ''])
+          .zsmooth.DCTFilter(factors=[1, 1, 0, 0, 0, 0, 0, 0], planes=planes)
+          .std.Crop(right=remX, bottom=remY)
+      )
+    else:
+      strongD3 = (
+          EXPR(strongD2, expr=expr if uv > 2 or is_gray else [expr, ''])
+          .dctf.DCTFilter(factors=[1, 1, 0, 0, 0, 0, 0, 0], planes=planes)
+          .std.Crop(right=remX, bottom=remY)
+      )
 
     # apply compensation from "normal" deblocking to the borders of the full-block-compensations calculated from "strong" deblocking ...
     expr = f'y {neutral} = x y ?'

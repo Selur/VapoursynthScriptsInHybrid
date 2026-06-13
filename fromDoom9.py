@@ -212,6 +212,10 @@ def deflickerPreset2(sm: vs.VideoNode, chroma: bool, zsmooth: bool=False):
   smm = SMOOTH(clip=smm,threshold=2.0,strength=1.0,planes=[1,2])
 
   if chroma:
+    if hasattr(core, 'zsmooth'):
+      import misc
+      smm = misc.SCDetect(smm,threshold=0.02)
+      return core.zsmooth.Cnr4(smm, mode="ooo", tmode=0, radius=2, l_sense=5, u_sense=40, v_sense=40)
     return core.cnr2.Cnr2(smm, mode="ooo", ln=5, un=40, vn=40, scdthr=2.0)
   return smm
 
@@ -246,6 +250,10 @@ def deflickerPreset3(sm: vs.VideoNode, chroma: bool, zsmooth: bool=False):
   smm = SMOOTH(clip=smm,threshold=2.0,strength=1.0,planes=[1,2])
 
   if chroma:
+    if hasattr(core, 'zsmooth'):
+      import misc
+      smm = misc.SCDetect(smm,threshold=0.02)
+      return core.zsmooth.Cnr4(smm, mode="ooo", tmode=0, radius=2, u_sense=35, v_sense=35, l_str=255)
     return core.cnr2.Cnr2(smm, mode="ooo", ln=10, lm=255, un=35, vn=35, scdthr=2.0)
   return smm
 
