@@ -314,9 +314,26 @@ def SmoothLevels(
     process = RemoveGrain(diff)
     
     if useDB:
-        deband_func =  core.vszip.Deband if hasattr(core, 'vszip') else core.neo_f3kdb.Deband if hasattr(core, 'neo_f3kdb') else core.f3kdb.Deband
         deband_expr = f'x {neutral[1]} - {Mfactor} / {neutral[1]} +'
-        process = deband_func(EXPR(process, expr=[deband_expr]), grainy=0, grainc=0, output_depth=bits)
+        use_vszip = hasattr(core, 'vszip')
+        if not use_vszip:
+            deband_func = core.neo_f3kdb.Deband if hasattr(core, 'neo_f3kdb') else core.f3kdb.Deband
+
+        def _deband(clip):
+            deband_in = EXPR(clip, expr=[deband_expr])
+            if use_vszip:
+                out = core.vszip.Deband(deband_in, grain=[0, 0])
+                if out.format.bits_per_sample != bits:
+                    fmt = core.query_video_format(
+                        out.format.color_family, out.format.sample_type,
+                        bits, out.format.subsampling_w, out.format.subsampling_h
+                    )
+                    out = core.resize.Point(out, format=fmt.id)
+                return out
+            else:
+                return deband_func(deband_in, grainy=0, grainc=0, output_depth=bits)
+
+        process = _deband(process)
         smth = core.std.MakeDiff(limitI, process)
     else:
         smth = EXPR([limitI, process], expr=[merge_expr])
@@ -324,9 +341,9 @@ def SmoothLevels(
     level2 = EXPR([limitI, diff], expr=[merge_expr])
     diff2 = EXPR([level2, level], expr=[diff_expr])
     process2 = RemoveGrain(diff2)
-    
+
     if useDB:
-        process2 = deband_func(EXPR(process2, expr=[deband_expr]), grainy=0, grainc=0, output_depth=bits)
+        process2 = _deband(process2)
         smth2 = core.std.MakeDiff(smth, process2)
     else:
         smth2 = EXPR([smth, process2], expr=[merge_expr])
