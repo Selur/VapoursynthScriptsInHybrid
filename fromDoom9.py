@@ -78,7 +78,7 @@ def StabilizeIT(clip: vs.VideoNode, div: float=2.0, initZoom: float=1.0, zoomMax
   zsmooth = hasattr(core,'zsmooth')
   pf = core.zsmooth.RemoveGrain(clip=clip, mode=rgMode) if zsmooth else core.rgvs.RemoveGrain(clip=clip, mode=rgMode)
   pf = core.resize.Bilinear(clip=pf, width=int(pf.width/div), height=int(pf.height/div))
-  pf = core.zsmooth.RemoveGrain(clip=clip, mode=rgMode) if zsmooth else core.rgvs.RemoveGrain(clip=clip, mode=rgMode)
+  pf = core.zsmooth.RemoveGrain(clip=pf, mode=rgMode) if zsmooth else core.rgvs.RemoveGrain(clip=clip, mode=rgMode)
   pf = core.resize.Bilinear(clip=pf, width=pf.width*div, height=pf.height*div) 
   super = core.mv.Super(clip=pf) 
   vectors = core.mv.Analyse(super=super, isb=False)
