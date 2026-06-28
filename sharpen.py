@@ -1289,6 +1289,9 @@ def AWarpSharp2(
     chroma: int = 0,
     planes: list[int] | None = None
 ) -> vs.VideoNode:
+    if hasattr(core, 'warp'):
+      return core.warp.AWarpSharp2(clip, thresh, blur, type, depth, chroma, planes)
+ 
     if not hasattr(core, 'awarp'):
         raise ValueError("AWarp plugin not found! Install via: pip install vapoursynth-awarp")
     BoxBlur = _boxblur_fn()
