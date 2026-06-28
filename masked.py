@@ -12,19 +12,22 @@ except ImportError:
 # Use retinex to greatly improve the accuracy of the edge detection in dark scenes.
 # draft=True is a lot faster, albeit less accurate
 # from https://blog.kageru.moe/legacy/edgemasks.html
-def retinex_edgemask(src: vs.VideoNode, sigma: int=1, draft: bool=False) -> vs.VideoNode:
-    src = Depth(src, 16)
+def retinex_edgemask(src: vs.VideoNode, sigma: int = 1, draft: bool = False) -> vs.VideoNode:
+    """
+    Use retinex to greatly improve edge detection in dark scenes.
+    sigma is the sigma of tcanny.
+    """
+
     luma = GetPlane(src, 0)
     EXPR = core.llvmexpr.Expr if hasattr(core, 'llvmexpr') else core.akarin.Expr if hasattr(core, 'akarin') else core.cranexpr.Expr if hasattr(core, 'cranexpr') else core.std.Expr
-    if draft:
-        ret = EXPR(luma, 'x 65535 / sqrt 65535 *')
-    else:
-        ret = core.retinex.MSRCP(luma, sigma=[50, 200, 350], upper_thr=0.005)
-    
-    if hasattr(core,'tcanny'):
-      mask = EXPR([kirsch(luma), ret.tcanny.TCanny(mode=1, sigma=sigma).std.Minimum(coordinates=[1, 0, 1, 0, 0, 1, 0, 1])], 'x y +')
-    return mask
+    max_value = 1.0 if src.format.sample_type == vs.FLOAT else (1 << src.format.bits_per_sample) - 1
 
+    ret = core.retinex.MSRCP(luma, sigma=[50, 200, 350], upper_thr=0.005)
+    k = kirsch(luma)
+    if hasattr(core, "tcanny"):
+        tc = ret.tcanny.TCanny(mode=1, sigma=sigma).std.Minimum(coordinates=[1, 0, 1, 0, 0, 1, 0, 1])
+        return EXPR([k, tc], f"x y + {max_value} min")
+    return EXPR([k, ret], f"x y + {max_value} min")
 
 # Kirsch edge detection. This uses 8 directions, so it's slower but better than Sobel (4 directions).
 # more information: https://ddl.kageru.moe/konOJ.pdf
