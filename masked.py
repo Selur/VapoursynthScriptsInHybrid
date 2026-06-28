@@ -21,8 +21,10 @@ def retinex_edgemask(src: vs.VideoNode, sigma: int = 1, draft: bool = False) -> 
     luma = GetPlane(src, 0)
     EXPR = core.llvmexpr.Expr if hasattr(core, 'llvmexpr') else core.akarin.Expr if hasattr(core, 'akarin') else core.cranexpr.Expr if hasattr(core, 'cranexpr') else core.std.Expr
     max_value = 1.0 if src.format.sample_type == vs.FLOAT else (1 << src.format.bits_per_sample) - 1
-
-    ret = core.retinex.MSRCP(luma, sigma=[50, 200, 350], upper_thr=0.005)
+    if draft:
+        ret = EXPR(luma, 'x 65535 / sqrt 65535 *')
+    else:
+        ret = core.retinex.MSRCP(luma, sigma=[50, 200, 350], upper_thr=0.005)
     k = kirsch(luma)
     if hasattr(core, "tcanny"):
         tc = ret.tcanny.TCanny(mode=1, sigma=sigma).std.Minimum(coordinates=[1, 0, 1, 0, 0, 1, 0, 1])
