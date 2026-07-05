@@ -5,6 +5,11 @@ from vapoursynth import core
 import math
 from typing import Optional, Union, Sequence, TypeVar
 
+def _hysteresis_fn():
+    """Pick the best available Hysteresis."""
+    if hasattr(core, 'hysteresis'): return core.hysteresis.Hysteresis
+    return core.misc.Hysteresis
+
 def HQDeringmod(
     input: vs.VideoNode,
     smoothed: Optional[vs.VideoNode] = None,
@@ -174,7 +179,7 @@ def HQDeringmod(
     if ringmask is None:
         expr = f'x {scale(mthr, bits)} < 0 x ?'
         prewittm = EXPR(AvsPrewitt(input, planes=0), expr=expr if is_gray else [expr, ''])
-        fmask = core.misc.Hysteresis(prewittm.zsmooth.Median(planes=0), prewittm, planes=0) if has_zsmooth else core.misc.Hysteresis(prewittm.std.Median(planes=0), prewittm, planes=0)
+        fmask = _hysteresis_fn()(prewittm.zsmooth.Median(planes=0), prewittm, planes=0) if has_zsmooth else _hysteresis_fn()(prewittm.std.Median(planes=0), prewittm, planes=0)
         if mrad > 0:
             omask = mt_expand_multi(fmask, planes=0, sw=mrad, sh=mrad)
         else:
