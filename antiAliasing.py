@@ -189,24 +189,21 @@ def santiag(
               nnedi3 = partial(core.sneedif.NNEDI3, nsize=nsize, nns=nns, qual=qual, pscrn=pscrn, device=device)
             else:
               nnedi3 = partial(core.nnedi3cl.NNEDI3CL, nsize=nsize, nns=nns, qual=qual, pscrn=pscrn, device=device)
-            if hasattr(core, 'eedi3vk'):
-              eedi3 = partial(core.eedi3vk.EEDI3, alpha=alpha, beta=beta, gamma=gamma, nrad=nrad, mdis=mdis, vcheck=vcheck, device_id=device)
-            elif hasattr(core, 'eedi3m.EEDI3CL'):
-              eedi3 = partial(core.eedi3m.EEDI3CL, alpha=alpha, beta=beta, gamma=gamma, nrad=nrad, mdis=mdis, vcheck=vcheck, device=device)
-            else:
-              eedi3 = partial(core.eedi3m.EEDI3, alpha=alpha, beta=beta, gamma=gamma, nrad=nrad, mdis=mdis, vcheck=vcheck)
         else:
             if hasattr(core, 'znedi3'):
               nnedi3 = partial(core.znedi3.nnedi3, nsize=nsize, nns=nns, qual=qual, pscrn=pscrn, int16_prescreener=int16_prescreener, int16_predictor=int16_predictor, exp=exp)
             else:
               nnedi3 = partial(core.nnedi3.nnedi3, nsize=nsize, nns=nns, qual=qual, pscrn=pscrn, int16_prescreener=int16_prescreener, int16_predictor=int16_predictor, exp=exp)
-            
+
+        def get_eedi3():
             if hasattr(core, 'eedi3vk'):
-              eedi3 = partial(core.eedi3vk.EEDI3, alpha=alpha, beta=beta, gamma=gamma, nrad=nrad, mdis=mdis, vcheck=vcheck, device_id=device)
-            elif hasattr(core, 'eedi3m.EEDI3CL'):
-              eedi3 = partial(core.eedi3m.EEDI3CL, alpha=alpha, beta=beta, gamma=gamma, nrad=nrad, mdis=mdis, vcheck=vcheck, device=device)
+                return partial(core.eedi3vk.EEDI3, alpha=alpha, beta=beta, gamma=gamma, nrad=nrad, mdis=mdis, vcheck=vcheck, device_id=device)
+            elif hasattr(core, 'eedi3m') and hasattr(core.eedi3m, 'EEDI3CL'):
+                return partial(core.eedi3m.EEDI3CL, alpha=alpha, beta=beta, gamma=gamma, nrad=nrad, mdis=mdis, vcheck=vcheck, device=device)
+            elif hasattr(core, 'eedi3m'):
+                return partial(core.eedi3m.EEDI3, alpha=alpha, beta=beta, gamma=gamma, nrad=nrad, mdis=mdis, vcheck=vcheck)
             else:
-              eedi3 = partial(core.eedi3m.EEDI3, alpha=alpha, beta=beta, gamma=gamma, nrad=nrad, mdis=mdis, vcheck=vcheck)
+                raise vs.Error('santiag: no eedi3 plugin (eedi3vk or eedi3m) found')
 
         strength = max(strength, 0)
         field = strength % 2
@@ -226,7 +223,7 @@ def santiag(
             return c.eedi2.EEDI2(field=field)
         elif type == 'eedi3':
             sclip = nnedi3(c, field=field, dh=dh)
-            return eedi3(c, field=field, dh=dh, sclip=sclip)
+            return get_eedi3()(c, field=field, dh=dh, sclip=sclip)
         elif type == 'sangnom':
             if dh:
                 c = c.resize.Spline36(w, h * 2, src_top=-0.25)

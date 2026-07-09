@@ -1280,6 +1280,21 @@ def LimitFilter(flt, src, ref=None, thr=None, elast=None, brighten_thr=None, thr
 ################################################################################################################################
 
 # experimental aWarpSharp2 replacement based on vapoursynth-awarp
+import math
+
+def _gauss_kernel(sigma: float, max_radius: int = 12) -> list[float]:
+    """Discrete 1D Gaussian kernel, odd-length, up to 25 taps (std.Convolution's limit)."""
+    radius = min(max_radius, max(1, int(round(sigma * 3))))
+    return [math.exp(-(x * x) / (2 * sigma * sigma)) for x in range(-radius, radius + 1)]
+
+def _gauss_blur(clip: vs.VideoNode, sigma: float, planes: list[int] | None = None) -> vs.VideoNode:
+    """Separable Gaussian blur via two std.Convolution passes. divisor=0 -> auto-normalized."""
+    kernel = _gauss_kernel(sigma)
+    clip = core.std.Convolution(clip, kernel, planes=planes, mode='h')
+    clip = core.std.Convolution(clip, kernel, planes=planes, mode='v')
+    return clip
+
+
 def AWarpSharp2(
     clip: vs.VideoNode,
     thresh: int = 128,
@@ -1290,48 +1305,37 @@ def AWarpSharp2(
     planes: list[int] | None = None
 ) -> vs.VideoNode:
     if hasattr(core, 'warp'):
-      return core.warp.AWarpSharp2(clip, thresh, blur, type, depth, chroma, planes)
- 
+        return core.warp.AWarpSharp2(clip, thresh, blur, type, depth, chroma, planes)
+
     if not hasattr(core, 'awarp'):
         raise ValueError("AWarp plugin not found! Install via: pip install vapoursynth-awarp")
-    BoxBlur = _boxblur_fn()
+
     is_gray = clip.format.color_family == vs.GRAY
-    # Default planes: all
     if planes is None:
         planes = [0] if is_gray else [0, 1, 2]
-    # Normalise depth to a 3-element list
+
     if isinstance(depth, int):
         depth = [depth, depth // 2, depth // 2]
     while len(depth) < 3:
         depth.append(depth[-1])
-    # --- Scale depth from dubhater's AWarpSharp2 scale (default 16) to
-    #     HolyWu's AWarp scale (default 3).  The ratio is 3/16.
-    #     We round to nearest int and clamp to ±128 (AWarp's practical range).
+
     def _scale_depth(d: int) -> int:
         scaled = int(round(d * 3 / 16))
         return max(-128, min(128, scaled))
     depth_scaled = [_scale_depth(d) for d in depth]
+
     # --- Edge detection
-    # Use the luma plane only for the mask, then expand to clip format later.
-    luma = core.std.ShufflePlanes(clip, planes=0, colorfamily=vs.GRAY) \
-           if not is_gray else clip
-    # Work in 8-bit to match ASobel's output range (0-255).
-    # Binarize is applied here in 8-bit — no rescaling of thresh needed.
+    luma = core.std.ShufflePlanes(clip, planes=0, colorfamily=vs.GRAY) if not is_gray else clip
     luma8 = core.resize.Point(luma, format=vs.GRAY8)
     mask_gray = core.std.Sobel(luma8)
     if thresh < 255:
         mask_gray = core.std.Binarize(mask_gray, threshold=thresh)
-    # Rescale to original bit depth for blur and warp steps
     mask_gray = core.resize.Point(mask_gray, format=luma.format)
-    # --- Mask blur
-    # type=0: original uses a 13x13-ish average → approximate with larger radius
-    # type=1: original uses a 5x5-ish average  → smaller radius
-    # Box blur radius mapping: type=0 → hradius=2 (≈13-tap), type=1 → hradius=1 (≈5-tap)
-    hpasses = 2 if type == 0 else 1
-    blur_radius = blur if type == 0 else max(1, blur - 1)
-    mask_gray = BoxBlur(mask_gray, hradius=blur_radius, vradius=blur_radius,
-                        hpasses=hpasses, vpasses=hpasses)
-    # --- Expand GRAY mask to match clip format (AWarp requires identical formats)
+
+    # --- Gaussian blur via std.Convolution
+    sigma = (blur ** 0.5) if type == 1 else (blur ** 0.5) * 2
+    mask_gray = _gauss_blur(mask_gray, sigma)
+
     if not is_gray:
         mask = core.std.ShufflePlanes(
             [mask_gray, mask_gray, mask_gray],
@@ -1342,10 +1346,10 @@ def AWarpSharp2(
             mask = core.resize.Point(mask, format=clip.format.id)
     else:
         mask = mask_gray
-    # chroma=0 → use luma mask plane for all planes (mask_first_plane=True)
-    # chroma=1 → each plane uses its own mask plane (mask_first_plane=False)
+
     mask_first_plane = (chroma == 0)
     depth_h = depth_scaled[0] if is_gray else depth_scaled
+
     return core.awarp.AWarp(
         clip,
         mask=mask,

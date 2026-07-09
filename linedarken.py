@@ -119,7 +119,7 @@ def Toon(input, str=1.0, l_thr=2, u_thr=12, blur=2, depth=32):
     
     sharpened = Padding(last, 6, 6, 6, 6)
     if hasattr(core,'warp'):
-      sharpened = core.warp.AWarpSharp2(main, blur=blur, depth=depth)
+      sharpened = core.warp.AWarpSharp2(sharpened, blur=blur, depth=depth)
     else:
       import sharpen
       sharpened = sharpen.AWarpSharp2(sharpened, blur=blur, depth=depth)
