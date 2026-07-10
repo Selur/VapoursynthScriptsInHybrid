@@ -4,6 +4,7 @@ from vapoursynth import core
 import math
 
 from typing import Sequence, Union, Optional
+from misc import MV
 
 import nnedi3_resample
 import sharpen
@@ -158,7 +159,7 @@ def SMDegrain(input, tr=2, thSAD=300, thSADC=None, RefineMotion=False, contrasha
 
     # Motion vectors search
     global bv6, bv4, bv3, bv2, bv1, fv1, fv2, fv3, fv4, fv6
-    super_args = dict(hpad=hpad, vpad=vpad, pel=pel)
+    super_args = dict(hpad=hpad, vpad=vpad, pel=pel, blksize=blksize, overlap=overlap)
     # Subpixel 3
     if pelclip:
       nnediMode = 'nnedi3cl' if opencl else 'znedi3'
@@ -166,9 +167,9 @@ def SMDegrain(input, tr=2, thSAD=300, thSADC=None, RefineMotion=False, contrasha
       pclip = nnedi3_resample.nnedi3_resample(pref, w * pel, h * pel, src_left=cshift, src_top=cshift, nns=4, mode=nnediMode, device=device)
       if not GlobalR:
          pclip2 = nnedi3_resample.nnedi3_resample(inputP, w * pel, h * pel, src_left=cshift, src_top=cshift, nns=4, mode=nnediMode, device=device)
-      super_search = pref.mv.Super(chroma=chroma, rfilter=4, pelclip=pclip, **super_args)
+      super_search = MV.Super(pref, chroma=chroma, rfilter=4, pelclip=pclip, **super_args)
     else:
-      super_search = pref.mv.Super(chroma=chroma, sharp=subpixel, rfilter=4, **super_args)
+      super_search = MV.Super(pref, chroma=chroma, sharp=subpixel, rfilter=4, **super_args)
 
     
     analyse_args = dict(blksize=blksize, search=search, chroma=chroma, truemotion=truemotion, global_=MVglobal, overlap=overlap, dct=dct)
@@ -178,45 +179,45 @@ def SMDegrain(input, tr=2, thSAD=300, thSADC=None, RefineMotion=False, contrasha
 
     if not GlobalR:
         if pelclip:
-            super_render = inputP.mv.Super(levels=1, chroma=plane0, pelclip=pclip2, **super_args)
+            super_render = MV.Super(inputP, levels=1, chroma=plane0, pelclip=pclip2, **super_args)
             if RefineMotion:
-                Recalculate = pref.mv.Super(levels=1, chroma=chroma, pelclip=pclip, **super_args)
+                Recalculate = MV.Super(pref, levels=1, chroma=chroma, pelclip=pclip, **super_args)
         else:
-            super_render = inputP.mv.Super(levels=1, chroma=plane0, sharp=subpixel, **super_args)
+            super_render = MV.Super(inputP, levels=1, chroma=plane0, sharp=subpixel, **super_args)
             if RefineMotion:
-                Recalculate = pref.mv.Super(levels=1, chroma=chroma, sharp=subpixel, **super_args)
+                Recalculate = MV.Super(pref, levels=1, chroma=chroma, sharp=subpixel, **super_args)
 
         if interlaced:
             if tr > 2:
-                bv6 = super_search.mv.Analyse(isb=True, delta=6, **analyse_args)
-                fv6 = super_search.mv.Analyse(isb=False, delta=6, **analyse_args)
+                bv6 = MV.Analyse(super_search, isb=True, delta=6, **analyse_args)
+                fv6 = MV.Analyse(super_search, isb=False, delta=6, **analyse_args)
                 if RefineMotion:
-                    bv6 = core.mv.Recalculate(Recalculate, bv6, **recalculate_args)
-                    fv6 = core.mv.Recalculate(Recalculate, fv6, **recalculate_args)
+                    bv6 = MV.Recalculate(Recalculate, bv6, **recalculate_args)
+                    fv6 = MV.Recalculate(Recalculate, fv6, **recalculate_args)
             if tr > 1:
-                bv4 = super_search.mv.Analyse(isb=True, delta=4, **analyse_args)
-                fv4 = super_search.mv.Analyse(isb=False, delta=4, **analyse_args)
+                bv4 = MV.Analyse(super_search, isb=True, delta=4, **analyse_args)
+                fv4 = MV.Analyse(super_search, isb=False, delta=4, **analyse_args)
                 if RefineMotion:
-                    bv4 = core.mv.Recalculate(Recalculate, bv4, **recalculate_args)
-                    fv4 = core.mv.Recalculate(Recalculate, fv4, **recalculate_args)
+                    bv4 = MV.Recalculate(Recalculate, bv4, **recalculate_args)
+                    fv4 = MV.Recalculate(Recalculate, fv4, **recalculate_args)
         else:
             if tr > 2:
-                bv3 = super_search.mv.Analyse(isb=True, delta=3, **analyse_args)
-                fv3 = super_search.mv.Analyse(isb=False, delta=3, **analyse_args)
+                bv3 = MV.Analyse(super_search, isb=True, delta=3, **analyse_args)
+                fv3 = MV.Analyse(super_search, isb=False, delta=3, **analyse_args)
                 if RefineMotion:
-                    bv3 = core.mv.Recalculate(Recalculate, bv3, **recalculate_args)
-                    fv3 = core.mv.Recalculate(Recalculate, fv3, **recalculate_args)
-            bv1 = super_search.mv.Analyse(isb=True, delta=1, **analyse_args)
-            fv1 = super_search.mv.Analyse(isb=False, delta=1, **analyse_args)
+                    bv3 = MV.Recalculate(Recalculate, bv3, **recalculate_args)
+                    fv3 = MV.Recalculate(Recalculate, fv3, **recalculate_args)
+            bv1 = MV.Analyse(super_search, isb=True, delta=1, **analyse_args)
+            fv1 = MV.Analyse(super_search, isb=False, delta=1, **analyse_args)
             if RefineMotion:
-                bv1 = core.mv.Recalculate(Recalculate, bv1, **recalculate_args)
-                fv1 = core.mv.Recalculate(Recalculate, fv1, **recalculate_args)
+                bv1 = MV.Recalculate(Recalculate, bv1, **recalculate_args)
+                fv1 = MV.Recalculate(Recalculate, fv1, **recalculate_args)
         if interlaced or tr > 1:
-            bv2 = super_search.mv.Analyse(isb=True, delta=2, **analyse_args)
-            fv2 = super_search.mv.Analyse(isb=False, delta=2, **analyse_args)
+            bv2 = MV.Analyse(super_search, isb=True, delta=2, **analyse_args)
+            fv2 = MV.Analyse(super_search, isb=False, delta=2, **analyse_args)
             if RefineMotion:
-                bv2 = core.mv.Recalculate(Recalculate, bv2, **recalculate_args)
-                fv2 = core.mv.Recalculate(Recalculate, fv2, **recalculate_args)
+                bv2 = MV.Recalculate(Recalculate, bv2, **recalculate_args)
+                fv2 = MV.Recalculate(Recalculate, fv2, **recalculate_args)
     else:
         super_render = super_search
 
@@ -234,24 +235,24 @@ def SMDegrain(input, tr=2, thSAD=300, thSADC=None, RefineMotion=False, contrasha
     if not GlobalO:
       if interlaced:
         if tr >= 3:
-            output = core.mv.Degrain3(mfilter, super_render, bv2, fv2, bv4, fv4, bv6, fv6, **degrain_args)
+            output = MV.Degrain3(mfilter, super_render, bv2, fv2, bv4, fv4, bv6, fv6, **degrain_args)
         elif tr == 2:
-            output = core.mv.Degrain2(mfilter, super_render, bv2, fv2, bv4, fv4, **degrain_args)
+            output = MV.Degrain2(mfilter, super_render, bv2, fv2, bv4, fv4, **degrain_args)
         else:
-            output = core.mv.Degrain1(mfilter, super_render, bv2, fv2, **degrain_args)
+            output = MV.Degrain1(mfilter, super_render, bv2, fv2, **degrain_args)
       else:
         if tr >= 6:
-          output = core.mv.Degrain6(inputP, super_render, vectors['bv1'], vectors['fv1'], vectors['bv2'], vectors['fv2'], vectors['bv3'], vectors['fv3'], vectors['bv4'], vectors['fv4'], vectors['bv5'], vectors['fv5'], vectors['bv6'], vectors['fv6'], **degrain_args)
+          output = MV.Degrain6(inputP, super_render, vectors['bv1'], vectors['fv1'], vectors['bv2'], vectors['fv2'], vectors['bv3'], vectors['fv3'], vectors['bv4'], vectors['fv4'], vectors['bv5'], vectors['fv5'], vectors['bv6'], vectors['fv6'], **degrain_args)
         elif tr == 5:
-          output = core.mv.Degrain5(inputP, super_render, vectors['bv1'], vectors['fv1'], vectors['bv2'], vectors['fv2'], vectors['bv3'], vectors['fv3'], vectors['bv4'], vectors['fv4'], vectors['bv5'], vectors['fv5'], **degrain_args)
+          output = MV.Degrain5(inputP, super_render, vectors['bv1'], vectors['fv1'], vectors['bv2'], vectors['fv2'], vectors['bv3'], vectors['fv3'], vectors['bv4'], vectors['fv4'], vectors['bv5'], vectors['fv5'], **degrain_args)
         elif tr == 4: 
-          output = core.mv.Degrain4(inputP, super_render, vectors['bv1'], vectors['fv1'], vectors['bv2'], vectors['fv2'], vectors['bv3'], vectors['fv3'], vectors['bv4'], vectors['fv4'], **degrain_args)
+          output = MV.Degrain4(inputP, super_render, vectors['bv1'], vectors['fv1'], vectors['bv2'], vectors['fv2'], vectors['bv3'], vectors['fv3'], vectors['bv4'], vectors['fv4'], **degrain_args)
         elif tr == 3:
-          output = core.mv.Degrain3(inputP, super_render, vectors['bv1'], vectors['fv1'], vectors['bv2'], vectors['fv2'], vectors['bv3'], vectors['fv3'], **degrain_args)
+          output = MV.Degrain3(inputP, super_render, vectors['bv1'], vectors['fv1'], vectors['bv2'], vectors['fv2'], vectors['bv3'], vectors['fv3'], **degrain_args)
         elif tr == 2:
-          output = core.mv.Degrain2(inputP, super_render, vectors['bv1'], vectors['fv1'], vectors['bv2'], vectors['fv2'], **degrain_args)
+          output = MV.Degrain2(inputP, super_render, vectors['bv1'], vectors['fv1'], vectors['bv2'], vectors['fv2'], **degrain_args)
         else:
-          output = core.mv.Degrain1(inputP, super_render, vectors['bv1'], vectors['fv1'], **degrain_args)
+          output = MV.Degrain1(inputP, super_render, vectors['bv1'], vectors['fv1'], **degrain_args)
 
   # Contrasharp (only sharpens luma)
     if not GlobalO and if0:
@@ -528,26 +529,26 @@ def get_motion_vectors(super_search, refine, search_params, refine_params, tr, i
     vectors = {}
     
     if tr >= 1:
-        vectors['bv1'] = super_search.mv.Analyse(isb=True, delta=1, **search_params)
-        vectors['fv1'] = super_search.mv.Analyse(isb=False, delta=1, **search_params)
+        vectors['bv1'] = MV.Analyse(super_search, isb=True, delta=1, **search_params)
+        vectors['fv1'] = MV.Analyse(super_search, isb=False, delta=1, **search_params)
         if refine:
-            vectors['bv1'] = core.mv.Recalculate(refine, vectors['bv1'], **refine_params)
-            vectors['fv1'] = core.mv.Recalculate(refine, vectors['fv1'], **refine_params)
+            vectors['bv1'] = MV.Recalculate(refine, vectors['bv1'], **refine_params)
+            vectors['fv1'] = MV.Recalculate(refine, vectors['fv1'], **refine_params)
     
     if interlaced or tr >= 2:
-        vectors['bv2'] = super_search.mv.Analyse(isb=True, delta=2, **search_params)
-        vectors['fv2'] = super_search.mv.Analyse(isb=False, delta=2, **search_params)
+        vectors['bv2'] = MV.Analyse(super_search, isb=True, delta=2, **search_params)
+        vectors['fv2'] = MV.Analyse(super_search, isb=False, delta=2, **search_params)
         if refine:
-            vectors['bv2'] = core.mv.Recalculate(refine, vectors['bv2'], **refine_params)
-            vectors['fv2'] = core.mv.Recalculate(refine, vectors['fv2'], **refine_params)
+            vectors['bv2'] = MV.Recalculate(refine, vectors['bv2'], **refine_params)
+            vectors['fv2'] = MV.Recalculate(refine, vectors['fv2'], **refine_params)
     
     if tr >= 3:
         for i in range(3, tr + 1):
-            vectors[f'bv{i}'] = super_search.mv.Analyse(isb=True, delta=i, **search_params)
-            vectors[f'fv{i}'] = super_search.mv.Analyse(isb=False, delta=i, **search_params)
+            vectors[f'bv{i}'] = MV.Analyse(super_search, isb=True, delta=i, **search_params)
+            vectors[f'fv{i}'] = MV.Analyse(super_search, isb=False, delta=i, **search_params)
             if refine:
-                vectors[f'bv{i}'] = core.mv.Recalculate(refine, vectors[f'bv{i}'], **refine_params)
-                vectors[f'fv{i}'] = core.mv.Recalculate(refine, vectors[f'fv{i}'], **refine_params)
+                vectors[f'bv{i}'] = MV.Recalculate(refine, vectors[f'bv{i}'], **refine_params)
+                vectors[f'fv{i}'] = MV.Recalculate(refine, vectors[f'fv{i}'], **refine_params)
     
     return vectors
     

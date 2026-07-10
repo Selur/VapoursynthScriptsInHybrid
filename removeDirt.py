@@ -1,5 +1,6 @@
 import vapoursynth as vs
 from vapoursynth import core
+from misc import MV
 
 # dependencies:
 # RemoveGrain (http://www.vapoursynth.com/doc/plugins/rgvs.html) or zsmooth (https://github.com/adworacz/zsmooth)
@@ -55,11 +56,11 @@ def RemoveDirtMC(input: vs.VideoNode, limit: int=6, repmode: int=16, remgrainmod
   else:
     #block size of MAnalyze, blksize 8 is much better for 720x576 noisy source than blksize=16 
     #block overlapping of MAnalyze 0! 2 or 4 is not good for my noisy b&w 8mm film source
-    i = core.mv.Super(quad, pel=2)    #  avs: i=MSuper(clip,pel=2, isse=false)
-    bvec = core.mv.Analyse(super=i,isb=True, blksize=block_size,overlap=block_over, delta=1, truemotion=True, chroma=True)  
-    fvec = core.mv.Analyse(super=i,isb=False, blksize=block_size,overlap=block_over, delta=1, truemotion=True, chroma=True)
-    backw = core.mv.Flow(clip=quad,super=i,vectors=[bvec])
-    forw  = core.mv.Flow(clip=quad,super=i,vectors=[fvec])
+    i = MV.Super(quad, pel=2, blksize=block_size,overlap=block_over)    #  avs: i=MSuper(clip,pel=2, isse=false)
+    bvec = MV.Analyse(super=i,isb=True, blksize=block_size,overlap=block_over, delta=1, truemotion=True, chroma=True)  
+    fvec = MV.Analyse(super=i,isb=False, blksize=block_size,overlap=block_over, delta=1, truemotion=True, chroma=True)
+    backw = MV.Flow(clip=quad,super=i,vectors=[bvec])
+    forw  = MV.Flow(clip=quad,super=i,vectors=[fvec])
 
   clp = core.std.Interleave([backw,quad,forw])
   clp = RemoveDirt(clp, repmode=2, remgrainmode=17, limit=limit)

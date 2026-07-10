@@ -7,6 +7,8 @@ try:
 except ImportError:
     GaussBlur = None
 
+from misc import MV
+
 def _boxblur_fn():
     """Pick the best available BoxBlur."""
     if hasattr(core, 'vszip'): return core.vszip.BoxBlur
@@ -80,10 +82,10 @@ def StabilizeIT(clip: vs.VideoNode, div: float=2.0, initZoom: float=1.0, zoomMax
   pf = core.resize.Bilinear(clip=pf, width=int(pf.width/div), height=int(pf.height/div))
   pf = core.zsmooth.RemoveGrain(clip=pf, mode=rgMode) if zsmooth else core.rgvs.RemoveGrain(clip=clip, mode=rgMode)
   pf = core.resize.Bilinear(clip=pf, width=pf.width*div, height=pf.height*div) 
-  super = core.mv.Super(clip=pf) 
-  vectors = core.mv.Analyse(super=super, isb=False)
-  globalmotion = core.mv.DepanAnalyse(clip=pf, vectors=vectors, pixaspect=pixelAspect, error=anaError, thscd1=thSCD1, thscd2=thSCD2)
-  clip = core.mv.DepanStabilise(clip=clip, data=globalmotion, cutoff=cutOff, initzoom=initZoom, zoommax=zoomMax, rotmax=rotMax, pixaspect=pixelAspect, method=stabMethod)
+  _super = MV.Super(clip=pf, blksize=8, overlap=0) 
+  vectors = MV.Analyse(super=_super, isb=False)
+  globalmotion = MV.DepanAnalyse(clip=pf, vectors=vectors, pixaspect=pixelAspect, error=anaError, thscd1=thSCD1, thscd2=thSCD2)
+  clip = MV.DepanStabilise(clip=clip, data=globalmotion, cutoff=cutOff, initzoom=initZoom, zoommax=zoomMax, rotmax=rotMax, pixaspect=pixelAspect, method=stabMethod)
   return clip
 
 # Vapoursynth port by Selur from https://forum.doom9.org/showthread.php?p=1812060#post1812060
@@ -345,14 +347,14 @@ def VHSClean(clip: vs.VideoNode, ths: int=100, blur_sharp=True) -> vs.VideoNode:
   bblur  = 0.6
   
   
-  sx = core.mv.Super(clip=clip, pel=pel, sharp=1)  
+  sx = MV.Super(clip=clip, pel=pel, sharp=1,blksize=16,overlap=8)  
   
   #phase 1. Soft denoising
-  f1x = core.mv.Analyse(super_=sx,delta=1,isb=False,truemotion=tm,blksize=16,blksizev=8,overlap=8,overlapv=4,search=srch,searchparam=srhp,badsad=badsad,dct=1,chroma=chroma,lambda_=lambda_)
-  b1x = core.mv.Analyse(super_=sx,delta=1,isb=True,truemotion=tm,blksize=16,blksizev=8,overlap=8,overlapv=4,search=srch,searchparam=srhp,badsad=badsad,dct=1,chroma=chroma,lambda_=lambda_)
-  f2x = core.mv.Analyse(super_=sx,delta=2,isb=False,truemotion=tm,blksize=16,blksizev=8,overlap=8,overlapv=4,search=srch,searchparam=srhp,badsad=badsad,dct=1,chroma=chroma,lambda_=lambda_)
-  b2x = core.mv.Analyse(super_=sx,delta=2,isb=True,truemotion=tm,blksize=16,blksizev=8,overlap=8,overlapv=4,search=srch,searchparam=srhp,badsad=badsad,dct=1,chroma=chroma,lambda_=lambda_)
-  x2 = core.mv.Degrain2(clip,sx,b1x,f1x,b2x,f2x,thsad=ths,thsadc=thsc)
+  f1x = MV.Analyse(super_=sx,delta=1,isb=False,truemotion=tm,blksize=16,blksizev=8,overlap=8,overlapv=4,search=srch,searchparam=srhp,badsad=badsad,dct=1,chroma=chroma,lambda_=lambda_)
+  b1x = MV.Analyse(super_=sx,delta=1,isb=True,truemotion=tm,blksize=16,blksizev=8,overlap=8,overlapv=4,search=srch,searchparam=srhp,badsad=badsad,dct=1,chroma=chroma,lambda_=lambda_)
+  f2x = MV.Analyse(super_=sx,delta=2,isb=False,truemotion=tm,blksize=16,blksizev=8,overlap=8,overlapv=4,search=srch,searchparam=srhp,badsad=badsad,dct=1,chroma=chroma,lambda_=lambda_)
+  b2x = MV.Analyse(super_=sx,delta=2,isb=True,truemotion=tm,blksize=16,blksizev=8,overlap=8,overlapv=4,search=srch,searchparam=srhp,badsad=badsad,dct=1,chroma=chroma,lambda_=lambda_)
+  x2 = MV.Degrain2(clip,sx,b1x,f1x,b2x,f2x,thsad=ths,thsadc=thsc)
 
   #phase 2. Reinject denoised over original (like a sharpening using blurred version)
   EXPR = core.llvmexpr.Expr if hasattr(core, 'llvmexpr') else core.akarin.Expr if hasattr(core, 'akarin') else core.cranexpr.Expr if hasattr(core, 'cranexpr') else core.std.Expr
@@ -367,24 +369,24 @@ def VHSClean(clip: vs.VideoNode, ths: int=100, blur_sharp=True) -> vs.VideoNode:
     x0 = x3
     x1 = x3
 
-  sx0 = core.mv.Super(clip=x0,pel=pel,sharp=1,levels=1)   # Only 1 Level required for sharpened Super (not MAnalyse-ing)
-  sx1 = core.mv.Super(clip=x1,pel=pel,sharp=1)
+  sx0 = MV.Super(clip=x0,pel=pel,sharp=1,levels=1,blksize=8,overlap=0)   # Only 1 Level required for sharpened Super (not MAnalyse-ing)
+  sx1 = MV.Super(clip=x1,pel=pel,sharp=1,blksize=64,overlap=32)
 
-  f1x1 = core.mv.Analyse(super_=sx1,delta=1,isb=False,truemotion=tm,blksize=64,blksizev=64,overlap=32,overlapv=32,search=srch,searchparam=srhp,badsad=badsad,dct=0,chroma=chroma,lambda_=lambda_)
-  b1x1 = core.mv.Analyse(super_=sx1,delta=1,isb=True,truemotion=tm,blksize=64,blksizev=64,overlap=32,overlapv=32,search=srch,searchparam=srhp,badsad=badsad,dct=0,chroma=chroma,lambda_=lambda_)
-  f2x1 = core.mv.Analyse(super_=sx1,delta=2,isb=False,truemotion=tm,blksize=64,blksizev=64,overlap=32,overlapv=32,search=srch,searchparam=srhp,badsad=badsad,dct=0,chroma=chroma,lambda_=lambda_)
-  b2x1 = core.mv.Analyse(super_=sx1,delta=2,isb=True,truemotion=tm,blksize=64,blksizev=64,overlap=32,overlapv=32,search=srch,searchparam=srhp,badsad=badsad,dct=0,chroma=chroma,lambda_=lambda_)
-  f3x1 = core.mv.Analyse(super_=sx1,delta=3,isb=False,truemotion=tm,blksize=64,blksizev=64,overlap=32,overlapv=32,search=srch,searchparam=srhp,badsad=badsad,dct=0,chroma=chroma,lambda_=lambda_)
-  b3x1 = core.mv.Analyse(super_=sx1,delta=3,isb=True,truemotion=tm,blksize=64,blksizev=64,overlap=32,overlapv=32,search=srch,searchparam=srhp,badsad=badsad,dct=0,chroma=chroma,lambda_=lambda_)
-  f4x1 = core.mv.Analyse(super_=sx1,delta=4,isb=False,truemotion=tm,blksize=64,blksizev=64,overlap=32,overlapv=32,search=srch,searchparam=srhp,badsad=badsad,dct=0,chroma=chroma,lambda_=lambda_)
-  b4x1 = core.mv.Analyse(super_=sx1,delta=4,isb=True,truemotion=tm,blksize=64,blksizev=64,overlap=32,overlapv=32,search=srch,searchparam=srhp,badsad=badsad,dct=0,chroma=chroma,lambda_=lambda_)
-  f5x1 = core.mv.Analyse(super_=sx1,delta=5,isb=False,truemotion=tm,blksize=64,blksizev=64,overlap=32,overlapv=32,search=srch,searchparam=srhp,badsad=badsad,dct=0,chroma=chroma,lambda_=lambda_)
-  b5x1 = core.mv.Analyse(super_=sx1,delta=5,isb=True,truemotion=tm,blksize=64,blksizev=64,overlap=32,overlapv=32,search=srch,searchparam=srhp,badsad=badsad,dct=0,chroma=chroma,lambda_=lambda_)
-  f6x1 = core.mv.Analyse(super_=sx1,delta=6,isb=False,truemotion=tm,blksize=64,blksizev=64,overlap=32,overlapv=32,search=srch,searchparam=srhp,badsad=badsad,dct=0,chroma=chroma,lambda_=lambda_)
-  b6x1 = core.mv.Analyse(super_=sx1,delta=6,isb=True,truemotion=tm,blksize=64,blksizev=64,overlap=32,overlapv=32,search=srch,searchparam=srhp,badsad=badsad,dct=0,chroma=chroma,lambda_=lambda_)
+  f1x1 = MV.Analyse(super_=sx1,delta=1,isb=False,truemotion=tm,blksize=64,blksizev=64,overlap=32,overlapv=32,search=srch,searchparam=srhp,badsad=badsad,dct=0,chroma=chroma,lambda_=lambda_)
+  b1x1 = MV.Analyse(super_=sx1,delta=1,isb=True,truemotion=tm,blksize=64,blksizev=64,overlap=32,overlapv=32,search=srch,searchparam=srhp,badsad=badsad,dct=0,chroma=chroma,lambda_=lambda_)
+  f2x1 = MV.Analyse(super_=sx1,delta=2,isb=False,truemotion=tm,blksize=64,blksizev=64,overlap=32,overlapv=32,search=srch,searchparam=srhp,badsad=badsad,dct=0,chroma=chroma,lambda_=lambda_)
+  b2x1 = MV.Analyse(super_=sx1,delta=2,isb=True,truemotion=tm,blksize=64,blksizev=64,overlap=32,overlapv=32,search=srch,searchparam=srhp,badsad=badsad,dct=0,chroma=chroma,lambda_=lambda_)
+  f3x1 = MV.Analyse(super_=sx1,delta=3,isb=False,truemotion=tm,blksize=64,blksizev=64,overlap=32,overlapv=32,search=srch,searchparam=srhp,badsad=badsad,dct=0,chroma=chroma,lambda_=lambda_)
+  b3x1 = MV.Analyse(super_=sx1,delta=3,isb=True,truemotion=tm,blksize=64,blksizev=64,overlap=32,overlapv=32,search=srch,searchparam=srhp,badsad=badsad,dct=0,chroma=chroma,lambda_=lambda_)
+  f4x1 = MV.Analyse(super_=sx1,delta=4,isb=False,truemotion=tm,blksize=64,blksizev=64,overlap=32,overlapv=32,search=srch,searchparam=srhp,badsad=badsad,dct=0,chroma=chroma,lambda_=lambda_)
+  b4x1 = MV.Analyse(super_=sx1,delta=4,isb=True,truemotion=tm,blksize=64,blksizev=64,overlap=32,overlapv=32,search=srch,searchparam=srhp,badsad=badsad,dct=0,chroma=chroma,lambda_=lambda_)
+  f5x1 = MV.Analyse(super_=sx1,delta=5,isb=False,truemotion=tm,blksize=64,blksizev=64,overlap=32,overlapv=32,search=srch,searchparam=srhp,badsad=badsad,dct=0,chroma=chroma,lambda_=lambda_)
+  b5x1 = MV.Analyse(super_=sx1,delta=5,isb=True,truemotion=tm,blksize=64,blksizev=64,overlap=32,overlapv=32,search=srch,searchparam=srhp,badsad=badsad,dct=0,chroma=chroma,lambda_=lambda_)
+  f6x1 = MV.Analyse(super_=sx1,delta=6,isb=False,truemotion=tm,blksize=64,blksizev=64,overlap=32,overlapv=32,search=srch,searchparam=srhp,badsad=badsad,dct=0,chroma=chroma,lambda_=lambda_)
+  b6x1 = MV.Analyse(super_=sx1,delta=6,isb=True,truemotion=tm,blksize=64,blksizev=64,overlap=32,overlapv=32,search=srch,searchparam=srhp,badsad=badsad,dct=0,chroma=chroma,lambda_=lambda_)
 
-  mv123 = core.mv.Degrain3(x1, sx0, b1x1,f1x1,b2x1,f2x1,b3x1,f3x1,thsad=ths1,thsadc=thsc1)
-  mv456 = core.mv.Degrain3(x1, sx0, b4x1,f4x1,b5x1,f5x1,b6x1,f6x1,thsad=ths1,thsadc=thsc1)
+  mv123 = MV.Degrain3(x1, sx0, b1x1,f1x1,b2x1,f2x1,b3x1,f3x1,thsad=ths1,thsadc=thsc1)
+  mv456 = MV.Degrain3(x1, sx0, b4x1,f4x1,b5x1,f5x1,b6x1,f6x1,thsad=ths1,thsadc=thsc1)
   x4 = core.std.Merge(mv123, mv456, weight=[0.3])
  
 

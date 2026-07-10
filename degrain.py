@@ -7,6 +7,7 @@ import math
 from typing import Sequence, Union, Optional
 
 from vsutil import scale_value
+from misc import MV
 
 try:
     from gaussblur import GaussBlur
@@ -104,11 +105,11 @@ def STPresso(
     if tthr > 0:
         analyse_args = dict(truemotion=False, delta=1, blksize=16, overlap=8)
 
-        mvSuper = bzz.mv.Super(sharp=1)
-        bv1 = mvSuper.mv.Analyse(isb=True, **analyse_args)
-        fv1 = mvSuper.mv.Analyse(isb=False, **analyse_args)
-        bc1 = core.mv.Compensate(bzz, mvSuper, bv1)
-        fc1 = core.mv.Compensate(bzz, mvSuper, fv1)
+        mvSuper = MV.Super(bzz, sharp=1, blksize=16, overlap=8)
+        bv1 = MV.Analyse(mvSuper, isb=True, **analyse_args)
+        fv1 = MV.Analyse(mvSuper, isb=False, **analyse_args)
+        bc1 = MV.Compensate(bzz, mvSuper, bv1)
+        fc1 = MV.Compensate(bzz, mvSuper, fv1)
 
         interleave = core.std.Interleave([fc1, bzz, bc1])
         FX = core.zsmooth.FluxSmoothT if hasattr(core,'zsmooth') else core.flux.SmoothT
@@ -248,36 +249,36 @@ def TemporalDegrain(          \
 
     # Motion vector search (With very basic parameters. Add your own parameters
     # as needed.)
-    srchSuper = filterClip.mv.Super(pel=pel)
+    srchSuper = MV.Super(filterClip, pel=pel, blksize=blockSize, overlap=overlapValue)
 
     if degrain == 3:
-        bvec3 = srchSuper.mv.Analyse(isb=True, delta=3, blksize=blockSize\
+        bvec3 = MV.Analyse(srchSuper, isb=True, delta=3, blksize=blockSize\
             , overlap=overlapValue)
-        fvec3 = srchSuper.mv.Analyse(isb=False, delta=3, blksize=blockSize\
+        fvec3 = mv.Analyse(srchSuper, isb=False, delta=3, blksize=blockSize\
             , overlap=overlapValue)
 
     if degrain >= 2:
-        bvec2 = srchSuper.mv.Analyse(isb=True, delta=2, blksize=blockSize\
+        bvec2 = MV.Analyse(srchSuper, isb=True, delta=2, blksize=blockSize\
             , overlap=overlapValue)
-        fvec2 = srchSuper.mv.Analyse(isb=False, delta=2, blksize=blockSize\
+        fvec2 = MV.Analyse(srchSuper, isb=False, delta=2, blksize=blockSize\
             , overlap=overlapValue)
 
-    bvec1 = srchSuper.mv.Analyse(isb=True, delta=1, blksize=blockSize\
+    bvec1 = MV.Analyse(srchSuper, isb=True, delta=1, blksize=blockSize\
         , overlap=overlapValue)
-    fvec1 = srchSuper.mv.Analyse(isb=False, delta=1, blksize=blockSize\
+    fvec1 = MV.Analyse(srchSuper, isb=False, delta=1, blksize=blockSize\
         , overlap=overlapValue)
 
     # First MV-denoising stage. Usually here's some temporal-medianfiltering
     # going on. For simplicity, we just use MVDegrain.
-    inpSuper = inpClip.mv.Super(pel=2, levels=1)
+    inpSuper = MV.Super(inpClip, pel=2, levels=1, blksize=8, overlap=0)
     if degrain == 3:
-        nr1 = core.mv.Degrain3(inpClip, inpSuper, bvec1, fvec1, bvec2, fvec2\
+        nr1 = MV.Degrain3(inpClip, inpSuper, bvec1, fvec1, bvec2, fvec2\
             , bvec3, fvec3, thsad=thrDegrain1, limit=maxPxChange)
     elif degrain == 2:
-        nr1 = core.mv.Degrain2(inpClip, inpSuper, bvec1, fvec1, bvec2, fvec2\
+        nr1 = MV.Degrain2(inpClip, inpSuper, bvec1, fvec1, bvec2, fvec2\
             , thsad=thrDegrain1, limit=maxPxChange)
     else:
-        nr1 = core.mv.Degrain1(inpClip, inpSuper, bvec1, fvec1\
+        nr1 = MV.Degrain1(inpClip, inpSuper, bvec1, fvec1\
             , thsad=thrDegrain1, limit=maxPxChange)
     nr1Diff = core.std.MakeDiff(inpClip, nr1)
 
@@ -287,16 +288,16 @@ def TemporalDegrain(          \
     nr1X = core.std.MakeDiff(inpClip, dd, planes=0)
 
     # Second MV-denoising stage
-    nr1x_super = nr1X.mv.Super(pel=2, levels=1)
+    nr1x_super = MV.Super(nr1X, pel=2, levels=1, blksize=8, overlap=0)
 
     if degrain == 3:
-        nr2 = core.mv.Degrain3(nr1X, nr1x_super, bvec1, fvec1, bvec2, fvec2\
+        nr2 = MV.Degrain3(nr1X, nr1x_super, bvec1, fvec1, bvec2, fvec2\
             , bvec3, fvec3, thsad=thrDegrain2, limit=maxPxChange)
     elif degrain == 2:
-        nr2 = core.mv.Degrain2(nr1X, nr1x_super, bvec1, fvec1, bvec2, fvec2\
+        nr2 = MV.Degrain2(nr1X, nr1x_super, bvec1, fvec1, bvec2, fvec2\
             , thsad=thrDegrain2, limit=maxPxChange)
     else:
-        nr2 = core.mv.Degrain1(nr1X, nr1x_super, bvec1, fvec1\
+        nr2 = MV.Degrain1(nr1X, nr1x_super, bvec1, fvec1\
             , thsad=thrDegrain2, limit=maxPxChange)
 
     # Temporal filter to remove the last bits of dancinc pixels, YMMV.
@@ -367,12 +368,12 @@ def MLD_helper(clip, srch, tr, thSAD, rec, chroma, soft):
     
     isFLOAT = clip.format.sample_type == vs.FLOAT
     isGRAY = clip.format.color_family == vs.GRAY
-    S = core.mvsf.Super if isFLOAT else core.mv.Super
-    A = core.mvsf.Analyse if isFLOAT else core.mv.Analyse
-    R = core.mvsf.Recalculate if isFLOAT else core.mv.Recalculate
-    D1 = core.mvsf.Degrain1 if isFLOAT else core.mv.Degrain1
-    D2 = core.mvsf.Degrain2 if isFLOAT else core.mv.Degrain2
-    D3 = core.mvsf.Degrain3 if isFLOAT else core.mv.Degrain3
+    S = MV.Super
+    A = MV.Analyse
+    R = MV.Recalculate
+    D1 = MV.Degrain1
+    D2 = MV.Degrain2
+    D3 = MV.Degrain3
     bs = 32 if clip.width > 2400 else 16 if clip.width > 960 else 8
     pel = 1 if clip.width > 960 else 2
     truemotion = False if clip.width > 960 else True
@@ -382,7 +383,7 @@ def MLD_helper(clip, srch, tr, thSAD, rec, chroma, soft):
 
     analyse_args = dict(blksize=bs, overlap=bs//2, search=5, chroma=chroma, truemotion=truemotion)
     recalculate_args = dict(blksize=bs//2, overlap=bs//4, search=5, chroma=chroma, truemotion=truemotion)
-    sup1 = S(DitherLumaRebuild(srch, 1), hpad=bs, vpad=bs, pel=pel, sharp=1, rfilter=4)
+    sup1 = S(DitherLumaRebuild(srch, 1), hpad=bs, vpad=bs, pel=pel, sharp=1, rfilter=4,blksize=bs, overlap=bs//2)
 
     if soft > 0:
         if clip.width > 1280:
@@ -393,10 +394,10 @@ def MLD_helper(clip, srch, tr, thSAD, rec, chroma, soft):
             RG = MinBlur(clip, 1, planes)
         RG = core.std.Merge(clip, RG, [soft] if chroma or isGRAY else [soft, 0]) if soft < 1 else RG
         EXPR = core.llvmexpr.Expr if hasattr(core, 'llvmexpr') else core.akarin.Expr if hasattr(core, 'akarin') else core.cranexpr.Expr if hasattr(core, 'cranexpr') else core.std.Expr
-        sup2 = S(EXPR([clip, RG], ['x dup y - +'] if chroma or isGRAY else ['x dup y - +', '']), hpad=bs, vpad=bs, pel=pel, levels=1, rfilter=1)
+        sup2 = S(EXPR([clip, RG], ['x dup y - +'] if chroma or isGRAY else ['x dup y - +', '']), hpad=bs, vpad=bs, pel=pel, levels=1, rfilter=1, blksize=bs, overlap=bs//2)
     else:
         RG = clip
-        sup2 = S(clip, hpad=bs, vpad=bs, pel=pel, levels=1, rfilter=1)
+        sup2 = S(clip, hpad=bs, vpad=bs, pel=pel, levels=1, rfilter=1, blksize=bs, overlap=bs//2)
 
     if tr < 4:
         bv1 = A(sup1, isb=True,  delta=1, **analyse_args)
@@ -534,22 +535,13 @@ def TemporalDegrain2(clip, degrainTR=1, degrainPlane=4, grainLevel=2, grainLevel
     # Seems to be used for some kind of bit depth scaling...
     bitDepthMultiplier = 0.00392 if isFLOAT else 1 << (bd - 8)
     mid = 0.5 if isFLOAT else 1 << (bd - 1)
-    if hasattr(core, 'mvsf') and isFLOAT:  
-      S = core.mvsf.Super
-      A = core.mvsf.Analyze
-      C = core.mvsf.Compensate
-      R = core.mvsf.Recalculate
-      D1 = core.mvsf.Degrain1
-      D2 = core.mvsf.Degrain2
-      D3 = core.mvsf.Degrain3
-    else:
-      S = core.mv.Super
-      A = core.mv.Analyse
-      C = core.mv.Compensate
-      R = core.mv.Recalculate
-      D1 = core.mv.Degrain1
-      D2 = core.mv.Degrain2
-      D3 = core.mv.Degrain3
+    S = MV.Super
+    A = MV.Analyse
+    C = MV.Compensate
+    R = MV.Recalculate
+    D1 = MV.Degrain1
+    D2 = MV.Degrain2
+    D3 = MV.Degrain3
     
     if hasattr(core, 'zsmooth'):
       RG = core.zsmooth.RemoveGrain
@@ -684,7 +676,7 @@ def TemporalDegrain2(clip, degrainTR=1, degrainPlane=4, grainLevel=2, grainLevel
         expr = 'x {a} + y < x {b} + x {a} - y > x {b} - x y + 2 / ? ?'.format(a=7*bitDepthMultiplier, b=2*bitDepthMultiplier)
         srchClip = EXPR([spatialBlur, clip], [expr] if ChromaMotion or isGRAY else [expr, ''])
 
-    super_args = dict(pel=meSubpel, hpad=hpad, vpad=vpad, sharp=SubPelInterp, chroma=ChromaMotion)
+    super_args = dict(pel=meSubpel, hpad=hpad, vpad=vpad, sharp=SubPelInterp, chroma=ChromaMotion, blksize=meBlksz, overlap=Overlap)
     analyse_args = dict(blksize=meBlksz, overlap=Overlap, search=meAlg, searchparam=meAlgPar, pelsearch=meSubpel, truemotion=meTM, lambda_=Lambda, pnew=PNew, global_=GlobalMotion, dct=DCT, chroma=ChromaMotion)
     recalculate_args = dict(thsad=thSAD1 // 2, blksize=max(meBlksz // 2, 4), overlap=max(Overlap // 2, 2), search=meAlg, searchparam=meAlgPar, truemotion=meTM, lambda_=Lambda/4, pnew=PNew, dct=DCT, chroma=ChromaMotion)
 
@@ -1260,36 +1252,36 @@ def mcdegrainsharp(clip, frames=2, bblur=0.3, csharp=0.3, bsrch=True, thsad=400,
       c2 = _boxblur_fn()(clip, planes=planes, hradius=radius, hpasses=3, vradius=radius, vpasses=3)
 
     if bsrch is True:
-        super_a = core.mv.Super(c2, pel=2, sharp=1)
+        super_a = MV.Super(c2, pel=2, sharp=1, overlap=blksize//2, blksize=blksize)
     else:
-        super_a = core.mv.Super(clip, pel=2, sharp=1)
+        super_a = MV.Super(clip, pel=2, sharp=1, overlap=blksize//2, blksize=blksize)
 
-    super_rend = core.mv.Super(_sharpen(clip, csharp, planes=planes), pel=2, sharp=1, levels=1)
+    super_rend = MV.Super(_sharpen(clip, csharp, planes=planes), pel=2, sharp=1, levels=1, overlap=blksize//2, blksize=blksize)
 
-    mvbw3 = core.mv.Analyse(super_a, isb=True, delta=3,
+    mvbw3 = MV.Analyse(super_a, isb=True, delta=3,
                             overlap=blksize//2, blksize=blksize)
-    mvbw2 = core.mv.Analyse(super_a, isb=True, delta=2,
+    mvbw2 = MV.Analyse(super_a, isb=True, delta=2,
                             overlap=blksize//2, blksize=blksize)
-    mvbw1 = core.mv.Analyse(super_a, isb=True, delta=1,
+    mvbw1 = MV.Analyse(super_a, isb=True, delta=1,
                             overlap=blksize//2, blksize=blksize)
-    mvfw1 = core.mv.Analyse(super_a, isb=False, delta=1,
+    mvfw1 = MV.Analyse(super_a, isb=False, delta=1,
                             overlap=blksize//2, blksize=blksize)
-    mvfw2 = core.mv.Analyse(super_a, isb=False, delta=2,
+    mvfw2 = MV.Analyse(super_a, isb=False, delta=2,
                             overlap=blksize//2, blksize=blksize)
-    mvfw3 = core.mv.Analyse(super_a, isb=False, delta=3,
+    mvfw3 = MV.Analyse(super_a, isb=False, delta=3,
                             overlap=blksize//2, blksize=blksize)
 
     if frames == 1:
-        last = core.mv.Degrain1(clip=c2, super=super_rend,
+        last = MV.Degrain1(clip=c2, super=super_rend,
                                 mvbw=mvbw1, mvfw=mvfw1, thsad=thsad,
                                 plane=plane)
     elif frames == 2:
-        last = core.mv.Degrain2(clip=c2, super=super_rend,
+        last = MV.Degrain2(clip=c2, super=super_rend,
                                 mvbw=mvbw1, mvfw=mvfw1,
                                 mvbw2=mvbw2, mvfw2=mvfw2,
                                 thsad=thsad, plane=plane)
     elif frames == 3:
-        last = core.mv.Degrain3(clip=c2, super=super_rend,
+        last = MV.Degrain3(clip=c2, super=super_rend,
                                 mvbw=mvbw1, mvfw=mvfw1, mvbw2=mvbw2,
                                 mvfw2=mvfw2, mvbw3=mvbw3, mvfw3=mvfw3,
                                 thsad=thsad, plane=plane)

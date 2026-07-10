@@ -1,11 +1,12 @@
 import vapoursynth as vs
 core = vs.core
+from misc import MV
 
-def fillWithMVTools(clip):
-  super = core.mv.Super(clip, pel=2)
-  vfe = core.mv.Analyse(super, truemotion=True, isb=False, delta=1)
-  vbe = core.mv.Analyse(super, truemotion=True, isb=True, delta=1)
-  return core.mv.FlowInter(clip, super, mvbw=vbe, mvfw=vfe, time=50)
+def fillWithMVTools(clip):  
+  super = MV.Super(clip, pel=2, blksize=8, overlap=0)
+  vfe = MV.Analyse(super, truemotion=True, isb=False, delta=1)
+  vbe = MV.Analyse(super, truemotion=True, isb=True, delta=1)
+  return MV.FlowInter(clip, super, mvbw=vbe, mvfw=vfe, time=50)
     
 def fillWithRIFE(clip, firstframe=None, rifeModel=22, rifeTTA=False, rifeUHD=False, sceneThresh=0.15):
   clip1 = core.std.AssumeFPS(clip, fpsnum=1, fpsden=1)

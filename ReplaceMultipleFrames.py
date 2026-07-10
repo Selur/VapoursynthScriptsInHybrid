@@ -1,5 +1,6 @@
 import vapoursynth as vs
 from vapoursynth import core
+from misc import MV
 
 class ReplaceMultipleFrames:
     def __init__(self, clip: vs.VideoNode, intervals: list, method: str = 'SVP', rifeModel: int = 22, rifeTTA=False, rifeUHD=False, device_index: int = 0, debug: bool = False):
@@ -152,10 +153,10 @@ class ReplaceMultipleFrames:
         Returns:
             Clip with interpolated frames
         """
-        sup = core.mv.Super(clip, pel=2, hpad=0, vpad=0)
-        bvec = core.mv.Analyse(sup, blksize=16, isb=True, chroma=True, search=3, searchparam=1)
-        fvec = core.mv.Analyse(sup, blksize=16, isb=False, chroma=True, search=3, searchparam=1)
-        return core.mv.FlowFPS(clip, sup, bvec, fvec, num=num, den=1, mask=2)
+        sup = MV.Super(clip, pel=2, hpad=0, vpad=0, blksize=16, overlap=0)
+        bvec = MV.Analyse(sup, blksize=16, isb=True, chroma=True, search=3, searchparam=1)
+        fvec = MV.Analyse(sup, blksize=16, isb=False, chroma=True, search=3, searchparam=1)
+        return MV.FlowFPS(clip, sup, bvec, fvec, num=num, den=1, mask=2)
 
     @property
     def out(self):

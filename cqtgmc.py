@@ -2,6 +2,8 @@ import vapoursynth as vs
 from functools import partial
 from typing import Optional, Union, Sequence
 
+from misc import MV
+
 core = vs.core
 
 def CQTGMC(clip: vs.VideoNode, Sharpness: float=0.25, thSAD1: int=192, thSAD2: int=320, thSAD3: int=128, thSAD4: int=320, tff: bool=True, openCL: bool=False, boxed: bool=False) -> vs.VideoNode:
@@ -38,16 +40,16 @@ def CQTGMC(clip: vs.VideoNode, Sharpness: float=0.25, thSAD1: int=192, thSAD2: i
     denoised = core.std.Merge(clipa=denoised, clipb=bobbed, weight=0.25)
     
     srchClip = denoised
-    csuper = core.mv.Super(clip=denoised)
-    bvec = core.mv.Analyse(csuper, isb=True, blksize=64, overlap=32)
-    fvec = core.mv.Analyse(csuper, isb=False, blksize=64, overlap=32)
-    Comp1 = core.mv.Compensate(clip=denoised, super=csuper, vectors=bvec, thsad=thSAD2)
-    Comp2 = core.mv.Compensate(clip=denoised, super=csuper, vectors=fvec, thsad=thSAD2)
+    csuper = MV.Super(clip=denoised, blksize=64, overlap=32)
+    bvec = MV.Analyse(csuper, isb=True, blksize=64, overlap=32)
+    fvec = MV.Analyse(csuper, isb=False, blksize=64, overlap=32)
+    Comp1 = MV.Compensate(clip=denoised, super=csuper, vectors=bvec, thsad=thSAD2)
+    Comp2 = MV.Compensate(clip=denoised, super=csuper, vectors=fvec, thsad=thSAD2)
     denoised = core.std.Interleave([Comp1, denoised, Comp2])
-    csuper = core.mv.Super(clip=denoised)
-    bvec = core.mv.Analyse(csuper, isb=True, blksize=64, overlap=32)
-    fvec = core.mv.Analyse(csuper, isb=False, blksize=64, overlap=32)
-    Inter = core.mv.FlowInter(denoised, csuper, bvec, fvec, blend=False)
+    csuper = MV.Super(clip=denoised, blksize=64, overlap=32)
+    bvec = MV.Analyse(csuper, isb=True, blksize=64, overlap=32)
+    fvec = MV.Analyse(csuper, isb=False, blksize=64, overlap=32)
+    Inter = MV.FlowInter(denoised, csuper, bvec, fvec, blend=False)
     
     a = core.std.SelectEvery(clip=Inter, cycle=3, offsets=0)
     b = core.std.SelectEvery(clip=Inter, cycle=3, offsets=1)
@@ -66,12 +68,12 @@ def CQTGMC(clip: vs.VideoNode, Sharpness: float=0.25, thSAD1: int=192, thSAD2: i
     
     srchClip = core.std.FrameEval(clip=srchClip, eval=partial(selectQTGMC, a=a, b=b), prop_src=[diffclip, diffclip_trimmed])
     
-    csuper = core.mv.Super(clip=srchClip)
-    bVec1 = core.mv.Analyse(super=csuper, isb=True, overlap=4, delta=1)
-    fVec1 = core.mv.Analyse(super=csuper, isb=False, overlap=4, delta=1)
-    csuper = core.mv.Super(clip=bobbed, levels=1)
-    bComp1 = core.mv.Compensate(clip=bobbed, super=csuper, vectors=bVec1, thsad=thSAD3)
-    fComp1 = core.mv.Compensate(clip=bobbed, super=csuper, vectors=fVec1, thsad=thSAD3)
+    csuper = MV.Super(clip=srchClip, blksize=8, overlap=4)
+    bVec1 = MV.Analyse(super=csuper, isb=True, overlap=4, delta=1)
+    fVec1 = MV.Analyse(super=csuper, isb=False, overlap=4, delta=1)
+    csuper = MV.Super(clip=bobbed, levels=1)
+    bComp1 = MV.Compensate(clip=bobbed, super=csuper, vectors=bVec1, thsad=thSAD3)
+    fComp1 = MV.Compensate(clip=bobbed, super=csuper, vectors=fVec1, thsad=thSAD3)
     
     Inter = core.std.Interleave([
         bobbed.std.SeparateFields(tff=tff).std.SelectEvery(4, 0),
@@ -81,22 +83,22 @@ def CQTGMC(clip: vs.VideoNode, Sharpness: float=0.25, thSAD1: int=192, thSAD2: i
     ]) 
     
     weaved = core.std.DoubleWeave(clip=Inter)[::2]
-    csuper = core.mv.Super(clip=weaved, levels=1)
+    csuper = MV.Super(clip=weaved, levels=1, blksize=8, overlap=0)
     
-    bComp1 = core.mv.Compensate(clip=weaved, super=csuper, vectors=bVec1, thsad=thSAD4)
-    fComp1 = core.mv.Compensate(clip=weaved, super=csuper, vectors=fVec1, thsad=thSAD4)
+    bComp1 = MV.Compensate(clip=weaved, super=csuper, vectors=bVec1, thsad=thSAD4)
+    fComp1 = MV.Compensate(clip=weaved, super=csuper, vectors=fVec1, thsad=thSAD4)
     EXPR = core.llvmexpr.Expr if hasattr(core, 'llvmexpr') else core.akarin.Expr if hasattr(core, 'akarin') else core.cranexpr.Expr if hasattr(core, 'cranexpr') else core.std.Expr
     tMax = EXPR(clips=[weaved, bComp1], expr=['x y max'])
     tMax = EXPR(clips=[tMax, fComp1], expr=['x y max'])
     tMin = EXPR(clips=[weaved, bComp1], expr=['x y min'])
     tMin = EXPR(clips=[tMin, fComp1], expr=['x y min'])
     
-    degrained = core.mv.Degrain1(clip=weaved, super=csuper, mvbw=bVec1, mvfw=fVec1, thsad=thSAD1)
+    degrained = MV.Degrain1(clip=weaved, super=csuper, mvbw=bVec1, mvfw=fVec1, thsad=thSAD1)
     sharpen = core.std.MergeDiff(degrained, core.std.MakeDiff(degrained, RG(degrained, mode=20)))
     sharpen = mt_clamp(sharpen, tMax, tMin, Sharpness, Sharpness, [0])
     
-    csuper = core.mv.Super(sharpen, levels=1)
-    degrained = core.mv.Degrain1(clip=degrained, super=csuper, mvbw=bVec1, mvfw=fVec1, thsad=thSAD1)
+    csuper = MV.Super(sharpen, levels=1, blksize=8, overlap=0)
+    degrained = MV.Degrain1(clip=degrained, super=csuper, mvbw=bVec1, mvfw=fVec1, thsad=thSAD1)
     
     # Crop back to the original dimensions
     degrained = core.std.Crop(degrained, left=0, top=0, right=pWidth - clip.width, bottom=pHeight - clip.height)

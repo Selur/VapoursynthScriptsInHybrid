@@ -1,15 +1,17 @@
 from vapoursynth import core
 import vapoursynth as vs
 
+from misc import MV
+
 # VS port of a script by Didée http://forum.doom9.net/showthread.php?p=1402690#post1402690
 # In my experience this filter works very good as a prefilter for SMDegrain(). 
 # Filtering only luma seems to help to avoid ghost artefacts.
 def DeSpot(o):
-  osup = o.mv.Super(pel=2, sharp=2)
-  bv1  = osup.mv.Analyse(isb=True, delta=1, blksize=8, overlap=4, search=4)
-  fv1  = osup.mv.Analyse(isb=False,delta=1, blksize=8, overlap=4, search=4)
-  bc1  = o.mv.Compensate(osup, bv1)
-  fc1  = o.mv.Compensate(osup, fv1)
+  osup = MV.Super(o, pel=2, sharp=2, blksize=8, overlap=4)
+  bv1  = MV.Analyse(osup, isb=True, delta=1, blksize=8, overlap=4, search=4)
+  fv1  = MV.Analyse(osup, isb=False,delta=1, blksize=8, overlap=4, search=4)
+  bc1  = MV.Compensate(o, osup, bv1)
+  fc1  = MV.Compensate(o, osup, fv1)
   
   clip = core.std.Interleave([fc1, o, bc1])
   
@@ -150,17 +152,17 @@ def RemoveSpotsMCX(clip: vs.VideoNode, limit: int = 6, grey: bool = False, runs:
           RemoveSpots leaves visible spots.
     """
     # Create superclip for motion estimation at half-pixel precision
-    sup  = core.mv.Super(clip, pel=2)
+    sup  = MV.Super(clip, pel=2, blksize=8, overlap=4)
 
     # Analyse backward motion (next frame -> current)
-    bvec = core.mv.Analyse(sup, isb=False, blksize=8, delta=1, truemotion=True)
+    bvec = MV.Analyse(sup, isb=False, blksize=8, delta=1, truemotion=True)
 
     # Analyse forward motion (prev frame -> current)
-    fvec = core.mv.Analyse(sup, isb=True,  blksize=8, delta=1, truemotion=True)
+    fvec = MV.Analyse(sup, isb=True,  blksize=8, delta=1, truemotion=True)
 
     # Motion-compensate: create frames warped to match current frame's motion
-    backw = core.mv.Flow(clip, sup, bvec)  # Next frame compensated to current
-    forw  = core.mv.Flow(clip, sup, fvec)  # Previous frame compensated to current
+    backw = MV.Flow(clip, sup, bvec)  # Next frame compensated to current
+    forw  = MV.Flow(clip, sup, fvec)  # Previous frame compensated to current
 
     # Interleave as [backward, source, forward] so RemoveSpots processes
     # a motion-compensated sequence

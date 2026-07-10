@@ -14,6 +14,8 @@ try:
 except ImportError:
     _contra_sharpening = None
 
+from misc import MV
+
 # ---------------------------------------------------------------------------
 # Plugin wrappers — each wrapper tries the fastest available backend first
 # ---------------------------------------------------------------------------
@@ -448,14 +450,14 @@ def SRFComb(
     pre2 = core.std.Merge(pre2, _repair(pre2, ogs, 1))
 
     # --- MVTools motion analysis ---
-    super_search = core.mv.Super(pre2, pel=4, rfilter=4)
-    bv1 = core.mv.Analyse(super_search, blksize=8, isb=True,  delta=2, overlap=2, dct=8)
-    fv1 = core.mv.Analyse(super_search, blksize=8, isb=False, delta=2, overlap=2, dct=8)
+    super_search = MV.Super(pre2, pel=4, rfilter=4, blksize=8, overlap=2)
+    bv1 = MV.Analyse(super_search, blksize=8, isb=True,  delta=2, overlap=2, dct=8)
+    fv1 = MV.Analyse(super_search, blksize=8, isb=False, delta=2, overlap=2, dct=8)
 
     # --- lastLumaSpatialDeDot ---
     lastLSD   = core.std.MaskedMerge(separated, LumaSpatialDeDot, ycombmask, planes=[0])
-    super_lsd = core.mv.Super(lastLSD, pel=4, levels=1)
-    degrained = core.mv.Degrain1(lastLSD, super_lsd, bv1, fv1, thsad=thSAD, thsadc=thSADC)
+    super_lsd = MV.Super(lastLSD, pel=4, levels=1, blksize=8, overlap=2)
+    degrained = MV.Degrain1(lastLSD, super_lsd, bv1, fv1, thsad=thSAD, thsadc=thSADC)
 
     # --- Final merge: ycombmask on luma, uvcombmask on chroma ---
     merged = core.std.MaskedMerge(ogs,    degrained, ycombmask,       planes=[0])
@@ -753,13 +755,13 @@ def SRFComb2(
     # Motion compensation — separate search super and degrain super
     # ------------------------------------------------------------------
     if progressive:
-        super_search  = core.mv.Super(spati_comb_c, rfilter=4)
-        super_degrain = core.mv.Super(fields, levels=1)
+        super_search  = MV.Super(spati_comb_c, rfilter=4, blksize=8, overlap=2)
+        super_degrain = MV.Super(fields, levels=1, blksize=8, overlap=2)
 
-        bv = core.mv.Analyse(super_search, isb=True,  delta=1, overlap=2, dct=8)
-        fv = core.mv.Analyse(super_search, isb=False, delta=1, overlap=2, dct=8)
+        bv = MV.Analyse(super_search, isb=True,  delta=1, overlap=2, dct=8)
+        fv = MV.Analyse(super_search, isb=False, delta=1, overlap=2, dct=8)
 
-        degrain = core.mv.Degrain1(fields, super_degrain, bv, fv,
+        degrain = MV.Degrain1(fields, super_degrain, bv, fv,
                                    thsad=thsad, thsadc=thsadc)
     else:
         even_sc = core.std.SelectEvery(spati_comb_c, 2, [0])
@@ -767,18 +769,18 @@ def SRFComb2(
         even_o  = core.std.SelectEvery(fields, 2, [0])
         odd_o   = core.std.SelectEvery(fields, 2, [1])
 
-        sup_se = core.mv.Super(even_sc, rfilter=4)
-        sup_so = core.mv.Super(odd_sc,  rfilter=4)
-        sup_de = core.mv.Super(even_o,  levels=1)
-        sup_do = core.mv.Super(odd_o,   levels=1)
+        sup_se = MV.Super(even_sc, rfilter=4, blksize=8, overlap=2)
+        sup_so = MV.Super(odd_sc,  rfilter=4, blksize=8, overlap=2)
+        sup_de = MV.Super(even_o,  levels=1, blksize=8, overlap=2)
+        sup_do = MV.Super(odd_o,   levels=1, blksize=8, overlap=2)
 
-        bv_e = core.mv.Analyse(sup_se, isb=True,  delta=1, overlap=2, dct=8)
-        fv_e = core.mv.Analyse(sup_se, isb=False, delta=1, overlap=2, dct=8)
-        bv_o = core.mv.Analyse(sup_so, isb=True,  delta=1, overlap=2, dct=8)
-        fv_o = core.mv.Analyse(sup_so, isb=False, delta=1, overlap=2, dct=8)
+        bv_e = MV.Analyse(sup_se, isb=True,  delta=1, overlap=2, dct=8)
+        fv_e = MV.Analyse(sup_se, isb=False, delta=1, overlap=2, dct=8)
+        bv_o = MV.Analyse(sup_so, isb=True,  delta=1, overlap=2, dct=8)
+        fv_o = MV.Analyse(sup_so, isb=False, delta=1, overlap=2, dct=8)
 
-        even_d  = core.mv.Degrain1(even_o, sup_de, bv_e, fv_e, thsad=thsad, thsadc=thsadc)
-        odd_d   = core.mv.Degrain1(odd_o,  sup_do, bv_o, fv_o, thsad=thsad, thsadc=thsadc)
+        even_d  = MV.Degrain1(even_o, sup_de, bv_e, fv_e, thsad=thsad, thsadc=thsadc)
+        odd_d   = MV.Degrain1(odd_o,  sup_do, bv_o, fv_o, thsad=thsad, thsadc=thsadc)
         degrain = core.std.Interleave([even_d, odd_d])
 
     # ------------------------------------------------------------------
@@ -786,14 +788,14 @@ def SRFComb2(
     # ------------------------------------------------------------------
     if dedot or derainbow:
         if progressive:
-            mmask_bv    = core.mv.Mask(fields, bv, kind=0, ml=1, ysc=255)
-            mmask_fv    = core.mv.Mask(fields, fv, kind=0, ml=1, ysc=255)
+            mmask_bv    = MV.Mask(fields, bv, kind=0, ml=1, ysc=255)
+            mmask_fv    = MV.Mask(fields, fv, kind=0, ml=1, ysc=255)
             motion_mask = _mt_logic(mmask_bv, mmask_fv, "max")
         else:
-            mmask_bv_e  = core.mv.Mask(even_o, bv_e, kind=0, ml=1, ysc=255)
-            mmask_fv_e  = core.mv.Mask(even_o, fv_e, kind=0, ml=1, ysc=255)
-            mmask_bv_o  = core.mv.Mask(odd_o,  bv_o, kind=0, ml=1, ysc=255)
-            mmask_fv_o  = core.mv.Mask(odd_o,  fv_o, kind=0, ml=1, ysc=255)
+            mmask_bv_e  = MV.Mask(even_o, bv_e, kind=0, ml=1, ysc=255)
+            mmask_fv_e  = MV.Mask(even_o, fv_e, kind=0, ml=1, ysc=255)
+            mmask_bv_o  = MV.Mask(odd_o,  bv_o, kind=0, ml=1, ysc=255)
+            mmask_fv_o  = MV.Mask(odd_o,  fv_o, kind=0, ml=1, ysc=255)
             mmask_e     = _mt_logic(mmask_bv_e, mmask_fv_e, "max")
             mmask_o     = _mt_logic(mmask_bv_o, mmask_fv_o, "max")
             motion_mask = core.std.Interleave([mmask_e, mmask_o])

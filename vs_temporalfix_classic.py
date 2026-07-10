@@ -6,9 +6,9 @@
 
 import vapoursynth as vs
 from vs_temporalfix_utils import *
+from misc import MV
 
 core = vs.core
-
 
 def _motion_search_prefilter(clip, thsad=250, tr=6):
     # creates a temporally extremely stable reference for better motion vector estimation, but with lots of ghosting
@@ -19,19 +19,19 @@ def _motion_search_prefilter(clip, thsad=250, tr=6):
     # first pass with temporal median
     bs  = 128  # large blocksize to reduce warping
     pel = 1
-    sup = core.mv.Super(clip, pel=pel, sharp=1, rfilter=4, hpad=bs // 2, vpad=bs // 2)
+    sup = MV.Super(clip, pel=pel, sharp=1, rfilter=4, hpad=bs // 2, vpad=bs // 2, blksize=bs, overlap=bs // 2)
     analyse_args = dict(blksize=bs, overlap=bs // 2, search=4, searchparam=2, truemotion=False)
-    bv1 = core.mv.Analyse(sup, isb=True,  delta=1, **analyse_args)
-    fv1 = core.mv.Analyse(sup, isb=False, delta=1, **analyse_args)
-    bc1 = core.mv.Compensate(clip, sup, bv1)
-    fc1 = core.mv.Compensate(clip, sup, fv1)
+    bv1 = MV.Analyse(sup, isb=True,  delta=1, **analyse_args)
+    fv1 = MV.Analyse(sup, isb=False, delta=1, **analyse_args)
+    bc1 = MV.Compensate(clip, sup, bv1)
+    fc1 = MV.Compensate(clip, sup, fv1)
     fcb = core.std.Interleave([fc1, clip, bc1])
     clip = temporal_median(fcb, radius=1, planes=0)[1::3]
 
     # second pass with degrain and a wide radius (improves pans, zooms and similar, reduces warping)
     bs  = 128  # large blocksize to reduce warping
     pel = 1
-    sup = core.mv.Super(clip, pel=pel, sharp=1, rfilter=4)
+    sup = MV.Super(clip, pel=pel, sharp=1, rfilter=4, blksize=bs, overlap=0)
     analyse_args = dict(blksize=bs, overlap=0, search=4, searchparam=1, truemotion=False)
     vecs = mv_analyze(sup, tr, analyse_args)
     return mv_degrain(clip, sup, vecs, tr, dict(thsad=thsad, plane=0))
@@ -136,9 +136,9 @@ def classic(clip, strength=500, tr=6, denoise=False, exclude=None, debug=False):
 
     # compensate next frame for motionmask so that it works on pans and zooms
     mm_pref   = core.resize.Bilinear(ref, format=vs.GRAY8)
-    mm_sup    = core.mv.Super(mm_pref, pel=2, sharp=1, rfilter=4, hpad=64, vpad=64)
-    mm_vec    = core.mv.Analyse(mm_sup, isb=False, delta=1, blksize=128, overlap=64, search=5, truemotion=True)
-    mm_window = core.mv.Compensate(mm_pref, mm_sup, mm_vec, thsad=200000, thscd1=1000, thscd2=1000)
+    mm_sup    = MV.Super(mm_pref, pel=2, sharp=1, rfilter=4, hpad=64, vpad=64)
+    mm_vec    = MV.Analyse(mm_sup, isb=False, delta=1, blksize=128, overlap=64, search=5, truemotion=True)
+    mm_window = MV.Compensate(mm_pref, mm_sup, mm_vec, thsad=200000, thscd1=1000, thscd2=1000)
     mm_window = core.std.Interleave([mm_window, mm_pref])
 
     # create motionmask to protect large motions
@@ -190,12 +190,12 @@ def classic(clip, strength=500, tr=6, denoise=False, exclude=None, debug=False):
         clip        = core.resize.Point(clip,   format=vs.YUV444PS)
 
     # superclips
-    create_super = core.mv.Super if not mvsf else core.mvsf.Super
+    create_super = MV.Super if not mvsf else core.mvsf.Super
     if pel > 1:
-        pref_sup = create_super(pref, chroma=chroma, rfilter=4, pel=pel, pelclip=pelclip)
+        pref_sup = create_super(pref, chroma=chroma, rfilter=4, pel=pel, pelclip=pelclip, blksize=blksize, overlap=overlap)
     else:
-        pref_sup = create_super(pref, chroma=chroma, rfilter=4, pel=pel, sharp=1)
-    clip_sup     = create_super(clip, chroma=chroma, rfilter=1, pel=pel, sharp=subpixel, levels=1)
+        pref_sup = create_super(pref, chroma=chroma, rfilter=4, pel=pel, sharp=1, blksize=blksize, overlap=overlap)
+    clip_sup     = create_super(clip, chroma=chroma, rfilter=1, pel=pel, sharp=subpixel, levels=1, blksize=8, overlap=0)
 
     # analyze and degrain
     analyse_args = dict(blksize=blksize, search=search, chroma=chroma, truemotion=truemotion, global_=MVglobal, overlap=overlap, dct=DCT, searchparam=searchparam, fields=False)

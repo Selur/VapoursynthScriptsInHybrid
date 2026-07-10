@@ -99,6 +99,7 @@ import misc
 import vapoursynth as vs
 import ChangeFPS
 from vapoursynth import core
+from misc import MV
 
 def FrameRateConverter(C, newNum = None, newDen = None, preset = "normal", blkSize = None, blkSizeV = None, frameDouble = None, output = "auto", debug = False, \
     prefilter = None, maskThr = None, maskOcc = None, skipThr = 45, blendOver = None, skipOver = None, stp = 35, dct = None, dctRe = None, blendRatio = 50, rife = None, rifeModel = None, rifeTta = False, rifeGpu = 0):
@@ -182,27 +183,27 @@ def FrameRateConverter(C, newNum = None, newDen = None, preset = "normal", blkSi
     dct_pow = 1 if not recalculate else 1 if dctRe==2 else 1 if dctRe==3 else 1.073 if dctRe==4 else 1.16 if dctRe==1 else 1
 
     ## jm_fps interpolation
-    superfilt = core.mv.Super(prefilter, hpad=16, vpad=16, sharp=1, rfilter=4) # all levels for MAnalyse
-    super = core.mv.Super(C, hpad=16, vpad=16, levels=1, sharp=1, rfilter=4) if calcPrefilter else superfilt # one level is enough for MRecalculate
-    bak = bak2 = core.mv.Analyse(superfilt, isb=True, blksize=blkSize, blksizev=blkSizeV, overlap = (blkSize//4+1)//2*2 if blkSize>4 else 0, overlapv = (blkSizeV//4+1)//2*2 if blkSizeV>4 else 0, search=3, dct=dct)
-    fwd = fwd2 = core.mv.Analyse(superfilt, isb=False, blksize=blkSize, blksizev=blkSizeV, overlap = (blkSize//4+1)//2*2 if blkSize>4 else 0, overlapv = (blkSizeV//4+1)//2*2 if blkSizeV>4 else 0, search=3, dct=dct)
+    superfilt = MV.Super(prefilter, hpad=16, vpad=16, sharp=1, rfilter=4, blksize=blkSize, overlap = (blkSize//4+1)//2*2 if blkSize>4 else 0) # all levels for MAnalyse
+    super = MV.Super(C, hpad=16, vpad=16, levels=1, sharp=1, rfilter=4, blksize=blkSize//2, overlap = (blkSize//8+1)//2*2 if blkSize/2>4 else 0) if calcPrefilter else superfilt # one level is enough for MRecalculate
+    bak = bak2 = MV.Analyse(superfilt, isb=True, blksize=blkSize, blksizev=blkSizeV, overlap = (blkSize//4+1)//2*2 if blkSize>4 else 0, overlapv = (blkSizeV//4+1)//2*2 if blkSizeV>4 else 0, search=3, dct=dct)
+    fwd = fwd2 = MV.Analyse(superfilt, isb=False, blksize=blkSize, blksizev=blkSizeV, overlap = (blkSize//4+1)//2*2 if blkSize>4 else 0, overlapv = (blkSizeV//4+1)//2*2 if blkSizeV>4 else 0, search=3, dct=dct)
     if recalculate:
-        fwd = core.mv.Recalculate(super, fwd, blksize=blkSize//2, blksizev=blkSizeV//2, overlap = (blkSize//8+1)//2*2 if blkSize/2>4 else 0, overlapv = (blkSizeV/8+1)//2*2 if blkSizeV/2>4 else 0, thsad=100, dct=dctRe)
-        bak = core.mv.Recalculate(super, bak, blksize=blkSize//2, blksizev=blkSizeV//2, overlap = (blkSize//8+1)//2*2 if blkSize/2>4 else 0, overlapv = (blkSizeV/8+1)//2*2 if blkSizeV/2>4 else 0, thsad=100, dct=dctRe)
-    Flow = core.mv.FlowFPS(C, super, bak, fwd, num=newNum, den=newDen, blend=False, ml=200, mask=2, thscd2=255)
+        fwd = MV.Recalculate(super, fwd, blksize=blkSize//2, blksizev=blkSizeV//2, overlap = (blkSize//8+1)//2*2 if blkSize/2>4 else 0, overlapv = (blkSizeV/8+1)//2*2 if blkSizeV/2>4 else 0, thsad=100, dct=dctRe)
+        bak = MV.Recalculate(super, bak, blksize=blkSize//2, blksizev=blkSizeV//2, overlap = (blkSize//8+1)//2*2 if blkSize/2>4 else 0, overlapv = (blkSizeV/8+1)//2*2 if blkSizeV/2>4 else 0, thsad=100, dct=dctRe)
+    Flow = MV.FlowFPS(C, super, bak, fwd, num=newNum, den=newDen, blend=False, ml=200, mask=2, thscd2=255)
 
     ## "EM" - error or artifact mask
     EM = EMfwd = EMocc = EM = Blank
     # Mask: SAD
     if maskThr > 0:
-        EM = ToGray(C.mv.Mask(bak, ml=255, kind=1, gamma=1/gam, ysc=255, thscd2=skipOver))
+        EM = ToGray(MV.Mask(C, bak, ml=255, kind=1, gamma=1/gam, ysc=255, thscd2=skipOver))
         # Mask: Temporal blending
-        EMfwd = ToGray(C.mv.Mask(fwd, ml=255, kind=1, gamma=1/gam, thscd2=skipOver))
+        EMfwd = ToGray(MV.Mask(C, fwd, ml=255, kind=1, gamma=1/gam, thscd2=skipOver))
         EM = misc.Overlay(EM, EMfwd, opacity=.6, mode="lighten")
     EXPR = core.llvmexpr.Expr if hasattr(core, 'llvmexpr') else core.akarin.Expr if hasattr(core, 'akarin') else core.cranexpr.Expr if hasattr(core, 'cranexpr') else core.std.Expr
     # Mask: Occlusion
     if maskOcc > 0:
-        EMocc = ToGray(C.mv.Mask(bak, ml=maskOcc, kind=2, gamma=1/gam, ysc=255, thscd2=skipOver).std.Minimum())
+        EMocc = ToGray(MV.Mask(C, bak, ml=maskOcc, kind=2, gamma=1/gam, ysc=255, thscd2=skipOver).std.Minimum())
         EM = misc.Overlay(EM, EMocc, opacity=.7, mode="lighten")
     if dct_mult!=1 or dct_pow!=1:
        EM = EXPR(EM, f"x {dct_mult} * {dct_pow} pow")
@@ -210,20 +211,20 @@ def FrameRateConverter(C, newNum = None, newDen = None, preset = "normal", blkSi
     ## For calcDiff, calculate a 2nd version and create mask to restore from 2nd version the areas that look better
     if calcDiff:
         EM2 = EMfwd2 = EMocc2 = EM2 = Blank
-        bakA = core.mv.Analyse(superfilt, isb=True, blksize=blkSize, blksizev=blkSizeV, overlap = (blkSize//4+1)//2*2 if blkSize>4 else 0, overlapv = (blkSizeV//4+1)//2*2 if blkSizeV>4 else 0, search=3, dct=dctDiff)
-        fwdA = core.mv.Analyse(superfilt, isb=False, blksize=blkSize, blksizev=blkSizeV, overlap = (blkSize//4+1)//2*2 if blkSize>4 else 0, overlapv = (blkSizeV//4+1)//2*2 if blkSizeV>4 else 0, search=3, dct=dctDiff)
+        bakA = MV.Analyse(superfilt, isb=True, blksize=blkSize, blksizev=blkSizeV, overlap = (blkSize//4+1)//2*2 if blkSize>4 else 0, overlapv = (blkSizeV//4+1)//2*2 if blkSizeV>4 else 0, search=3, dct=dctDiff)
+        fwdA = MV.Analyse(superfilt, isb=False, blksize=blkSize, blksizev=blkSizeV, overlap = (blkSize//4+1)//2*2 if blkSize>4 else 0, overlapv = (blkSizeV//4+1)//2*2 if blkSizeV>4 else 0, search=3, dct=dctDiff)
         if recalculate:
-            fwd2 = core.mv.Recalculate(super, fwdA, blksize=blkSize//2, blksizev=blkSizeV//2, overlap = (blkSize//8+1)//2*2 if blkSize//2>4 else 0, overlapv = (blkSizeV//8+1)//2*2 if blkSizeV//2>4 else 0, thsad=100, dct=dctDiff)
-            bak2 = core.mv.Recalculate(super, bakA, blksize=blkSize//2, blksizev=blkSizeV//2, overlap = (blkSize//8+1)//2*2 if blkSize//2>4 else 0, overlapv = (blkSizeV//8+1)//2*2 if blkSizeV//2>4 else 0, thsad=100, dct=dctDiff)
-        Flow2 = core.mv.FlowFPS(C, super, bak2, fwd2, num=newNum, den=newDen, blend=False, ml=200, mask=2, thscd2=255)
+            fwd2 = MV.Recalculate(super, fwdA, blksize=blkSize//2, blksizev=blkSizeV//2, overlap = (blkSize//8+1)//2*2 if blkSize//2>4 else 0, overlapv = (blkSizeV//8+1)//2*2 if blkSizeV//2>4 else 0, thsad=100, dct=dctDiff)
+            bak2 = MV.Recalculate(super, bakA, blksize=blkSize//2, blksizev=blkSizeV//2, overlap = (blkSize//8+1)//2*2 if blkSize//2>4 else 0, overlapv = (blkSizeV//8+1)//2*2 if blkSizeV//2>4 else 0, thsad=100, dct=dctDiff)
+        Flow2 = MV.FlowFPS(C, super, bak2, fwd2, num=newNum, den=newDen, blend=False, ml=200, mask=2, thscd2=255)
 
         # Get raw mask again
         if maskThr > 0:
-            EM2 = ToGray(C.mv.Mask(bak2, ml=255, kind=1, gamma=1/gam, ysc=255, thscd2=skipOver))
-            EMfwd2 = ToGray(C.mv.Mask(fwd2, ml=255, kind=1, gamma=1/gam, thscd2=skipOver))
+            EM2 = ToGray(MV.Mask(C, bak2, ml=255, kind=1, gamma=1/gam, ysc=255, thscd2=skipOver))
+            EMfwd2 = ToGray(MV.Mask(C, fwd2, ml=255, kind=1, gamma=1/gam, thscd2=skipOver))
             EM2 = misc.Overlay(EM2, EMfwd2, opacity=.6, mode="lighten")
         if maskOcc > 0:
-            EMocc2 = ToGray(C.mv.Mask(bak2, ml=maskOcc, kind=2, gamma=1/gam, ysc=255, thscd2=skipOver).std.Minimum())
+            EMocc2 = ToGray(MV.Mask(C, bak2, ml=maskOcc, kind=2, gamma=1/gam, ysc=255, thscd2=skipOver).std.Minimum())
             EM2 = misc.Overlay(EM2, EMocc2, opacity=.7, mode="lighten")
 
         # Get difference mask between two versions

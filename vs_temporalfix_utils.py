@@ -5,9 +5,9 @@
 import re
 import math
 import vapoursynth as vs
+from misc import MV
 
 core = vs.core
-
 
 def temporal_median(clip, radius=1, planes=None):
     # fallback plugin because zsmooth does not support non AVX2 CPUs
@@ -114,29 +114,29 @@ def mvsf_degrain(clip, sup, vecs, tr, args):
 
 
 def mv_analyze(sup, tr, args):
-    bv1 = core.mv.Analyse(sup, isb=True,  delta=1, **args)
-    fv1 = core.mv.Analyse(sup, isb=False, delta=1, **args)
+    bv1 = MV.Analyse(sup, isb=True,  delta=1, **args)
+    fv1 = MV.Analyse(sup, isb=False, delta=1, **args)
     vecs = [bv1, fv1]
 
     if tr > 1:
-        bv2 = core.mv.Analyse(sup, isb=True,  delta=2, **args)
-        fv2 = core.mv.Analyse(sup, isb=False, delta=2, **args)
+        bv2 = MV.Analyse(sup, isb=True,  delta=2, **args)
+        fv2 = MV.Analyse(sup, isb=False, delta=2, **args)
         vecs += [bv2, fv2]
     if tr > 2:
-        bv3 = core.mv.Analyse(sup, isb=True,  delta=3, **args)
-        fv3 = core.mv.Analyse(sup, isb=False, delta=3, **args)
+        bv3 = MV.Analyse(sup, isb=True,  delta=3, **args)
+        fv3 = MV.Analyse(sup, isb=False, delta=3, **args)
         vecs += [bv3, fv3]
     if tr > 3:
-        bv4 = core.mv.Analyse(sup, isb=True,  delta=4, **args)
-        fv4 = core.mv.Analyse(sup, isb=False, delta=4, **args)
+        bv4 = MV.Analyse(sup, isb=True,  delta=4, **args)
+        fv4 = MV.Analyse(sup, isb=False, delta=4, **args)
         vecs += [bv4, fv4]
     if tr > 4:
-        bv5 = core.mv.Analyse(sup, isb=True,  delta=5, **args)
-        fv5 = core.mv.Analyse(sup, isb=False, delta=5, **args)
+        bv5 = MV.Analyse(sup, isb=True,  delta=5, **args)
+        fv5 = MV.Analyse(sup, isb=False, delta=5, **args)
         vecs += [bv5, fv5]
     if tr > 5:
-        bv6 = core.mv.Analyse(sup, isb=True,  delta=6, **args)
-        fv6 = core.mv.Analyse(sup, isb=False, delta=6, **args)
+        bv6 = MV.Analyse(sup, isb=True,  delta=6, **args)
+        fv6 = MV.Analyse(sup, isb=False, delta=6, **args)
         vecs += [bv6, fv6]
 
     return vecs
@@ -144,17 +144,17 @@ def mv_analyze(sup, tr, args):
 
 def mv_degrain(clip, sup, vecs, tr, args):
     if tr == 6:
-        return core.mv.Degrain6(clip, sup, *vecs, **args)
+        return MV.Degrain6(clip, sup, *vecs, **args)
     elif tr == 5:
-        return core.mv.Degrain5(clip, sup, *vecs, **args)
+        return MV.Degrain5(clip, sup, *vecs, **args)
     elif tr == 4:
-        return core.mv.Degrain4(clip, sup, *vecs, **args)
+        return MV.Degrain4(clip, sup, *vecs, **args)
     elif tr == 3:
-        return core.mv.Degrain3(clip, sup, *vecs, **args)
+        return MV.Degrain3(clip, sup, *vecs, **args)
     elif tr == 2:
-        return core.mv.Degrain2(clip, sup, *vecs, **args)
+        return MV.Degrain2(clip, sup, *vecs, **args)
     elif tr == 1:
-        return core.mv.Degrain1(clip, sup, *vecs, **args)
+        return MV.Degrain1(clip, sup, *vecs, **args)
     raise ValueError("Temporal radius (tr) must be in the range 1-6.")
 
 
@@ -251,8 +251,8 @@ def lowfreq_denoise(low, high, motionmask, thsad=200, tr=6):
     prefilter  = tweak_darks(low_down, strength=2.5, amp=0.2)  # brighten darks
 
     # create super clips
-    pref_sup = core.mv.Super(prefilter, pel=pel, sharp=1, rfilter=4)
-    low_sup  = core.mv.Super(low_down,  pel=pel, sharp=0, rfilter=1, levels=1)
+    pref_sup = MV.Super(prefilter, pel=pel, sharp=1, rfilter=4, blksize=bs, overlap=bs // 2)
+    low_sup  = MV.Super(low_down,  pel=pel, sharp=0, rfilter=1, levels=1, blksize=8, overlap=0)
 
     # analyze and degrain
     low_vecs = mv_analyze(pref_sup, tr, analyze_args)

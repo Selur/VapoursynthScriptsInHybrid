@@ -7,6 +7,8 @@ from typing import Optional, Union, Sequence, TypeVar
 
 from vsutil import scale_value, types
 
+from misc import MV
+
 try:
     from gaussblur import GaussBlur
 except ImportError:
@@ -381,106 +383,107 @@ def MCTemporalDenoise(i, radius=None, pfMode=3, sigma=None, twopass=None, useTTm
         d = i.std.Crop(**crop_args).deblock.Deblock(quant=(quant1 + quant2) // 2, planes=planes).resize.Point(**pointresize_args)
 
     ### PREPARING
-    super_args = dict(hpad=0, vpad=0, pel=pel, chroma=chroma, sharp=MVsharp)
-    pMVS = p.mv.Super(rfilter=4 if refine else 2, **super_args)
+    super_args = dict(hpad=0, vpad=0, pel=pel, chroma=chroma, sharp=MVsharp, blksize=blksize, overlap=overlap)
+    pMVS = MV.Super(p, rfilter=4 if refine else 2, **super_args)
     if refine:
-        rMVS = p.mv.Super(levels=1, **super_args)
+        super_re_args = dict(hpad=0, vpad=0, pel=pel, chroma=chroma, sharp=MVsharp, blksize=max(blksize // 2, 4), overlap=max(overlap // 2, 2))
+        rMVS = MV.Super(p, levels=1, **super_re_args)
 
     analyse_args = dict(blksize=blksize, search=search, searchparam=searchparam, pelsearch=pelsearch, chroma=chroma, truemotion=truemotion, global_=MVglobal, overlap=overlap, dct=DCT)
     recalculate_args = dict(thsad=thSAD // 2, blksize=max(blksize // 2, 4), search=search, chroma=chroma, truemotion=truemotion, overlap=max(overlap // 2, 2), dct=DCT)
-    f1v = pMVS.mv.Analyse(isb=False, delta=1, **analyse_args)
-    b1v = pMVS.mv.Analyse(isb=True, delta=1, **analyse_args)
+    f1v = MV.Analyse(pMVS, isb=False, delta=1, **analyse_args)
+    b1v = MV.Analyse(pMVS, isb=True, delta=1, **analyse_args)
     if refine:
-        f1v = core.mv.Recalculate(rMVS, f1v, **recalculate_args)
-        b1v = core.mv.Recalculate(rMVS, b1v, **recalculate_args)
+        f1v = MV.Recalculate(rMVS, f1v, **recalculate_args)
+        b1v = MV.Recalculate(rMVS, b1v, **recalculate_args)
     if radius > 1:
-        f2v = pMVS.mv.Analyse(isb=False, delta=2, **analyse_args)
-        b2v = pMVS.mv.Analyse(isb=True, delta=2, **analyse_args)
+        f2v = MV.Analyse(pMVS, isb=False, delta=2, **analyse_args)
+        b2v = MV.Analyse(pMVS, isb=True, delta=2, **analyse_args)
         if refine:
-            f2v = core.mv.Recalculate(rMVS, f2v, **recalculate_args)
-            b2v = core.mv.Recalculate(rMVS, b2v, **recalculate_args)
+            f2v = MV.Recalculate(rMVS, f2v, **recalculate_args)
+            b2v = MV.Recalculate(rMVS, b2v, **recalculate_args)
     if radius > 2:
-        f3v = pMVS.mv.Analyse(isb=False, delta=3, **analyse_args)
-        b3v = pMVS.mv.Analyse(isb=True, delta=3, **analyse_args)
+        f3v = MV.Analyse(pMVS, isb=False, delta=3, **analyse_args)
+        b3v = MV.Analyse(pMVS, isb=True, delta=3, **analyse_args)
         if refine:
-            f3v = core.mv.Recalculate(rMVS, f3v, **recalculate_args)
-            b3v = core.mv.Recalculate(rMVS, b3v, **recalculate_args)
+            f3v = MV.Recalculate(rMVS, f3v, **recalculate_args)
+            b3v = MV.Recalculate(rMVS, b3v, **recalculate_args)
     if radius > 3:
-        f4v = pMVS.mv.Analyse(isb=False, delta=4, **analyse_args)
-        b4v = pMVS.mv.Analyse(isb=True, delta=4, **analyse_args)
+        f4v = MV.Analyse(pMVS, isb=False, delta=4, **analyse_args)
+        b4v = MV.Analyse(pMVS, isb=True, delta=4, **analyse_args)
         if refine:
-            f4v = core.mv.Recalculate(rMVS, f4v, **recalculate_args)
-            b4v = core.mv.Recalculate(rMVS, b4v, **recalculate_args)
+            f4v = MV.Recalculate(rMVS, f4v, **recalculate_args)
+            b4v = MV.Recalculate(rMVS, b4v, **recalculate_args)
     if radius > 4:
-        f5v = pMVS.mv.Analyse(isb=False, delta=5, **analyse_args)
-        b5v = pMVS.mv.Analyse(isb=True, delta=5, **analyse_args)
+        f5v = MV.Analyse(pMVS, isb=False, delta=5, **analyse_args)
+        b5v = MV.Analyse(pMVS, isb=True, delta=5, **analyse_args)
         if refine:
-            f5v = core.mv.Recalculate(rMVS, f5v, **recalculate_args)
-            b5v = core.mv.Recalculate(rMVS, b5v, **recalculate_args)
+            f5v = MV.Recalculate(rMVS, f5v, **recalculate_args)
+            b5v = MV.Recalculate(rMVS, b5v, **recalculate_args)
     if radius > 5:
-        f6v = pMVS.mv.Analyse(isb=False, delta=6, **analyse_args)
-        b6v = pMVS.mv.Analyse(isb=True, delta=6, **analyse_args)
+        f6v = MV.Analyse(pMVS, isb=False, delta=6, **analyse_args)
+        b6v = MV.Analyse(pMVS, isb=True, delta=6, **analyse_args)
         if refine:
-            f6v = core.mv.Recalculate(rMVS, f6v, **recalculate_args)
-            b6v = core.mv.Recalculate(rMVS, b6v, **recalculate_args)
+            f6v = MV.Recalculate(rMVS, f6v, **recalculate_args)
+            b6v = MV.Recalculate(rMVS, b6v, **recalculate_args)
 
     # if useTTmpSm or stabilize:
         # mask_args = dict(ml=thSAD, gamma=0.999, kind=1, ysc=255)
-        # SAD_f1m = core.mv.Mask(d, f1v, **mask_args)
-        # SAD_b1m = core.mv.Mask(d, b1v, **mask_args)
+        # SAD_f1m = MV.Mask(d, f1v, **mask_args)
+        # SAD_b1m = MV.Mask(d, b1v, **mask_args)
 
     def MCTD_MVD(i, iMVS, thSAD, thSADC):
         degrain_args = dict(thsad=thSAD, thsadc=thSADC, plane=4 if chroma else 0, thscd1=thSCD1, thscd2=thSCD2)
         if radius <= 1:
-            sm = core.mv.Degrain1(i, iMVS, b1v, f1v, **degrain_args)
+            sm = MV.Degrain1(i, iMVS, b1v, f1v, **degrain_args)
         elif radius == 2:
-            sm = core.mv.Degrain2(i, iMVS, b1v, f1v, b2v, f2v, **degrain_args)
+            sm = MV.Degrain2(i, iMVS, b1v, f1v, b2v, f2v, **degrain_args)
         elif radius == 3:
-            sm = core.mv.Degrain3(i, iMVS, b1v, f1v, b2v, f2v, b3v, f3v, **degrain_args)
+            sm = MV.Degrain3(i, iMVS, b1v, f1v, b2v, f2v, b3v, f3v, **degrain_args)
         elif radius == 4:
-            mv12 = core.mv.Degrain2(i, iMVS, b1v, f1v, b2v, f2v, **degrain_args)
-            mv34 = core.mv.Degrain2(i, iMVS, b3v, f3v, b4v, f4v, **degrain_args)
+            mv12 = MV.Degrain2(i, iMVS, b1v, f1v, b2v, f2v, **degrain_args)
+            mv34 = MV.Degrain2(i, iMVS, b3v, f3v, b4v, f4v, **degrain_args)
             sm = core.std.Merge(mv12, mv34, weight=[0.4444])
         elif radius == 5:
-            mv123 = core.mv.Degrain3(i, iMVS, b1v, f1v, b2v, f2v, b3v, f3v, **degrain_args)
-            mv45 = core.mv.Degrain2(i, iMVS, b4v, f4v, b5v, f5v, **degrain_args)
+            mv123 = MV.Degrain3(i, iMVS, b1v, f1v, b2v, f2v, b3v, f3v, **degrain_args)
+            mv45 = MV.Degrain2(i, iMVS, b4v, f4v, b5v, f5v, **degrain_args)
             sm = core.std.Merge(mv123, mv45, weight=[0.4545])
         else:
-            mv123 = core.mv.Degrain3(i, iMVS, b1v, f1v, b2v, f2v, b3v, f3v, **degrain_args)
-            mv456 = core.mv.Degrain3(i, iMVS, b4v, f4v, b5v, f5v, b6v, f6v, **degrain_args)
+            mv123 = MV.Degrain3(i, iMVS, b1v, f1v, b2v, f2v, b3v, f3v, **degrain_args)
+            mv456 = MV.Degrain3(i, iMVS, b4v, f4v, b5v, f5v, b6v, f6v, **degrain_args)
             sm = core.std.Merge(mv123, mv456, weight=[0.4615])
 
         return sm
 
     def MCTD_TTSM(i, iMVS, thSAD):
         compensate_args = dict(thsad=thSAD, thscd1=thSCD1, thscd2=thSCD2)
-        f1c = core.mv.Compensate(i, iMVS, f1v, **compensate_args)
-        b1c = core.mv.Compensate(i, iMVS, b1v, **compensate_args)
+        f1c = MV.Compensate(i, iMVS, f1v, **compensate_args)
+        b1c = MV.Compensate(i, iMVS, b1v, **compensate_args)
         if radius > 1:
-            f2c = core.mv.Compensate(i, iMVS, f2v, **compensate_args)
-            b2c = core.mv.Compensate(i, iMVS, b2v, **compensate_args)
-            # SAD_f2m = core.mv.Mask(i, f2v, **mask_args)
-            # SAD_b2m = core.mv.Mask(i, b2v, **mask_args)
+            f2c = MV.Compensate(i, iMVS, f2v, **compensate_args)
+            b2c = MV.Compensate(i, iMVS, b2v, **compensate_args)
+            # SAD_f2m = MV.Mask(i, f2v, **mask_args)
+            # SAD_b2m = MV.Mask(i, b2v, **mask_args)
         if radius > 2:
-            f3c = core.mv.Compensate(i, iMVS, f3v, **compensate_args)
-            b3c = core.mv.Compensate(i, iMVS, b3v, **compensate_args)
-            # SAD_f3m = core.mv.Mask(i, f3v, **mask_args)
-            # SAD_b3m = core.mv.Mask(i, b3v, **mask_args)
+            f3c = MV.Compensate(i, iMVS, f3v, **compensate_args)
+            b3c = MV.Compensate(i, iMVS, b3v, **compensate_args)
+            # SAD_f3m = MV.Mask(i, f3v, **mask_args)
+            # SAD_b3m = MV.Mask(i, b3v, **mask_args)
         if radius > 3:
-            f4c = core.mv.Compensate(i, iMVS, f4v, **compensate_args)
-            b4c = core.mv.Compensate(i, iMVS, b4v, **compensate_args)
-            # SAD_f4m = core.mv.Mask(i, f4v, **mask_args)
-            # SAD_b4m = core.mv.Mask(i, b4v, **mask_args)
+            f4c = MV.Compensate(i, iMVS, f4v, **compensate_args)
+            b4c = MV.Compensate(i, iMVS, b4v, **compensate_args)
+            # SAD_f4m = MV.Mask(i, f4v, **mask_args)
+            # SAD_b4m = MV.Mask(i, b4v, **mask_args)
         if radius > 4:
-            f5c = core.mv.Compensate(i, iMVS, f5v, **compensate_args)
-            b5c = core.mv.Compensate(i, iMVS, b5v, **compensate_args)
-            # SAD_f5m = core.mv.Mask(i, f5v, **mask_args)
-            # SAD_b5m = core.mv.Mask(i, b5v, **mask_args)
+            f5c = MV.Compensate(i, iMVS, f5v, **compensate_args)
+            b5c = MV.Compensate(i, iMVS, b5v, **compensate_args)
+            # SAD_f5m = MV.Mask(i, f5v, **mask_args)
+            # SAD_b5m = MV.Mask(i, b5v, **mask_args)
         if radius > 5:
-            f6c = core.mv.Compensate(i, iMVS, f6v, **compensate_args)
-            b6c = core.mv.Compensate(i, iMVS, b6v, **compensate_args)
-            # SAD_f6m = core.mv.Mask(i, f6v, **mask_args)
-            # SAD_b6m = core.mv.Mask(i, b6v, **mask_args)
+            f6c = MV.Compensate(i, iMVS, f6v, **compensate_args)
+            b6c = MV.Compensate(i, iMVS, b6v, **compensate_args)
+            # SAD_f6m = MV.Mask(i, f6v, **mask_args)
+            # SAD_b6m = MV.Mask(i, b6v, **mask_args)
 
         # b = i.std.BlankClip(color=[0] if isGray else [0, neutral, neutral])
         if radius <= 1:
@@ -514,7 +517,7 @@ def MCTemporalDenoise(i, radius=None, pfMode=3, sigma=None, twopass=None, useTTm
         return sm.std.SelectEvery(cycle=radius * 2 + 1, offsets=[radius])
 
     ### DENOISING: FIRST PASS
-    dMVS = d.mv.Super(levels=1, **super_args)
+    dMVS = MV.Super(d, levels=1, **super_args)
     sm = MCTD_TTSM(d, dMVS, thSAD) if useTTmpSm else MCTD_MVD(d, dMVS, thSAD, thSADC)
     EXPR = core.llvmexpr.Expr if hasattr(core, 'llvmexpr') else core.akarin.Expr if hasattr(core, 'akarin') else core.cranexpr.Expr if hasattr(core, 'cranexpr') else core.std.Expr
     if limit <= -1:
@@ -530,7 +533,7 @@ def MCTemporalDenoise(i, radius=None, pfMode=3, sigma=None, twopass=None, useTTm
 
     ### DENOISING: SECOND PASS
     if twopass:
-        smLMVS = smL.mv.Super(levels=1, **super_args)
+        smLMVS = MV.Super(smL, levels=1, **super_args)
         sm = MCTD_TTSM(smL, smLMVS, thSAD2) if useTTmpSm else MCTD_MVD(smL, smLMVS, thSAD2, thSADC2)
 
         if limit2 <= -1:
@@ -646,13 +649,13 @@ def mClean(clip, thSAD=400, chroma=True, sharp=10, rn=14, deband=0, depth=0, str
     icalc = False if isFLOAT else icalc
     zsmooth = hasattr(core, 'zsmooth')
     if hasattr(core, 'mvsf') and isFLOAT:  
-      S = core.mv.Super if icalc else core.mvsf.Super
-      A = core.mv.Analyse if icalc else core.mvsf.Analyse
-      R = core.mv.Recalculate if icalc else core.mvsf.Recalculate
+      S = MV.Super if icalc else core.mvsf.Super
+      A = MV.Analyse if icalc else core.mvsf.Analyse
+      R = MV.Recalculate if icalc else core.mvsf.Recalculate
     else:
-     S = core.mv.Super
-     A = core.mv.Analyse
-     R = core.mv.Recalculate
+     S = MV.Super
+     A = MV.Analyse
+     R = MV.Recalculate
 
     if not isinstance(clip, vs.VideoNode) or clip.format.color_family != vs.YUV:
         raise TypeError("mClean: This is not a YUV clip!")
@@ -702,8 +705,8 @@ def mClean(clip, thSAD=400, chroma=True, sharp=10, rn=14, deband=0, depth=0, str
         c = c.fmtc.bitdepth(flt=1)
     cy = core.std.ShufflePlanes(c, [0], vs.GRAY)
 
-    super1 = S(c if chroma else cy, hpad=bs, vpad=bs, pel=pel, rfilter=4, sharp=1)
-    super2 = S(c if chroma else cy, hpad=bs, vpad=bs, pel=pel, rfilter=1, levels=1)
+    super1 = S(c if chroma else cy, hpad=bs, vpad=bs, pel=pel, rfilter=4, sharp=1, blksize=bs, overlap=ov)
+    super2 = S(c if chroma else cy, hpad=bs, vpad=bs, pel=pel, rfilter=1, levels=1, blksize=bs, overlap=ov)
     analyse_args = dict(blksize=bs, overlap=ov, search=5, truemotion=truemotion)
     recalculate_args = dict(blksize=bs, overlap=ov, search=5, truemotion=truemotion, thsad=180, lambda_=lampa)
 
@@ -721,7 +724,7 @@ def mClean(clip, thSAD=400, chroma=True, sharp=10, rn=14, deband=0, depth=0, str
     if not icalc:
         clean = core.mvsf.Degrain4(c if chroma else cy, super2, bvec1, fvec1, bvec2, fvec2, bvec3, fvec3, bvec4, fvec4, thsad=thSAD)
     else:
-        clean = core.mv.Degrain3(c if chroma else cy, super2, bvec1, fvec1, bvec2, fvec2, bvec3, fvec3, thsad=thSAD)
+        clean = MV.Degrain3(c if chroma else cy, super2, bvec1, fvec1, bvec2, fvec2, bvec3, fvec3, thsad=thSAD)
 
     if c.format.bits_per_sample != outbits:
         c = c.fmtc.bitdepth(bits=outbits, dmode=1)
@@ -817,23 +820,23 @@ def EZDenoise(
     if out16:
         clip = core.fmtc.bitdepth(clip, bits=16)
 
-    super_clip = core.mv.Super(clip, pel=pel, chroma=chroma, hpad=blkSize, vpad=blkSize)
+    super_clip = MV.Super(clip, pel=pel, chroma=chroma, hpad=blkSize, vpad=blkSize)
 
     # Analyse motion vectors for each delta up to tr
-    mv_b = [core.mv.Analyse(super_clip, isb=True, delta=i, blksize=blkSize, overlap=overlap, chroma=chroma) for i in range(1, tr + 1)]
-    mv_f = [core.mv.Analyse(super_clip, isb=False, delta=i, blksize=blkSize, overlap=overlap, chroma=chroma) for i in range(1, tr + 1)]
+    mv_b = [MV.Analyse(super_clip, isb=True, delta=i, blksize=blkSize, overlap=overlap, chroma=chroma) for i in range(1, tr + 1)]
+    mv_f = [MV.Analyse(super_clip, isb=False, delta=i, blksize=blkSize, overlap=overlap, chroma=chroma) for i in range(1, tr + 1)]
 
     # Helper to create Degrain clip for a single frame
     def degrain_clip(delta: int) -> vs.VideoNode:
         if delta == 1:
-            return core.mv.Degrain1(clip, super_clip, mv_b[0], mv_f[0], thsad=thSAD, thsadc=thSADC, plane=plane)
+            return MV.Degrain1(clip, super_clip, mv_b[0], mv_f[0], thsad=thSAD, thsadc=thSADC, plane=plane)
         elif delta == 2:
-            return core.mv.Degrain2(clip, super_clip,
+            return MV.Degrain2(clip, super_clip,
                                     mvbw = mv_b[0], mvfw = mv_f[0],
                                     mvbw2 = mv_b[1], mvfw2 = mv_f[1],
                                     thsad = thSAD, thsadc = thSADC, plane=plane)
         else:  # delta >= 3
-            return core.mv.Degrain3(clip, super_clip,
+            return MV.Degrain3(clip, super_clip,
                                     mvbw = mv_b[0], mvfw = mv_f[0],
                                     mvbw2 = mv_b[1], mvfw2 = mv_f[1],
                                     mvbw3 = mv_b[2], mvfw3 = mv_f[2],

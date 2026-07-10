@@ -1,4 +1,6 @@
 import vapoursynth as vs
+from misc import MV
+
 # dependencies:
 # RemoveGrain (http://www.vapoursynth.com/doc/plugins/rgvs.html) or zsmooth (https://github.com/adworacz/zsmooth)
 # MVTools (https://github.com/dubhater/vapoursynth-mvtools) or SVP dlls when gpu=True is used
@@ -17,11 +19,11 @@ def KillerSpots(clip: vs.VideoNode, limit: int=10, advanced: bool=False):
   core = vs.core  
   # advanced: Use 'False' for best speed and original KillerSpots. Use 'True' to specify a 'limit'. Default True;
   # limit: default 10, spot removal limit (for advanced=true only)
-  osup = core.mv.Super(clip=clip, pel=2, sharp=2)
-  bv1  = core.mv.Analyse(super=osup, isb=True, delta=1, blksize=8, overlap=4, search=4)
-  fv1  = core.mv.Analyse(super=osup, isb=False, delta=1, blksize=8, overlap=4, search=4)
-  bc1  = core.mv.Compensate(clip, osup, bv1)
-  fc1  = core.mv.Compensate(clip, osup, fv1)
+  osup = MV.Super(clip=clip, pel=2, sharp=2, blksize=8, overlap=4)
+  bv1  = MV.Analyse(super=osup, isb=True, delta=1, blksize=8, overlap=4, search=4)
+  fv1  = MV.Analyse(super=osup, isb=False, delta=1, blksize=8, overlap=4, search=4)
+  bc1  = MV.Compensate(clip, osup, bv1)
+  fc1  = MV.Compensate(clip, osup, fv1)
   clip = core.std.Interleave([fc1, clip, bc1])
   if advanced:
     clip = RemoveDirtMod(clip, limit)

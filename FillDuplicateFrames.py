@@ -1,5 +1,6 @@
 import vapoursynth as vs
 from vapoursynth import core
+from misc import MV
 
 '''
 call using:
@@ -73,10 +74,10 @@ class FillDuplicateFrames:
    
   def interpolateWithMV(self, clip, n, start, end):   
     num = end - start
-    sup = core.mv.Super(clip, pel=2, hpad=0, vpad=0)
-    bvec = core.mv.Analyse(sup, blksize=16, isb=True, chroma=True, search=3, searchparam=1)
-    fvec = core.mv.Analyse(sup, blksize=16, isb=False, chroma=True, search=3, searchparam=1)
-    self.smooth = core.mv.FlowFPS(clip, sup, bvec, fvec, num=num, den=1, mask=2)
+    sup = MV.Super(clip, pel=2, hpad=0, vpad=0, blksize=16, overlap=0)
+    bvec = MV.Analyse(sup, blksize=16, isb=True, chroma=True, search=3, searchparam=1)
+    fvec = MV.Analyse(sup, blksize=16, isb=False, chroma=True, search=3, searchparam=1)
+    self.smooth = MV.FlowFPS(clip, sup, bvec, fvec, num=num, den=1, mask=2)
     self.smooth_start = start
     self.smooth_end   = end
     out = self.smooth[n-start]

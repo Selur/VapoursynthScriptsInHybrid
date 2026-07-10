@@ -1,5 +1,6 @@
 import vapoursynth as vs
 core = vs.core
+from misc import MV
 
 """
 SpotDelta (Spotless + Delta Restore) – VapourSynth Port
@@ -540,7 +541,7 @@ def SpotLess(
     if radT >= 3:
         thsad2 = (thsad + thsad2) // 2
 
-    S, A, R, C = core.mv.Super, core.mv.Analyse, core.mv.Recalculate, core.mv.Compensate
+    S, A, R, C = MV.Super, MV.Analyse, MV.Recalculate, MV.Compensate
 
     if mStart or mEnd:
         head = core.std.Reverse(core.std.Trim(clip, 1, radT)) if mStart else None
@@ -557,11 +558,11 @@ def SpotLess(
                              if blur else denoised) 
                              
         sup        = S(supclip, hpad=ablksize, vpad=ablksize,
-                     pel=pel, sharp=ssharp, rfilter=rfilter)
+                     pel=pel, sharp=ssharp, rfilter=rfilter, blksize=ablksize, overlap=aoverlap)
 
         if blur or ref is not None:
             sup_render = S(denoised, hpad=ablksize, vpad=ablksize,
-                          pel=pel, sharp=ssharp, rfilter=rfilter, levels=1)
+                          pel=pel, sharp=ssharp, rfilter=rfilter, levels=1, blksize=ablksize, overlap=aoverlap)
         else:
             sup_render = sup  # Safe: same source
 
