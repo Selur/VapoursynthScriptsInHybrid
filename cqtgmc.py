@@ -18,6 +18,8 @@ def CQTGMC(clip: vs.VideoNode, Sharpness: float=0.25, thSAD1: int=192, thSAD2: i
     if openCL:
         if hasattr(core, 'sneedif'):
           spatial = core.sneedif.NNEDI3(clip=padded, field=X, qual=2)
+        elif hasattr(core, 'sneedif'):
+          spatial = core.nnedi3vk.NNEDI3(clip=padded, field=X, qual=2)
         else:
           spatial = core.nnedi3cl.NNEDI3CL(clip=padded, field=X, qual=2)
     else:

@@ -33,6 +33,8 @@ def daa(
     if opencl:
         if hasattr(core,'sneedif'):
           nnedi3 = partial(core.sneedif.NNEDI3, nsize=nsize, nns=nns, qual=qual, pscrn=pscrn, device=device)
+        elif hasattr(core,'nnedi3vk'):
+          nnedi3 = partial(core.nnedi3vk.NNEDI3, nsize=nsize, nns=nns, qual=qual, pscrn=pscrn, nnedi3vk=device)
         else:
           nnedi3 = partial(core.nnedi3cl.NNEDI3CL, nsize=nsize, nns=nns, qual=qual, pscrn=pscrn, device=device)
     else:
@@ -264,6 +266,8 @@ def nnedi3aa(a: vs.VideoNode, opencl: bool=False, device: Optional[int] = None,)
     if opencl:
       if hasattr(core, 'sneedif'):
         myNNEDI3 = vs.core.sneedif.NNEDI3
+     elif hasattr(core, 'nnedi3vk'):
+        myNNEDI3 = vs.core.nnedi3vk.NNEDI3
       else:
         myNNEDI3 = vs.core.nnedi3cl.NNEDI3CL
       last = myNNEDI3(a, field=1, dh=True, device=device).std.Transpose()

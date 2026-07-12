@@ -66,6 +66,8 @@ def derainbow(clip: vs.VideoNode) -> vs.VideoNode:
     # )
     if hasattr(core, 'sneedif'):
       nnedi3 = core.sneedif.NNEDI3(derainbow, 2, nsize=4, nns=0, planes=[1, 2])
+    elif hasattr(core, 'nnedi3vk'):
+      nnedi3 = core.nnedi3vk.NNEDI3(derainbow, 2, nsize=4, nns=0, planes=[1, 2])
     else:
       nnedi3 = core.nnedi3cl.NNEDI3CL(derainbow, 2, nsize=4, nns=0, planes=[1, 2])
     # Old technique for dealing with dot crawl - part 2

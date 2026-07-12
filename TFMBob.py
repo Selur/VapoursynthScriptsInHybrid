@@ -13,6 +13,8 @@ def TFMBobN(clip: vs.VideoNode,
   if openCL:
     if hasattr(core, 'sneedif'):
       n = core.sneedif.NNEDI3(clip = clip, field=field+1,nns=4)
+    elif hasattr(core, 'nnedi3vk'):
+      n = core.nnedi3vk.NNEDI3(clip = clip, field=field+1,nns=4)
     else:
       n = core.nnedi3cl.NNEDI3CL(clip = clip, field=field+1,nns=4)
   elif hasattr(core, 'znedi3'):

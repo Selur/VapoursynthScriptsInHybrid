@@ -118,6 +118,12 @@ def nnedi3cl_rpow2(clip, rfactor, correct_shift="fmtconv",
                 nsize=nsize, nns=nns, qual=qual,
                 etype=etype, pscrn=pscrn
             )
+        elif hasattr(core, "nnedi3vk"):
+            return core.nnedi3vk.NNEDI3(
+                clip=c, field=field, dh=dh,
+                nsize=nsize, nns=nns, qual=qual,
+                etype=etype, pscrn=pscrn
+            )    
         return core.nnedi3cl.NNEDI3CL(
             clip=c, field=field, dh=dh,
             nsize=nsize, nns=nns, qual=qual,
