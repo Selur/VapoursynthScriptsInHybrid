@@ -23,51 +23,68 @@ def _boxblur_fn():
 # boolean vertical: transposes the source for the filtering, to handle vertical lines instead of horizontal ones. (default: False)
 # str hvmode: whether to use vertival or hoizontal convolution
 def DeStripe(clip: vs.VideoNode, rad: int=2, offset: int=0, thr: int=256, vertical=False, hvmode: str='v') -> vs.VideoNode:
- 
-  if (rad < 1) or (rad > 5):
-    raise vs.Error('rad not valid (range: 1-5)')
-  if (offset < 0) or (offset > (rad-1)):
-    raise vs.Error('rad not valid (range: 0-(rad-1)')
-  if (hvmode != 'v' and hvmode != 'h'):
-    raise vs.Error("mode kein either be 'h' or 'v'")
-    
-  thr = thr << (clip.format.bits_per_sample - 8) # scale thr by bit depth
-  if vertical: 
-    clip = core.std.Transpose(clip)
-  
-  MAP = {
-      1: ([1,1,1],),
-      2: ([1,1,1,1,1], [1,0,1,0,1]),
-      3: ([1,1,1,1,1,1,1], [1,1,0,1,0,1,1], [1,0,0,1,0,0,1]),
-      4: ([1,1,1,1,1,1,1,1,1 ], [1,1,1,0,1,0,1,1,1], [1,1,0,0,1,0,0,1,1], [1,0,0,0,1,0,0,0,1]),
-      5: ([1,1,1,1,1,1,1,1,1,1,1], [1,1,1,1,0,1,0,1,1,1,1], [1,1,1,0,0,1,0,0,1,1,1], [1,1,0,0,0,1,0,0,0,1,1], [1,0,0,0,0,1,0,0,0,0,1])
-      }    
-  blurred = clip.std.Convolution(matrix=MAP[rad][offset], mode=hvmode, planes=[0]) 
-  diff = core.std.MakeDiff(clip, blurred)
+    if (rad < 1) or (rad > 5):
+        raise vs.Error('rad not valid (range: 1-5)')
+    if (offset < 0) or (offset > (rad-1)):
+        raise vs.Error('offset not valid (range: 0-(rad-1))')
+    if (hvmode != 'v' and hvmode != 'h'):
+        raise vs.Error("hvmode must be either 'h' or 'v'")
 
-  thr_s=str(thr)
-  partial_expr = lambda M, N: f" x x[{M},{N}] - x x[{M},{N}] - x x[{M},{N}] - abs 1 + * x x[{M},{N}] - abs 1 + {thr_s} 1 >= {thr_s} 0.5 pow {thr_s} ? + / - 128 + "
+    # Scale threshold and neutral level to current bit depth
+    shift = clip.format.bits_per_sample - 8
+    thr = thr << shift
+    mid = 128 << shift
 
-  matrix_length = len(MAP[rad][offset])
-  start = offset*2 + 1
-  pattern = [(0,0), (0,1), (0,-1), (0,2), (0,-2), (0,3), (0,-3), (0,4), (0,-4), (0,5), (0,-5)]
-  pattern = pattern[0:matrix_length]
-  pattern = [(0,0)] + pattern[start:]
-  expr = ''
-  for pair in pattern:
-      if hvmode == 'v':
-          pair = tuple(reversed(pair))
-      expr += partial_expr(*pair)
-  expr = expr + f'sort{len(pattern)} ' + 'drop '*int(len(pattern)/2) + 'swap ' + 'drop '*int(len(pattern)/2)
-  EXPR = core.llvmexpr.Expr if hasattr(core, 'llvmexpr') else core.akarin.Expr if hasattr(core, 'akarin') else core.cranexpr.Expr if hasattr(core, 'cranexpr') else core.std.Expr
-  medianDiff = EXPR(diff, [expr, ''])
-  reconstructedMedian = core.std.MakeDiff(diff, medianDiff)   
-  blurred = core.std.MergeDiff(blurred, reconstructedMedian)
-  
-  if vertical: 
-    blurred = core.std.Transpose(blurred)
-  
-  return blurred
+    if vertical:
+        clip = core.std.Transpose(clip)
+
+    MAP = {
+        1: ([1,1,1],),
+        2: ([1,1,1,1,1], [1,0,1,0,1]),
+        3: ([1,1,1,1,1,1,1], [1,1,0,1,0,1,1], [1,0,0,1,0,0,1]),
+        4: ([1,1,1,1,1,1,1,1,1], [1,1,1,0,1,0,1,1,1], [1,1,0,0,1,0,0,1,1], [1,0,0,0,1,0,0,0,1]),
+        5: ([1,1,1,1,1,1,1,1,1,1,1], [1,1,1,1,0,1,0,1,1,1,1], [1,1,1,0,0,1,0,0,1,1,1], [1,1,0,0,0,1,0,0,0,1,1], [1,0,0,0,0,1,0,0,0,0,1])
+    }
+
+    blurred = clip.std.Convolution(matrix=MAP[rad][offset], mode=hvmode, planes=[0])
+    diff = core.std.MakeDiff(clip, blurred)
+
+    thr_s = str(thr)
+    mid_s = str(mid)
+
+    partial_expr = lambda M, N: (
+        f" x x[{M},{N}] - x x[{M},{N}] - x x[{M},{N}] - abs 1 + * "
+        f"x x[{M},{N}] - abs 1 + {thr_s} 1 >= {thr_s} 0.5 pow {thr_s} ? + / - "
+        f"{mid_s} + "   # <--- scaled neutral
+    )
+
+    matrix_length = len(MAP[rad][offset])
+    start = offset * 2 + 1
+    pattern = [(0,0), (0,1), (0,-1), (0,2), (0,-2), (0,3), (0,-3), (0,4), (0,-4), (0,5), (0,-5)]
+    pattern = pattern[0:matrix_length]
+    pattern = [(0,0)] + pattern[start:]
+
+    expr = ''
+    for pair in pattern:
+        if hvmode == 'v':
+            pair = tuple(reversed(pair))
+        expr += partial_expr(*pair)
+
+    expr += f'sort{len(pattern)} ' + 'drop ' * (len(pattern)//2) + 'swap ' + 'drop ' * (len(pattern)//2)
+
+    EXPR = core.llvmexpr.Expr if hasattr(core, 'llvmexpr') else \
+           core.akarin.Expr if hasattr(core, 'akarin') else \
+           core.cranexpr.Expr if hasattr(core, 'cranexpr') else \
+           core.std.Expr
+
+    medianDiff = EXPR(diff, [expr, ''])
+    reconstructedMedian = core.std.MakeDiff(diff, medianDiff)
+    blurred = core.std.MergeDiff(blurred, reconstructedMedian)
+
+    if vertical:
+        blurred = core.std.Transpose(blurred)
+
+    return blurred
 
 ###
 # requirements:
