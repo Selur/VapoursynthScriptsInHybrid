@@ -266,7 +266,7 @@ def nnedi3aa(a: vs.VideoNode, opencl: bool=False, device: Optional[int] = None,)
     if opencl:
       if hasattr(core, 'sneedif'):
         myNNEDI3 = vs.core.sneedif.NNEDI3
-     elif hasattr(core, 'nnedi3vk'):
+      elif hasattr(core, 'nnedi3vk'):
         myNNEDI3 = vs.core.nnedi3vk.NNEDI3
       else:
         myNNEDI3 = vs.core.nnedi3cl.NNEDI3CL
