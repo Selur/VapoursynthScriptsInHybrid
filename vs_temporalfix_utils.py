@@ -5,9 +5,9 @@
 import re
 import math
 import vapoursynth as vs
-from misc import MV
 
 core = vs.core
+
 
 def temporal_median(clip, radius=1, planes=None):
     # fallback plugin because zsmooth does not support non AVX2 CPUs
@@ -35,12 +35,17 @@ def median(clip, radius=1, planes=None):
         return core.ctmf.CTMF(clip, radius=radius, planes=planes)
 
 
-def expression(clips, expr, format=None):
-    # optional plugin for slight speed boost
+def basic_expr(clips, expr, format=None):
+    # backend for basic exprs supported by std.Expr
     if hasattr(core, "akarin"):
         return core.akarin.Expr(clips, expr, format=format)
     else:
         return core.std.Expr(clips, expr, format=format)
+
+
+def advanced_expr(clips, expr, format=None):
+    # backend for advanced exprs not possible with std.Expr
+    return core.akarin.Expr(clips, expr, format=format)
 
 
 def box_blur(clip, planes=None, hradius=1, hpasses=1, vradius=1, vpasses=1):
@@ -65,7 +70,7 @@ def min_blur(clip, planes=[0, 1, 2]):
     RG11 = core.std.Convolution(clip, matrix=mat1, planes=planes).std.Convolution(matrix=mat2, planes=planes)
     RG4  = median(clip, radius=2, planes=planes)
     expr = "x y - x z - * 0 < x dup y - abs x z - abs < y z ? ?"
-    return expression([clip, RG11, RG4], [expr if i in planes else "" for i in range(clip.format.num_planes)])
+    return basic_expr([clip, RG11, RG4], [expr if i in planes else "" for i in range(clip.format.num_planes)])
 
 
 def average_color_fix(clip, ref, radius=4, passes=4):
@@ -78,8 +83,10 @@ def average_color_fix(clip, ref, radius=4, passes=4):
 
 def average_color_fix_fast(clip, ref, downscale_factor=8):
     # faster but faint blocky artifacts
-    downscaled_reference = core.resize.Bilinear(ref, width=clip.width / downscale_factor, height=clip.height / downscale_factor)
-    downscaled_clip = core.resize.Bilinear(clip, width=clip.width / downscale_factor, height=clip.height / downscale_factor)
+    width  = int(clip.width  / downscale_factor) >> clip.format.subsampling_w << clip.format.subsampling_w
+    height = int(clip.height / downscale_factor) >> clip.format.subsampling_h << clip.format.subsampling_h
+    downscaled_reference = core.resize.Bilinear(ref,  width=width, height=height)
+    downscaled_clip = core.resize.Bilinear(clip, width=width, height=height)
     diff_clip = core.std.MakeDiff(downscaled_reference, downscaled_clip)
     diff_clip = core.resize.Bilinear(diff_clip, width=clip.width, height=clip.height)
     return core.std.MergeDiff(clip, diff_clip)
@@ -114,29 +121,29 @@ def mvsf_degrain(clip, sup, vecs, tr, args):
 
 
 def mv_analyze(sup, tr, args):
-    bv1 = MV.Analyse(sup, isb=True,  delta=1, **args)
-    fv1 = MV.Analyse(sup, isb=False, delta=1, **args)
+    bv1 = core.mv.Analyse(sup, isb=True,  delta=1, **args)
+    fv1 = core.mv.Analyse(sup, isb=False, delta=1, **args)
     vecs = [bv1, fv1]
 
     if tr > 1:
-        bv2 = MV.Analyse(sup, isb=True,  delta=2, **args)
-        fv2 = MV.Analyse(sup, isb=False, delta=2, **args)
+        bv2 = core.mv.Analyse(sup, isb=True,  delta=2, **args)
+        fv2 = core.mv.Analyse(sup, isb=False, delta=2, **args)
         vecs += [bv2, fv2]
     if tr > 2:
-        bv3 = MV.Analyse(sup, isb=True,  delta=3, **args)
-        fv3 = MV.Analyse(sup, isb=False, delta=3, **args)
+        bv3 = core.mv.Analyse(sup, isb=True,  delta=3, **args)
+        fv3 = core.mv.Analyse(sup, isb=False, delta=3, **args)
         vecs += [bv3, fv3]
     if tr > 3:
-        bv4 = MV.Analyse(sup, isb=True,  delta=4, **args)
-        fv4 = MV.Analyse(sup, isb=False, delta=4, **args)
+        bv4 = core.mv.Analyse(sup, isb=True,  delta=4, **args)
+        fv4 = core.mv.Analyse(sup, isb=False, delta=4, **args)
         vecs += [bv4, fv4]
     if tr > 4:
-        bv5 = MV.Analyse(sup, isb=True,  delta=5, **args)
-        fv5 = MV.Analyse(sup, isb=False, delta=5, **args)
+        bv5 = core.mv.Analyse(sup, isb=True,  delta=5, **args)
+        fv5 = core.mv.Analyse(sup, isb=False, delta=5, **args)
         vecs += [bv5, fv5]
     if tr > 5:
-        bv6 = MV.Analyse(sup, isb=True,  delta=6, **args)
-        fv6 = MV.Analyse(sup, isb=False, delta=6, **args)
+        bv6 = core.mv.Analyse(sup, isb=True,  delta=6, **args)
+        fv6 = core.mv.Analyse(sup, isb=False, delta=6, **args)
         vecs += [bv6, fv6]
 
     return vecs
@@ -144,17 +151,17 @@ def mv_analyze(sup, tr, args):
 
 def mv_degrain(clip, sup, vecs, tr, args):
     if tr == 6:
-        return MV.Degrain6(clip, sup, *vecs, **args)
+        return core.mv.Degrain6(clip, sup, *vecs, **args)
     elif tr == 5:
-        return MV.Degrain5(clip, sup, *vecs, **args)
+        return core.mv.Degrain5(clip, sup, *vecs, **args)
     elif tr == 4:
-        return MV.Degrain4(clip, sup, *vecs, **args)
+        return core.mv.Degrain4(clip, sup, *vecs, **args)
     elif tr == 3:
-        return MV.Degrain3(clip, sup, *vecs, **args)
+        return core.mv.Degrain3(clip, sup, *vecs, **args)
     elif tr == 2:
-        return MV.Degrain2(clip, sup, *vecs, **args)
+        return core.mv.Degrain2(clip, sup, *vecs, **args)
     elif tr == 1:
-        return MV.Degrain1(clip, sup, *vecs, **args)
+        return core.mv.Degrain1(clip, sup, *vecs, **args)
     raise ValueError("Temporal radius (tr) must be in the range 1-6.")
 
 
@@ -170,7 +177,7 @@ def tweak_darks(src, strength=2.5, amp=0.2):
     k = (strength - 1) * amp
     e = f"{k} {1 + amp} {(1 + amp) * amp} {t} {amp} + / - * {t} {1 - k} * + {1 << bd} *"
     expr = [e] + [""] * (src.format.num_planes - 1)
-    return core.std.Expr([src], expr)
+    return basic_expr([src], expr)
 
 
 def contrasharp(clip, src, rep=24, planes=[0, 1, 2]):
@@ -194,14 +201,13 @@ def contrasharp(clip, src, rep=24, planes=[0, 1, 2]):
     allD = core.std.MakeDiff(src, clip, planes)  # the difference achieved by the denoising
     ssDD = repair(ssD, allD, [rep if i in planes else 0 for i in range(num)])  # limit the difference to the max of what the denoising removed locally
     expr = "x {} - abs y {} - abs < x y ?".format(mid, mid)  # abs(diff) after limiting may not be bigger than before
-    ssDD = expression([ssDD, ssD], [expr if i in planes else "" for i in range(num)])
+    ssDD = basic_expr([ssDD, ssD], [expr if i in planes else "" for i in range(num)])
     return core.std.MergeDiff(clip, ssDD, planes)  # apply the limited difference (sharpening is just inverse blurring)
 
 
 def exclude_regions(clip, replacement, exclude=None):
     # simplified ReplaceFrames function from fvsfunc https://github.com/Irrational-Encoding-Wizardry/fvsfunc
     # which is a port of ReplaceFramesSimple by James D. Lin http://avisynth.nl/index.php/RemapFrames
-    import re
 
     if exclude is None:
         return clip
@@ -217,22 +223,19 @@ def exclude_regions(clip, replacement, exclude=None):
     for frame in frames:
         maps.append([int(frame), int(frame)])
 
+    replace_frames = []
     for start, end in maps:
         if start > end:
             raise ValueError("vs_temporalfix: Exclusions start frame is bigger than end frame: [{} {}]".format(start, end))
         if start >= clip.num_frames:
-            raise ValueError("vs_temporalfix: Exclusions start frame {} is outside the clip, which has only {} frames.".format(start, clip.num_frames))
+            raise ValueError("vs_temporalfix: Exclusions start frame {} is outside the clip. The last valid frame is {}.".format(start, clip.num_frames - 1))
+        if end >= clip.num_frames:
+            raise ValueError("vs_temporalfix: Exclusions end frame {} is outside the clip. The last valid frame is {}.".format(end, clip.num_frames - 1))
+        replace_frames.extend(range(start, end + 1))
 
-    out = clip
-    for start, end in maps:
-        temp = replacement[start : end + 1]
-        temp = replacement[start : end + 1]
-        if start != 0:
-            temp = out[:start] + temp
-        if end < out.num_frames - 1:
-            temp = temp + out[end + 1 :]
-        out = temp
-    return out
+    if not replace_frames:
+        return clip
+    return clip.vszip.RFS(replacement, frames=replace_frames)
 
 
 def lowfreq_denoise(low, high, motionmask, thsad=200, tr=6):
@@ -240,19 +243,22 @@ def lowfreq_denoise(low, high, motionmask, thsad=200, tr=6):
 
     bs  = 8
     pel = 1
+
     analyze_args = dict(blksize=bs, overlap=bs // 2, search=4, searchparam=1, truemotion=False)
     degrain_args = dict(thsad=thsad, plane=0)
 
     # downscale clips
     downscale_factor = 8
-    low_down   = core.resize.Bicubic(low,      width=low.width // downscale_factor, height=low.height // downscale_factor)
-    motionmask = core.resize.Point(motionmask, width=low.width // downscale_factor, height=low.height // downscale_factor)
+    width  = int(low.width  / downscale_factor) >> low.format.subsampling_w << low.format.subsampling_w
+    height = int(low.height / downscale_factor) >> low.format.subsampling_h << low.format.subsampling_h
+    low_down   = core.resize.Bicubic(low,      width=width, height=height)
+    motionmask = core.resize.Point(motionmask, width=width, height=height)
     motionmask = core.std.Maximum(motionmask)                  # expand mask
     prefilter  = tweak_darks(low_down, strength=2.5, amp=0.2)  # brighten darks
 
     # create super clips
-    pref_sup = MV.Super(prefilter, pel=pel, sharp=1, rfilter=4, blksize=bs, overlap=bs // 2)
-    low_sup  = MV.Super(low_down,  pel=pel, sharp=0, rfilter=1, levels=1, blksize=8, overlap=0)
+    pref_sup = core.mv.Super(prefilter, pel=pel, sharp=1, rfilter=4)
+    low_sup  = core.mv.Super(low_down,  pel=pel, sharp=0, rfilter=1, levels=1)
 
     # analyze and degrain
     low_vecs = mv_analyze(pref_sup, tr, analyze_args)
@@ -345,3 +351,24 @@ def get_tiles(clip_w, clip_h, tiles, overlap=0):
     cols, rows = min(valid_layouts, key=_score)
     tile_w, tile_h = _tile_size((cols, rows))
     return tile_w, tile_h, cols, rows
+
+
+def interpolate_onnx(onnx_path_lower, onnx_path_upper, save_path, weighting):
+    # interpolate two onnx models
+    import onnx
+    import numpy as np
+    from onnx import TensorProto, numpy_helper
+
+    float_types = {TensorProto.FLOAT, TensorProto.FLOAT16, TensorProto.DOUBLE}
+    model_lower = onnx.load(onnx_path_lower)
+    model_upper = onnx.load(onnx_path_upper)
+    init_upper  = {init.name: init for init in model_upper.graph.initializer}
+
+    for i, init_lower in enumerate(model_lower.graph.initializer):
+        if init_lower.data_type in float_types:
+            array_lower = numpy_helper.to_array(init_lower)
+            array_upper = numpy_helper.to_array(init_upper[init_lower.name])
+            array_lerp  = (array_lower.astype(np.float32) * (1.0 - weighting) + array_upper.astype(np.float32) * weighting).astype(array_lower.dtype, copy=False)
+            model_lower.graph.initializer[i].CopyFrom(numpy_helper.from_array(array_lerp, name=init_lower.name))
+
+    onnx.save_model(model_lower, save_path)
