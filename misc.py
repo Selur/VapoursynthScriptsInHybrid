@@ -552,11 +552,20 @@ class MotionVectors:
             None  -> use mvutensils automatically whenever core.mvu is available (default).
             True  -> require mvutensils; raises if core.mvu isn't loaded.
             False -> always use legacy core.mv / core.mvsf, even if core.mvu is available.
-        '''
-        if prefer_mvutensils is True and not has_mvutensils():
-            raise vs.Error('MotionVectors: mvutensils (core.mvu) was requested but is not loaded')
-        self.use_mvu = has_mvutensils() if prefer_mvutensils is None else (prefer_mvutensils and has_mvutensils())
 
+        NOTE: availability is checked live on every call
+        '''
+        self._prefer_mvutensils = prefer_mvutensils
+
+    @property
+    def use_mvu(self) -> bool:
+        if self._prefer_mvutensils is True:
+            if not has_mvutensils():
+                raise vs.Error('MotionVectors: mvutensils (core.mvu) was requested but is not loaded')
+            return True
+        if self._prefer_mvutensils is False:
+            return False
+        return has_mvutensils()
     # -- internal helpers ----------------------------------------------------
 
     def _legacy_ns(self, clip: vs.VideoNode):
