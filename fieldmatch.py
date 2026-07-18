@@ -30,7 +30,7 @@ import qtgmc
 # - Quality depends heavily on IsCombed thresholds and source characteristics.
 #
 # Requirements:
-# - tdm (for IsCombed)
+# - isCombed
 # - QTGMC
 #
 # Author: no clue where I got this from originally 
@@ -57,7 +57,7 @@ def FieldMatch(c: vs.VideoNode) -> vs.VideoNode:
     candidates = [cc, nn, cn, nc, pp, cp, pc, deint]
 
     # Precompute IsCombed for each clip
-    combed_flags = [core.tdm.IsCombed(clip, cthresh=12, chroma=True, blockx=16, blocky=32) for clip in candidates]
+    combed_flags = [core.iscombed.IsCombed(clip, cthresh=12, chroma=True, blockx=16, blocky=32) for clip in candidates]
 
     def select_frame(n, f):
         for i in range(len(combed_flags) - 1):  # skip deint until end

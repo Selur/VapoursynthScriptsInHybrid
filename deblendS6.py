@@ -186,8 +186,7 @@ def _build_detection_clips(
 
     luma = _get_plane(small, 0).std.Trim(first=2)
 
-    EXPR = (core.llvmexpr.Expr if hasattr(core, 'llvmexpr') else
-            core.akarin.Expr   if hasattr(core, 'akarin')   else
+    EXPR =  core.akarin.Expr   if hasattr(core, 'akarin')   else
             core.cranexpr.Expr if hasattr(core, 'cranexpr') else
             core.std.Expr)
 

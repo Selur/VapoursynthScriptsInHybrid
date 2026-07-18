@@ -107,7 +107,7 @@ class ChromaFixer:
         chroma_edges = core.std.Prewitt(chroma)
         
         # Calculate absolute difference
-        EXPR = core.llvmexpr.Expr if hasattr(core, 'llvmexpr') else core.akarin.Expr if hasattr(core, 'akarin') else core.cranexpr.Expr if hasattr(core, 'cranexpr') else core.std.Expr
+        EXPR = core.akarin.Expr if hasattr(core, 'akarin') else core.cranexpr.Expr if hasattr(core, 'cranexpr') else core.std.Expr
         diff = EXPR([y_edges, chroma_edges], "x y - abs")
         return core.std.PlaneStats(diff).get_frame(0).props.PlaneStatsAverage
 

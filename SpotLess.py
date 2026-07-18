@@ -16,7 +16,7 @@ Requirements
   mvtools      (core.mv)
   tmedian      (core.tmedian)  – or zsmooth / ttmpsm
   misc         (core.misc)     – or hysteresis
-  akarin / llvmexpr / cranexpr / std.Expr – for mask Expr operations
+  akarin / cranexpr / std.Expr – for mask Expr operations
 
 Usage
 -----
@@ -55,7 +55,6 @@ from typing import Optional
 def _expr_fn():
     """Pick the best available Expr plugin."""
     if hasattr(core, 'akarin'):    return core.akarin.Expr
-    if hasattr(core, 'llvmexpr'): return core.llvmexpr.Expr
     if hasattr(core, 'cranexpr'): return core.cranexpr.Expr
     return core.std.Expr
 

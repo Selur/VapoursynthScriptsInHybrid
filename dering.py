@@ -136,7 +136,7 @@ def HQDeringmod(
     matrix1 = [1, 2, 1, 2, 4, 2, 1, 2, 1]
     matrix2 = [1, 1, 1, 1, 1, 1, 1, 1, 1]
     has_zsmooth = hasattr(core,'zsmooth')
-    EXPR = core.llvmexpr.Expr if hasattr(core, 'llvmexpr') else core.akarin.Expr if hasattr(core, 'akarin') else core.cranexpr.Expr if hasattr(core, 'cranexpr') else core.std.Expr
+    EXPR = core.akarin.Expr if hasattr(core, 'akarin') else core.cranexpr.Expr if hasattr(core, 'cranexpr') else core.std.Expr
     if sharp <= 0:
         sclp = smoothed
     else:
@@ -174,7 +174,7 @@ def HQDeringmod(
         limitclp = repclp
     else:
         limitclp = LimitFilter(repclp, input, thr=thr, elast=elast, brighten_thr=darkthr, planes=planes)
-    EXPR = core.llvmexpr.Expr if hasattr(core, 'llvmexpr') else core.akarin.Expr if hasattr(core, 'akarin') else core.cranexpr.Expr if hasattr(core, 'cranexpr') else core.std.Expr
+    EXPR = core.akarin.Expr if hasattr(core, 'akarin') else core.cranexpr.Expr if hasattr(core, 'cranexpr') else core.std.Expr
     # Post-Process: Ringing Mask Generating
     if ringmask is None:
         expr = f'x {scale(mthr, bits)} < 0 x ?'
@@ -241,7 +241,7 @@ def mdering(clip: vs.VideoNode, thr: float = 2) -> vs.VideoNode:
     else:
         rg4_2 = core.fmtc.bitdepth(clip, bits=12, dmode=1).ctmf.CTMF(radius=2).fmtc.bitdepth(bits=bits)
         rg4_2 = LimitFilter(clip, rg4_2, thr=0.0625, elast=2)
-    EXPR = core.llvmexpr.Expr if hasattr(core, 'llvmexpr') else core.akarin.Expr if hasattr(core, 'akarin') else core.cranexpr.Expr if hasattr(core, 'cranexpr') else core.std.Expr
+    EXPR = core.akarin.Expr if hasattr(core, 'akarin') else core.cranexpr.Expr if hasattr(core, 'cranexpr') else core.std.Expr
     minblur_1 = EXPR([clip, rg11_1, rg4_1], ['x y - x z - xor x x y - abs x z - abs < y z ? ?'])
     minblur_2 = EXPR([clip, rg11_2, rg4_2], ['x y - x z - xor x x y - abs x z - abs < y z ? ?'])
     dering = EXPR([clip, minblur_1, minblur_2], ['y z - abs {thr} <= y x <= and y x ?'.format(thr=thr)])
@@ -418,7 +418,7 @@ def LimitFilter(flt, src, ref=None, thr=None, elast=None, brighten_thr=None, thr
         limitExprY = _limit_filter_expr(ref is not None, thr, elast, brighten_thr, valueRange)
         limitExprC = _limit_filter_expr(ref is not None, thrc, elast, thrc, valueRange)
         expr = []
-        EXPR = core.llvmexpr.Expr if hasattr(core, 'llvmexpr') else core.akarin.Expr if hasattr(core, 'akarin') else core.cranexpr.Expr if hasattr(core, 'cranexpr') else core.std.Expr
+        EXPR = core.akarin.Expr if hasattr(core, 'akarin') else core.cranexpr.Expr if hasattr(core, 'cranexpr') else core.std.Expr
         for i in range(sNumPlanes):
             if process[i]:
                 if i > 0 and (sIsYUV):
@@ -486,7 +486,7 @@ def MinBlur(clp: vs.VideoNode, r: int=1, planes: Optional[Union[int, Sequence[in
             RG4 = clp.ctmf.CTMF(radius=3, planes=planes, opt=2)
 
     expr = 'x y - x z - * 0 < x x y - abs x z - abs < y z ? ?'
-    EXPR = core.llvmexpr.Expr if hasattr(core, 'llvmexpr') else core.akarin.Expr if hasattr(core, 'akarin') else core.cranexpr.Expr if hasattr(core, 'cranexpr') else core.std.Expr
+    EXPR = core.akarin.Expr if hasattr(core, 'akarin') else core.cranexpr.Expr if hasattr(core, 'cranexpr') else core.std.Expr
     return EXPR([clp, RG11, RG4], expr=[expr if i in planes else '' for i in range(clp.format.num_planes)])
     
     
@@ -564,16 +564,14 @@ def _limit_filter_expr(defref, thr, elast, largen_thr, value_range):
     
 
 def _expr2(clips: vs.VideoNode | list[vs.VideoNode], expr: str | list[str]) -> vs.VideoNode:
-    """Expr — prefers llvmexpr → akarin → cranexpr → std."""
-    if hasattr(core, "llvmexpr"):
-        return core.llvmexpr.Expr(clips, expr)
+    """Expr — prefers akarin → cranexpr → std."""
     if hasattr(core, "akarin"):
         return core.akarin.Expr(clips, expr)
     if hasattr(core, "cranexpr"):
         return core.cranexpr.Expr(clips, expr)
     raise RuntimeError(
-            "AntiRingLR requires akarin, llvmexpr, or cranexpr — "
-            "none found. Install akarin, llvmexpr or cranexpr into your VS plugins folder."
+            "AntiRingLR requires akarin or cranexpr — "
+            "none found. Install akarin or cranexpr into your VS plugins folder."
     )
 
 def AntiRingLR(
@@ -885,7 +883,7 @@ def AvsPrewitt(clip: vs.VideoNode, planes: Optional[Union[int, Sequence[int]]] =
         planes = list(plane_range)
     elif isinstance(planes, int):
         planes = [planes]
-    EXPR = core.llvmexpr.Expr if hasattr(core, 'llvmexpr') else core.akarin.Expr if hasattr(core, 'akarin') else core.cranexpr.Expr if hasattr(core, 'cranexpr') else core.std.Expr
+    EXPR = core.akarin.Expr if hasattr(core, 'akarin') else core.cranexpr.Expr if hasattr(core, 'cranexpr') else core.std.Expr
     return EXPR(
         [
             clip.std.Convolution(matrix=[1, 1, 0, 1, 0, -1, 0, -1, -1], planes=planes, saturate=False),

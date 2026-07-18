@@ -19,7 +19,7 @@ def retinex_edgemask(src: vs.VideoNode, sigma: int = 1, draft: bool = False) -> 
     """
 
     luma = GetPlane(src, 0)
-    EXPR = core.llvmexpr.Expr if hasattr(core, 'llvmexpr') else core.akarin.Expr if hasattr(core, 'akarin') else core.cranexpr.Expr if hasattr(core, 'cranexpr') else core.std.Expr
+    EXPR = core.akarin.Expr if hasattr(core, 'akarin') else core.cranexpr.Expr if hasattr(core, 'cranexpr') else core.std.Expr
     max_value = 1.0 if src.format.sample_type == vs.FLOAT else (1 << src.format.bits_per_sample) - 1
     if draft:
         ret = EXPR(luma, 'x 65535 / sqrt 65535 *')
@@ -38,7 +38,7 @@ def kirsch(src: vs.VideoNode) -> vs.VideoNode:
     w = [5]*3 + [-3]*5
     weights = [w[-i:] + w[:-i] for i in range(4)]
     c = [src.std.Convolution((w[:4]+[0]+w[4:]), saturate=False) for w in weights]
-    EXPR = core.llvmexpr.Expr if hasattr(core, 'llvmexpr') else core.akarin.Expr if hasattr(core, 'akarin') else core.cranexpr.Expr if hasattr(core, 'cranexpr') else core.std.Expr
+    EXPR = core.akarin.Expr if hasattr(core, 'akarin') else core.cranexpr.Expr if hasattr(core, 'cranexpr') else core.std.Expr
     return EXPR(c, 'x y max z max a max')
 
 
@@ -48,7 +48,7 @@ def kirsch(src: vs.VideoNode) -> vs.VideoNode:
 def fast_sobel(src: vs.VideoNode) -> vs.VideoNode:
     sx = src.std.Convolution([-1, -2, -1, 0, 0, 0, 1, 2, 1], saturate=False)
     sy = src.std.Convolution([-1, 0, 1, -2, 0, 2, -1, 0, 1], saturate=False)
-    EXPR = core.llvmexpr.Expr if hasattr(core, 'llvmexpr') else core.akarin.Expr if hasattr(core, 'akarin') else core.cranexpr.Expr if hasattr(core, 'cranexpr') else core.std.Expr
+    EXPR = core.akarin.Expr if hasattr(core, 'akarin') else core.cranexpr.Expr if hasattr(core, 'cranexpr') else core.std.Expr
     return EXPR([sx, sy], 'x y max')
 
 
@@ -72,7 +72,7 @@ def kirsch2(clip_y: vs.VideoNode) -> vs.VideoNode:
     se = core.std.Convolution(clip_y, [-3, -3, -3, -3, 0, 5, -3, 5, 5], divisor=3, saturate=False)
     e = core.std.Convolution(clip_y, [-3, -3, 5, -3, 0, 5, -3, -3, 5], divisor=3, saturate=False)
     ne = core.std.Convolution(clip_y, [-3, 5, 5, -3, 0, 5, -3, -3, -3], divisor=3, saturate=False)
-    EXPR = core.llvmexpr.Expr if hasattr(core, 'llvmexpr') else core.akarin.Expr if hasattr(core, 'akarin') else core.cranexpr.Expr if hasattr(core, 'cranexpr') else core.std.Expr
+    EXPR = core.akarin.Expr if hasattr(core, 'akarin') else core.cranexpr.Expr if hasattr(core, 'cranexpr') else core.std.Expr
     return EXPR(
         [n, nw, w, sw, s, se, e, ne],
         ["x y max z max a max b max c max d max e max"],
@@ -94,7 +94,7 @@ def CartoonEdges(clip, low=0, high=255):
     low = scale8(low, maxvalue)
     high = scale8(high, maxvalue)
     edges = core.std.Convolution(clip, matrix=[0,-2,1,0,1,0,0,0,0], saturate=True)
-    EXPR = core.llvmexpr.Expr if hasattr(core, 'llvmexpr') else core.akarin.Expr if hasattr(core, 'akarin') else core.cranexpr.Expr if hasattr(core, 'cranexpr') else core.std.Expr
+    EXPR = core.akarin.Expr if hasattr(core, 'akarin') else core.cranexpr.Expr if hasattr(core, 'cranexpr') else core.std.Expr
     return EXPR(edges, ['x {high} >= {maxvalue} x {low} <= 0 x ? ?'
                                  .format(low=low, high=high, maxvalue=maxvalue), ''])
 
@@ -106,7 +106,7 @@ def RobertsEdges(clip, low=0, high=255):
     low = scale8(low, maxvalue)
     high = scale8(high, maxvalue)
     edges = core.std.Convolution(clip, matrix=[0,0,0,0,2,-1,0,-1,0], divisor=2, saturate=False)
-    EXPR = core.llvmexpr.Expr if hasattr(core, 'llvmexpr') else core.akarin.Expr if hasattr(core, 'akarin') else core.cranexpr.Expr if hasattr(core, 'cranexpr') else core.std.Expr
+    EXPR = core.akarin.Expr if hasattr(core, 'akarin') else core.cranexpr.Expr if hasattr(core, 'cranexpr') else core.std.Expr
     return EXPR(edges, ['x {high} >= {maxvalue} x {low} <= 0 x ? ?'
                                  .format(low=low, high=high, maxvalue=maxvalue), ''])
 
@@ -128,7 +128,7 @@ def dehalo_mask(src: vs.VideoNode, expand: float = 0.5, iterations: int = 2, brz
 
     src_b = depth(src, 8)
     luma = get_y(src_b)
-    EXPR = core.llvmexpr.Expr if hasattr(core, 'llvmexpr') else core.akarin.Expr if hasattr(core, 'akarin') else core.cranexpr.Expr if hasattr(core, 'cranexpr') else core.std.Expr
+    EXPR = core.akarin.Expr if hasattr(core, 'akarin') else core.cranexpr.Expr if hasattr(core, 'cranexpr') else core.std.Expr
     vEdge = EXPR([luma, luma.std.Maximum().std.Maximum()], [f'y x - {shift} - 128 *'])
     if hasattr(core,'tcanny'):
       mask1 = EXPR(vEdge.tcanny.TCanny(sigma=sqrt(expand*2), mode=-1), ['x 16 *'])
@@ -170,7 +170,7 @@ def hue_mask(clip: vs.VideoNode, min_hue: Union[float, int], max_hue: Union[floa
     hsl_clip = core.resize.Bicubic(clip, format=vs.YUV444P8, matrix_in_s="709")
     hue = core.std.ShufflePlanes(hsl_clip, planes=0, colorfamily=vs.GRAY)
     
-    EXPR = core.llvmexpr.Expr if hasattr(core, 'llvmexpr') else core.akarin.Expr if hasattr(core, 'akarin') else core.cranexpr.Expr if hasattr(core, 'cranexpr') else core.std.Expr
+    EXPR = core.akarin.Expr if hasattr(core, 'akarin') else core.cranexpr.Expr if hasattr(core, 'cranexpr') else core.std.Expr
     # Build the mask
     mask = EXPR(
         [hue],

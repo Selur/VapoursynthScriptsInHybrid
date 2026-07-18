@@ -21,9 +21,7 @@ from misc import MV
 # ---------------------------------------------------------------------------
 
 def _expr(clips: vs.VideoNode | list[vs.VideoNode], expr: str | list[str]) -> vs.VideoNode:
-    """Expr — prefers llvmexpr → akarin → cranexpr → std."""
-    if hasattr(core, "llvmexpr"):
-        return core.llvmexpr.Expr(clips, expr)
+    """Expr — prefers akarin → cranexpr → std."""
     if hasattr(core, "akarin"):
         return core.akarin.Expr(clips, expr)
     if hasattr(core, "cranexpr"):
@@ -486,7 +484,6 @@ Requirements
   bilateralgpu https://github.com/WolframRhodium/VapourSynth-BilateralGPU
   vszip       https://github.com/dnjulek/vapoursynth-zip
   bilateral   https://github.com/HomeOfVapourSynthEvolution/VapourSynth-Bilateral (fallback)
-  llvmexpr    https://github.com/Sunflower-Dolls/Vapoursynth-llvmexpr
   akarin      https://github.com/AkarinVS                           (fallback)
   cranexpr    https://github.com/sgt0/cranexpr                      (fallback)
 

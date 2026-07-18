@@ -72,8 +72,7 @@ def DeStripe(clip: vs.VideoNode, rad: int=2, offset: int=0, thr: int=256, vertic
 
     expr += f'sort{len(pattern)} ' + 'drop ' * (len(pattern)//2) + 'swap ' + 'drop ' * (len(pattern)//2)
 
-    EXPR = core.llvmexpr.Expr if hasattr(core, 'llvmexpr') else \
-           core.akarin.Expr if hasattr(core, 'akarin') else \
+    EXPR = core.akarin.Expr if hasattr(core, 'akarin') else \
            core.cranexpr.Expr if hasattr(core, 'cranexpr') else \
            core.std.Expr
 
@@ -285,7 +284,7 @@ def change_temperature(clip: vs.VideoNode, temp: int=6500):
 
     rgb = get_rgb(temp)
     r, g, b = [value/255.0 for value in rgb]
-    EXPR = core.llvmexpr.Expr if hasattr(core, 'llvmexpr') else core.akarin.Expr if hasattr(core, 'akarin') else core.cranexpr.Expr if hasattr(core, 'cranexpr') else core.std.Expr
+    EXPR = core.akarin.Expr if hasattr(core, 'akarin') else core.cranexpr.Expr if hasattr(core, 'cranexpr') else core.std.Expr
     return EXPR([clip], expr=[f"x {r} *", f"x {g} *", f"x {b} *"])
     
 def get_rgb(temp: int=6500):
@@ -326,7 +325,7 @@ def channel_mixer(rgb, RR=100.0, RG=0.0,   RB=0.0,
                        BR=0.0,   BG=0.0,   BB=100.0):
     if not rgb.format.color_family == vs.RGB:
         raise ValueError('channel_mixer: input clip must be RGB color_family')
-    EXPR = core.llvmexpr.Expr if hasattr(core, 'llvmexpr') else core.akarin.Expr if hasattr(core, 'akarin') else core.cranexpr.Expr if hasattr(core, 'cranexpr') else core.std.Expr
+    EXPR = core.akarin.Expr if hasattr(core, 'akarin') else core.cranexpr.Expr if hasattr(core, 'cranexpr') else core.std.Expr
     return EXPR(rgb, expr = [f'0.01 {RR} * x * 0.01 {RG} * x * + 0.01 {RB} * x * +',
                                       f'0.01 {GR} * x * 0.01 {GG} * x * + 0.01 {GB} * x * +',
                                       f'0.01 {BR} * x * 0.01 {BG} * x * + 0.01 {BB} * x * +'])  
@@ -374,7 +373,7 @@ def VHSClean(clip: vs.VideoNode, ths: int=100, blur_sharp=True) -> vs.VideoNode:
   x2 = MV.Degrain2(clip,sx,b1x,f1x,b2x,f2x,thsad=ths,thsadc=thsc)
 
   #phase 2. Reinject denoised over original (like a sharpening using blurred version)
-  EXPR = core.llvmexpr.Expr if hasattr(core, 'llvmexpr') else core.akarin.Expr if hasattr(core, 'akarin') else core.cranexpr.Expr if hasattr(core, 'cranexpr') else core.std.Expr
+  EXPR = core.akarin.Expr if hasattr(core, 'akarin') else core.cranexpr.Expr if hasattr(core, 'cranexpr') else core.std.Expr
   x3=EXPR([clip,x2],expr="x 2 * y -")
 
   #phase 3. Strong denoising. Same style as MCDegrainSharp (By Didée and Stainless)
@@ -408,7 +407,7 @@ def VHSClean(clip: vs.VideoNode, ths: int=100, blur_sharp=True) -> vs.VideoNode:
  
 
   #phase 4. Recover quick flying objects and water drops
-  EXPR = core.llvmexpr.Expr if hasattr(core, 'llvmexpr') else core.akarin.Expr if hasattr(core, 'akarin') else core.cranexpr.Expr if hasattr(core, 'cranexpr') else core.std.Expr
+  EXPR = core.akarin.Expr if hasattr(core, 'akarin') else core.cranexpr.Expr if hasattr(core, 'cranexpr') else core.std.Expr
   mx=EXPR([blur(clip=x4, blur_radius=1.5),blur(clip=x3, blur_radius=1.5)],expr="y x - abs 12 >  255 0 ?")
   return core.std.MaskedMerge(clipa=x4,clipb=x3,mask=_boxblur_f()(mx,2),planes=[0, 1, 2])
     
@@ -465,7 +464,7 @@ def ContrastMask(clip, gblur=20.0, enhance=10.0):
 
     # Apply the contrast mask effect using Expr
     expr = f"x {half_max_val} > y {max_val} x - {half_max_val} / * x {max_val} x - - + y x {half_max_val} / * ?"
-    EXPR = core.llvmexpr.Expr if hasattr(core, 'llvmexpr') else core.akarin.Expr if hasattr(core, 'akarin') else core.cranexpr.Expr if hasattr(core, 'cranexpr') else core.std.Expr
+    EXPR = core.akarin.Expr if hasattr(core, 'akarin') else core.cranexpr.Expr if hasattr(core, 'cranexpr') else core.std.Expr
     photoshop_overlay = EXPR([clip.std.ShufflePlanes(planes=0, colorfamily=vs.GRAY), v2], [expr])
 
     # Merge the original and overlay clips

@@ -63,8 +63,7 @@ class get_core:
 
           # --- Common functions ---
           self.Resample        = self.core.fmtc.resample
-          self.Expr            = (self.core.llvmexpr.Expr if hasattr(self.core, 'llvmexpr')
-                                  else self.core.akarin.Expr if hasattr(self.core,'akarin')
+          self.Expr            = (self.core.akarin.Expr if hasattr(self.core,'akarin')
                                   else self.core.std.Expr)
           self.MakeDiff        = self.core.std.MakeDiff
           self.MergeDiff       = self.core.std.MergeDiff

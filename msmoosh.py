@@ -21,7 +21,7 @@ Required:
     core.std         – MaskedMerge, ShufflePlanes (always present)
 
 Expr backend (first available wins):
-    core.llvmexpr  → core.akarin  → core.cranexpr  → core.std  (fallback)
+    core.akarin  → core.cranexpr  → core.std  (fallback)
 
 Algorithm overview
 ──────────────────
@@ -48,7 +48,6 @@ core = vs.core
 
 # ── Expr backend selection ───────────────────────────────────────────────────
 EXPR = (
-    core.llvmexpr.Expr  if hasattr(core, 'llvmexpr')  else
     core.akarin.Expr    if hasattr(core, 'akarin')     else
     core.cranexpr.Expr  if hasattr(core, 'cranexpr')   else
     core.std.Expr

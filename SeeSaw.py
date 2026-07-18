@@ -26,9 +26,7 @@ import vapoursynth as vs
 core = vs.core
 
 def _Expr(clips, expr):
-    if hasattr(core, 'llvmexpr'):
-        return core.llvmexpr.Expr(clips, expr)
-    elif hasattr(core, 'akarin'):
+    if hasattr(core, 'akarin'):
         return core.akarin.Expr(clips, expr)
     elif hasattr(core, 'cranexpr'):
         return core.cranexpr.Expr(clips, expr)
