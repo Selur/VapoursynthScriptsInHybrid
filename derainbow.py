@@ -66,8 +66,12 @@ def _fft3d(clip: vs.VideoNode, **kwargs) -> vs.VideoNode:
 
 def _bilateral(clip: vs.VideoNode, sigmaS: float = 3.0, sigmaR: float = 0.02, **kwargs) -> vs.VideoNode:
     """Bilateral filter — prefers bilateralgpu, then vszip, then bilateral."""
-    if hasattr(core, "bilateralgpu"):
-        return core.bilateralgpu.Bilateral(clip, sigmaS=sigmaS, sigmaR=sigmaR, **kwargs)
+    if hasattr(core,'zipcl'):
+      last = core.vszipcl.Bilateral(clip, sigmaS=sigmaS, sigmaR=sigmaR, **kwargs)
+    elif hasattr(core,'zipcu'):
+      last = core.vszipcu.Bilateral(clip, sigmaS=sigmaS, sigmaR=sigmaR, **kwargs)
+    elif hasattr(core, "bilateralgpu"):
+        return core.bilateralgpu.Bilateral(clip, sigma_spatial=sigmaS, sigma_color=sigmaR, **kwargs)
     if hasattr(core, "vszip"):
         return core.vszip.Bilateral(clip, sigmaS=sigmaS, sigmaR=sigmaR, **kwargs)
     if hasattr(core, "bilateral"):

@@ -736,7 +736,7 @@ def AutoWhiteAdjust(n, f, clip, core):
     b_gain = blue_corr / norm
 
     # Use Akarin / Expr depending on availability
-    EXPR = core.akarin.Expr if hasattr(core, 'akarin') else core.std.Expr)
+    EXPR = core.akarin.Expr if hasattr(core, 'akarin') else core.std.Expr
 
     return EXPR(clip, expr=[f"x {r_gain} *", f"x {g_gain} *", f"x {b_gain} *"])
 

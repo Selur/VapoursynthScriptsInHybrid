@@ -167,7 +167,14 @@ def GradFun3(src, thr=None, radius=None, elast=None, mask=None, mode=None, ampo=
     def bilateral_gpu(src, ref, radius, thr, elast, planes):
         t = max(thr * 4.5, 1.25)
         r = max(radius * 4 / 3, 4.0)
-        last = core.bilateralgpu.Bilateral(src, sigma_spatial=r / 2, sigma_color=t)
+        if hasattr(core,'zipcl'):
+          last = core.vszipcl.Bilateral(src, sigma_spatial=r / 2, sigma_color=t)  
+        elif hasattr(core,'zipcu'):
+          last = core.vszipcu.Bilateral(src, sigma_spatial=r / 2, sigma_color=t)  
+        elif hasattr(core,'bilateralgpu_rtc'):
+          last = core.bilateralgpu_rtc.Bilateral(src, sigma_spatial=r / 2, sigma_color=t)  
+        else:
+          last = core.bilateralgpu.Bilateral(src, sigma_spatial=r / 2, sigma_color=t)
         last = LimitFilter(last, ref, thr=thr, elast=elast, planes=planes)
         return last
 
