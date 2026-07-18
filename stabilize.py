@@ -14,8 +14,8 @@ def Stab(clp, range=5, dxmax=8, dymax=8, mirror=5):
         temp2 = core.zsmooth.TemporalSoften(clp, radius=1, threshold=[255], scenechange=-1, scalep=True)
         inter = core.std.Interleave([core.zsmooth.Repair(temp, temp2, 1), clp])
     else:
-        temp = misc.AverageFrames(clp, weights=[1] * 15, scenechange=-1 / 255)
-        temp2 = misc.AverageFrames(clp, weights=[1] * 3, scenechange=-1 / 255)
+        temp = misc.AverageFrames(clp, weights=[1] * 15)
+        temp2 = misc.AverageFrames(clp, weights=[1] * 3)
         inter = core.std.Interleave([core.rgvs.Repair(temp, temp2, 1), clp])
 
     mdata = core.depan.DePanEstimate(inter, range=range, trust=0, dxmax=dxmax, dymax=dymax)
