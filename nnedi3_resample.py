@@ -460,7 +460,7 @@ def nnedi3_dh(input, field=1, nsize=None, nns=None, qual=None, etype=None, pscrn
     elif mode == 'nnedi3cl':
         if hasattr(core, 'sneedif'):
           res = core.sneedif.NNEDI3(input, field=field, dh=True, **nnedi3_args1, device=device)
-        elif if hasattr(core, 'nnedi3vk'):
+        elif hasattr(core, 'nnedi3vk'):
           res = core.nnedi3vk.NNEDI3(input, field=field, dh=True, **nnedi3_args1, device_index=device)
         else:
           res = core.nnedi3cl.NNEDI3CL(input, field=field, dh=True, **nnedi3_args1, device=device)

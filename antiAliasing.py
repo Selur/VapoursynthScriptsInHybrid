@@ -266,12 +266,16 @@ def nnedi3aa(a: vs.VideoNode, opencl: bool=False, device: Optional[int] = None,)
     if opencl:
       if hasattr(core, 'sneedif'):
         myNNEDI3 = vs.core.sneedif.NNEDI3
+        last = myNNEDI3(a, field=1, dh=True, device=device).std.Transpose()
+        last = myNNEDI3(last, field=1, dh=True, device=device).std.Transpose()
       elif hasattr(core, 'nnedi3vk'):
         myNNEDI3 = vs.core.nnedi3vk.NNEDI3
+        last = myNNEDI3(a, field=1, dh=True, device_index=device).std.Transpose()
+        last = myNNEDI3(last, field=1, dh=True, device_index=device).std.Transpose()
       else:
         myNNEDI3 = vs.core.nnedi3cl.NNEDI3CL
-      last = myNNEDI3(a, field=1, dh=True, device=device).std.Transpose()
-      last = myNNEDI3(last, field=1, dh=True, device=device).std.Transpose()
+        last = myNNEDI3(a, field=1, dh=True, device=device).std.Transpose()
+        last = myNNEDI3(last, field=1, dh=True, device=device).std.Transpose()
     else:
       myNNEDI3 = vs.core.znedi3.nnedi3 if hasattr(vs.core, 'znedi3') else vs.core.nnedi3.nnedi3
       last = myNNEDI3(a, field=1, dh=True).std.Transpose()
