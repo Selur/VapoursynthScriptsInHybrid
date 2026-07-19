@@ -34,7 +34,7 @@ def daa(
         if hasattr(core,'sneedif'):
           nnedi3 = partial(core.sneedif.NNEDI3, nsize=nsize, nns=nns, qual=qual, pscrn=pscrn, device=device)
         elif hasattr(core,'nnedi3vk'):
-          nnedi3 = partial(core.nnedi3vk.NNEDI3, nsize=nsize, nns=nns, qual=qual, pscrn=pscrn, nnedi3vk=device)
+          nnedi3 = partial(core.nnedi3vk.NNEDI3, nsize=nsize, nns=nns, qual=qual, pscrn=pscrn, device_index=device)
         else:
           nnedi3 = partial(core.nnedi3cl.NNEDI3CL, nsize=nsize, nns=nns, qual=qual, pscrn=pscrn, device=device)
     else:
@@ -68,11 +68,15 @@ def daamod(c, nsize=None, nns=None, qual=None, pscrn=None, exp=None, opencl=Fals
       V = core.rgsf.VerticalCleaner if isFLOAT else core.rgvs.VerticalCleaner
 
     if opencl:
-        if hasattr(core,'sneedif'):
+        if hasattr(core, 'nnedi3vk'):
+          NNEDI3 = core.nnedi3vk.NNEDI3
+          nnedi3_args = dict(nsize=nsize, nns=nns, qual=qual, pscrn=pscrn, device_index=device)
+        elif hasattr(core,'sneedif'):
           NNEDI3 = core.sneedif.NNEDI3
+          nnedi3_args = dict(nsize=nsize, nns=nns, qual=qual, pscrn=pscrn, device=device)
         else:
           NNEDI3 = core.nnedi3cl.NNEDI3CL
-        nnedi3_args = dict(nsize=nsize, nns=nns, qual=qual, pscrn=pscrn, device=device)
+          nnedi3_args = dict(nsize=nsize, nns=nns, qual=qual, pscrn=pscrn, device=device)
     else:
         NNEDI3 = core.znedi3.nnedi3 if hasattr(core, 'znedi3') and not isFLOAT else core.nnedi3.nnedi3
         nnedi3_args = dict(nsize=nsize, nns=nns, qual=qual, pscrn=pscrn, exp=exp)
