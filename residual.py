@@ -14,6 +14,10 @@ def Vinverse(clp, sstr=2.7, amnt=255, chroma=True, scl=0.25):
     if not isinstance(clp, vs.VideoNode):
         raise vs.Error('Vinverse: this is not a clip')
 
+    if hasattr(core,'vinverse'):
+        uv=3 if chroma else 2
+        return core.vinverse.vinverse(clip=clp, sstr=sstr, amt=amt, scl=scl, uv=uv)
+
     if clp.format.sample_type == vs.INTEGER:
         neutral = 1 << (clp.format.bits_per_sample - 1)
         peak = (1 << clp.format.bits_per_sample) - 1
@@ -48,7 +52,11 @@ def Vinverse(clp, sstr=2.7, amnt=255, chroma=True, scl=0.25):
 def Vinverse2(clp, sstr=2.7, amnt=255, chroma=True, scl=0.25):
     if not isinstance(clp, vs.VideoNode):
         raise vs.Error('Vinverse2: this is not a clip')
-
+        
+    if hasattr(core,'vinverse'):
+        uv= 3 if chroma else 2
+        return core.vinverse.vinverse2(clip=clp, sstr=sstr, amt=amt, scl=scl, uv=uv)
+        
     if clp.format.sample_type == vs.INTEGER:
         neutral = 1 << (clp.format.bits_per_sample - 1)
         peak = (1 << clp.format.bits_per_sample) - 1
