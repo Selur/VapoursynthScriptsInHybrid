@@ -187,7 +187,9 @@ def santiag(
 
     def santiag_stronger(c: vs.VideoNode, strength: int, type: str) -> vs.VideoNode:
         if opencl:
-            if hasattr(core, 'sneedif'):
+            if hasattr(core, 'nnedi3vk'):
+              nnedi3 = partial(core.nnedi3vk.NNEDI3, nsize=nsize, nns=nns, qual=qual, pscrn=pscrn, device_index=device)
+            elif hasattr(core, 'sneedif'):
               nnedi3 = partial(core.sneedif.NNEDI3, nsize=nsize, nns=nns, qual=qual, pscrn=pscrn, device=device)
             else:
               nnedi3 = partial(core.nnedi3cl.NNEDI3CL, nsize=nsize, nns=nns, qual=qual, pscrn=pscrn, device=device)
