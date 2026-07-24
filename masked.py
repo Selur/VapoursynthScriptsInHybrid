@@ -2,6 +2,8 @@ import vapoursynth as vs
 from typing import Union, List, Optional, Tuple
 core = vs.core
 
+import misc
+
 try:
     from gaussblur import GaussBlur
 except ImportError:
@@ -290,10 +292,8 @@ def FinegrainMask(clip: vs.VideoNode, mode: str="RemoveGrain") -> vs.VideoNode:
 
     # Use Expr to compute absolute diff from mid-gray
     expr = f"x {peak/2} - abs" if isinstance(peak, float) else f"x {int(peak)//2} - abs"
-    if hasattr(core, 'akarin'):
-      mask = core.akarin.Expr([diff], expr=expr)
-    else:
-      mask = core.std.Expr([diff], expr=expr)
+    EXPR = core.akarin.Expr if hasattr(core, 'akarin') else core.cranexpr.Expr if hasattr(core, 'cranexpr') else core.std.Expr
+    mask = EXPR([diff], expr=expr)
     
     return mask
    
@@ -316,7 +316,7 @@ def make_color_mask(clip: vs.VideoNode,
     tol = tolerance
 
     # Compute squared color distance in float (but scaled as if in 8-bit space)
-    EXR = core.akarin.Expr if hasattr(core, 'akarin') else core.std.Expr
+    EXPR = core.akarin.Expr if hasattr(core, 'akarin') else core.cranexpr.Expr if hasattr(core, 'cranexpr') else core.std.Expr
     dr = EXPR([r], f"x {target_f[0]} - 255 * dup *")  # scale diff to 8-bit range
     dg = EXPR([g], f"x {target_f[1]} - 255 * dup *")
     db = EXPR([b], f"x {target_f[2]} - 255 * dup *")
@@ -330,7 +330,75 @@ def make_color_mask(clip: vs.VideoNode,
     # Output GRAY8
     return core.resize.Bicubic(mask, format=vs.GRAY8)
 
+def MotionMask(clip: vs.VideoNode, planes=None, th1=None, th2=None, tht=10, sc_value=0):
+  
+    if hasattr(core,'motionmask'):
+      return core.core.motionmask.MotionMask(clip=clip, planes=planes, th1=th1, th2=th2, tht=tht, sc_value=sc_value)
+  
+    fmt = clip.format
+    if fmt.color_family == vs.RGB:
+        raise vs.Error("MotionMask: RGB not supported")
+    if fmt.sample_type != vs.INTEGER or fmt.bits_per_sample not in range(8, 17):
+        raise vs.Error("MotionMask: clip must be 8..16 bit integer")
 
+    num_planes = fmt.num_planes
+    max_val = (1 << fmt.bits_per_sample) - 1
+
+    if planes is None:
+        planes = list(range(num_planes))
+    elif isinstance(planes, int):
+        planes = [planes]
+    else:
+        planes = list(planes)
+
+    def _expand(th, default):
+        if th is None:
+            th = [default] * num_planes
+        elif isinstance(th, int):
+            th = [th] * num_planes
+        else:
+            th = list(th)
+        while len(th) < num_planes:
+            th.append(th[-1])
+        return th
+
+    th1 = _expand(th1, 10)
+    th2 = _expand(th2, 10)
+
+    prev = clip[0] + clip[:-1]
+
+    EXPR = core.akarin.Expr if hasattr(core, 'akarin') else core.cranexpr.Expr if hasattr(core, 'cranexpr') else core.std.Expr
+
+    out_planes = []
+    for p in range(num_planes):
+        cur_p = core.std.ShufflePlanes(clip, p, vs.GRAY)
+        if p not in planes:
+            out_planes.append(cur_p)
+            continue
+        prev_p = core.std.ShufflePlanes(prev, p, vs.GRAY)
+        # d <= th1 ? 0 : (d > th2 ? max_val : d)
+        expr = (
+            f"x y - abs {th1[p]} <= "
+            f"0 "
+            f"x y - abs {th2[p]} > {max_val} x y - abs ? "
+            f"?"
+        )
+        out_planes.append(EXPR([cur_p, prev_p], expr))
+
+    diff_clip = (
+        out_planes[0] if num_planes == 1
+        else core.std.ShufflePlanes(out_planes, [0] * num_planes, fmt.color_family)
+    )
+    diff_clip = core.std.CopyFrameProps(diff_clip, clip)
+
+    sc_clip = misc.SCDetect(clip, threshold=tht / 255)
+    sc_scaled = sc_value * max_val // 255
+    blank = core.std.BlankClip(clip, color=[sc_scaled] * num_planes)
+
+    def _select(n, f):
+        return blank if f.props.get("_SceneChangePrev", 0) == 1 else diff_clip
+
+    return core.std.FrameEval(diff_clip, _select, prop_src=sc_clip)
    
 def bilinear_denoise(clip: vs.VideoNode, scale: float = 0.5, rg: bool=False) -> vs.VideoNode:
     """
