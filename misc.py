@@ -438,6 +438,16 @@ def AverageFrames(
     if scenechange:
         clip = SCDetect(clip, threshold=scenechange)
     return clip.std.AverageFrames(weights=weights, scenechange=scenechange, planes=planes)
+
+# convert i.e. 1080p50 to 1080i25
+def Interlace(clip: vs.VideoNode, tff: bool=True) -> vs.VideoNode:
+  if hasattr(core,'interlace'):
+    return core.interlace.Interlace(clip=clip,tff=tff)
+  clip = core.std.SeparateFields(clip=clip, tff=tff)
+  clip = core.std.SelectEvery(clip=clip, cycle=2, offsets=[0])
+  clip = core.std.DoubleWeave(clip=clip, tff=tff)
+  return core.std.SelectEvery(clip=clip, cycle=2, offsets=[0])
+
     
 # =============================================================================
 # Motion-vector plugin wrapper (mvtools / mvsf / mvutensils)
@@ -533,7 +543,6 @@ def _mvu_limit_to_float(limit: Optional[float], clip: vs.VideoNode) -> float:
         return limit / 255.0
     peak = (1 << clip.format.bits_per_sample) - 1
     return limit * peak / 255.0
-
 
 class MotionVectors:
     '''
