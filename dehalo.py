@@ -3,7 +3,7 @@ from vapoursynth import core
 
 import math
 from typing import Union, Optional, Sequence, TypeVar
-
+import misc
 from vsutil import scale_value
 
 def DeHalo_alpha(
@@ -401,7 +401,7 @@ def YAHR(clp: vs.VideoNode, blur: int = 2, depth: int = 32) -> vs.VideoNode:
     else:
         clp_orig = None
 
-    b1 = MinBlur(clp, 2).std.Convolution(matrix=[1, 2, 1, 2, 4, 2, 1, 2, 1])
+    b1 = misc.MinBlur(clp, 2).std.Convolution(matrix=[1, 2, 1, 2, 4, 2, 1, 2, 1])
     b1D = core.std.MakeDiff(clp, b1)
     
     w1 = Padding(clp, 6, 6, 6, 6)
@@ -412,7 +412,7 @@ def YAHR(clp: vs.VideoNode, blur: int = 2, depth: int = 32) -> vs.VideoNode:
       w1 = sharpen.AWarpSharp2(w1, blur=blur, depth=depth)
     w1 = core.std.Crop(w1, 6, 6, 6, 6)      
     
-    w1b1 = MinBlur(w1, 2).std.Convolution(matrix=[1, 2, 1, 2, 4, 2, 1, 2, 1])
+    w1b1 = misc.MinBlur(w1, 2).std.Convolution(matrix=[1, 2, 1, 2, 4, 2, 1, 2, 1])
     w1b1D = core.std.MakeDiff(w1, w1b1)
     if hasattr(core, 'zsmooth'):
       DD = core.zsmooth.Repair(b1D, w1b1D, mode=13)
@@ -522,43 +522,7 @@ def mt_inpand_multi(src: vs.VideoNode, mode: str = 'rectangle', planes: Optional
     if mode_m is not None:
         src = mt_inpand_multi(src.std.Minimum(planes=planes, coordinates=mode_m), mode=mode, planes=planes, sw=sw - 1, sh=sh - 1)
     return src
-
-# MinBlur   by Didée (http://avisynth.nl/index.php/MinBlur)
-# Nifty Gauss/Median combination
-def MinBlur(clp: vs.VideoNode, r: int=1, planes: Optional[Union[int, Sequence[int]]] = None) -> vs.VideoNode:
-    if not isinstance(clp, vs.VideoNode):
-        raise vs.Error('MinBlur: This is not a clip')
-
-    if planes is None:
-        planes = list(range(clp.format.num_planes))
-    elif isinstance(planes, int):
-        planes = [planes]
-
-    matrix1 = [1, 2, 1, 2, 4, 2, 1, 2, 1]
-    matrix2 = [1, 1, 1, 1, 1, 1, 1, 1, 1]
-    has_zsmooth = hasattr(core,'zsmooth')
-    if r <= 0:
-        RG11 = sbr(clp, planes=planes)
-        RG4 = clp.zsmooth.Median(planes=planes) if has_zsmooth else clp.std.Median(planes=planes)
-    elif r == 1:
-        RG11 = clp.std.Convolution(matrix=matrix1, planes=planes)
-        RG4 = clp.zsmooth.Median(planes=planes) if has_zsmooth else clp.std.Median(planes=planes)
-    elif r == 2:
-        RG11 = clp.std.Convolution(matrix=matrix1, planes=planes).std.Convolution(matrix=matrix2, planes=planes)
-        RG4 = clp.ctmf.CTMF(radius=2, planes=planes)
-    else:
-        RG11 = clp.std.Convolution(matrix=matrix1, planes=planes).std.Convolution(matrix=matrix2, planes=planes).std.Convolution(matrix=matrix2, planes=planes)
-        if clp.format.bits_per_sample == 16:
-            s16 = clp
-            RG4 = clp.fmtc.bitdepth(bits=12, planes=planes, dmode=1).ctmf.CTMF(radius=3, planes=planes).fmtc.bitdepth(bits=16, planes=planes)
-            RG4 = LimitFilter(s16, RG4, thr=0.0625, elast=2, planes=planes)
-        else:
-            RG4 = clp.ctmf.CTMF(radius=3, planes=planes, opt=2)
-
-    expr = 'x y - x z - * 0 < x x y - abs x z - abs < y z ? ?'
-    EXPR = core.akarin.Expr if hasattr(core, 'akarin') else core.cranexpr.Expr if hasattr(core, 'cranexpr') else core.std.Expr
-    return EXPR([clp, RG11, RG4], expr=[expr if i in planes else '' for i in range(clp.format.num_planes)])
-
+    
 # Try to remove 2nd order halos
 # Added presets to classic FineDehalo2
 def SecondOrderDehalo(

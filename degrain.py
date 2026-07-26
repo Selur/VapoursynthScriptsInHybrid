@@ -8,6 +8,7 @@ from typing import Sequence, Union, Optional
 
 from vsutil import scale_value
 from misc import MV
+import misc
 
 try:
     from gaussblur import GaussBlur
@@ -386,7 +387,7 @@ def MLD_helper(clip, srch, tr, thSAD, rec, chroma, soft):
         elif clip.width > 640:
             RG = core.std.Convolution(clip, matrix=[1, 2, 1, 2, 4, 2, 1, 2, 1], planes=planes)
         else:
-            RG = MinBlur(clip, 1, planes)
+            RG = misc.MinBlur(clip, 1, planes)
         RG = core.std.Merge(clip, RG, [soft] if chroma or isGRAY else [soft, 0]) if soft < 1 else RG
         EXPR = core.akarin.Expr if hasattr(core, 'akarin') else core.cranexpr.Expr if hasattr(core, 'cranexpr') else core.std.Expr
         sup2 = S(EXPR([clip, RG], ['x dup y - +'] if chroma or isGRAY else ['x dup y - +', '']), hpad=bs, vpad=bs, pel=pel, levels=1, rfilter=1, blksize=bs, overlap=bs//2)
@@ -797,7 +798,7 @@ def ContraSharpening(denoised, original, radius=None, rep=13, planes=None):
     if radius is None:
         radius = 2 if denoised.width > 1024 or denoised.height > 576 else 1
 
-    s = MinBlur(denoised, r=radius, planes=planes)                                                                   # damp down remaining spots of the denoised clip
+    s = misc.MinBlur(denoised, r=radius, planes=planes)                                                                   # damp down remaining spots of the denoised clip
 
     matrix1 = [1, 2, 1, 2, 4, 2, 1, 2, 1]
     matrix2 = [1, 1, 1, 1, 1, 1, 1, 1, 1]
@@ -1022,43 +1023,6 @@ def LimitFilter(flt, src, ref=None, thr=None, elast=None, brighten_thr=None, thr
     # Output
     return clip
 ################################################################################################################################
-
-# MinBlur   by Didée (http://avisynth.nl/index.php/MinBlur)
-# Nifty Gauss/Median combination
-def MinBlur(clp: vs.VideoNode, r: int=1, planes: Optional[Union[int, Sequence[int]]] = None) -> vs.VideoNode:
-    if not isinstance(clp, vs.VideoNode):
-        raise vs.Error('MinBlur: This is not a clip')
-
-    if planes is None:
-        planes = list(range(clp.format.num_planes))
-    elif isinstance(planes, int):
-        planes = [planes]
-
-    matrix1 = [1, 2, 1, 2, 4, 2, 1, 2, 1]
-    matrix2 = [1, 1, 1, 1, 1, 1, 1, 1, 1]
-    has_zsmooth = hasattr(core,'zsmooth')
-    if r <= 0:
-        RG11 = sbr(clp, planes=planes)
-        RG4 = clp.zsmooth.Median(planes=planes) if has_zsmooth else clp.std.Median(planes=planes)
-    elif r == 1:
-        RG11 = clp.std.Convolution(matrix=matrix1, planes=planes)
-        RG4 = clp.zsmooth.Median(planes=planes) if has_zsmooth else clp.std.Median(planes=planes)
-    elif r == 2:
-        RG11 = clp.std.Convolution(matrix=matrix1, planes=planes).std.Convolution(matrix=matrix2, planes=planes)
-        RG4 = clp.ctmf.CTMF(radius=2, planes=planes, opt=2)
-    else:
-        RG11 = clp.std.Convolution(matrix=matrix1, planes=planes).std.Convolution(matrix=matrix2, planes=planes).std.Convolution(matrix=matrix2, planes=planes)
-        if clp.format.bits_per_sample == 16:
-            s16 = clp
-            RG4 = clp.fmtc.bitdepth(bits=12, planes=planes, dmode=1).ctmf.CTMF(radius=3, planes=planes, opt=2).fmtc.bitdepth(bits=16, planes=planes)
-            RG4 = LimitFilter(s16, RG4, thr=0.0625, elast=2, planes=planes)
-        else:
-            RG4 = clp.ctmf.CTMF(radius=3, planes=planes)
-
-    expr = 'x y - x z - * 0 < x x y - abs x z - abs < y z ? ?'
-    EXPR = core.akarin.Expr if hasattr(core, 'akarin') else core.cranexpr.Expr if hasattr(core, 'cranexpr') else core.std.Expr
-    return EXPR([clp, RG11, RG4], expr=[expr if i in planes else '' for i in range(clp.format.num_planes)])
-
 
 # Taken from havsfunc
 def KNLMeansCL(

@@ -448,6 +448,124 @@ def Interlace(clip: vs.VideoNode, tff: bool=True) -> vs.VideoNode:
   clip = core.std.DoubleWeave(clip=clip, tff=tff)
   return core.std.SelectEvery(clip=clip, cycle=2, offsets=[0])
 
+def median_blur(
+    clip: vs.VideoNode,
+    radius: Union[int, Sequence[int]] = 2,
+    planes: Optional[Union[int, Sequence[int]]] = None,
+    **kwargs
+) -> vs.VideoNode:
+    """
+    Standalone median-blur replacement for the deprecated CTMF filter.
+    Falls back to zsmooth.Median if CTMF is not installed.
+
+    Parameters
+    ----------
+    clip : vs.VideoNode
+        Input clip. Any bit-depth and subsampling are accepted.
+    radius : int | Sequence[int], optional
+        Spatial radius of the median kernel.
+        1 = 3×3, 2 = 5×5, 3 = 7×7.
+        Defaults to 2 to match CTMF's historical default.
+        If a sequence is passed, one value per plane may be given.
+    planes : int | Sequence[int] | None, optional
+        Planes to process. None (default) processes all planes.
+    **kwargs
+        Extra arguments forwarded to CTMF only (e.g. memsize).
+        Silently ignored when the zsmooth fallback is used.
+
+    Returns
+    -------
+    vs.VideoNode
+        Median-blurred clip.
+
+    Raises
+    ------
+    RuntimeError
+        If neither vapoursynth-ctmf nor vapoursynth-zsmooth is available.
+    """
+
+    core = clip.core
+
+    # Normalize planes to a list so we can iterate uniformly later
+    if planes is None:
+        planes = list(range(clip.format.num_planes))
+    elif isinstance(planes, int):
+        planes = [planes]
+
+    # ------------------------------------------------------------------
+    # 1. Prefer vapoursynth-ctmf (the original, now deprecated plugin)
+    # ------------------------------------------------------------------
+    if hasattr(core, 'ctmf'):
+        # CTMF accepts radius as int or list[int] natively
+        return core.ctmf.CTMF(clip, radius=radius, planes=planes, **kwargs)
+
+    # ------------------------------------------------------------------
+    # 2. Fallback: zsmooth.Median
+    #    - Supports radius 0–3 only.
+    #    - Does NOT accept the extra kwargs that CTMF understands.
+    # ------------------------------------------------------------------
+    if hasattr(core, 'zsmooth'):
+        # zsmooth.Median signature:
+        #   Median(clip clip[, int[] radius, int[] planes])
+        return core.zsmooth.Median(clip, radius=radius, planes=planes)
+
+    # ------------------------------------------------------------------
+    # 3. Nothing available – bail out with a helpful message
+    # ------------------------------------------------------------------
+    raise RuntimeError(
+        "median_blur: Neither 'ctmf' nor 'zsmooth' is installed. "
+        "Please install vapoursynth-ctmf or vapoursynth-zsmooth."
+    )
+
+def MinBlur(clp: vs.VideoNode, r: int = 1, planes: Optional[Union[int, Sequence[int]]] = None) -> vs.VideoNode:
+    '''Nifty Gauss/Median combination – CTMF-free variant'''
+    
+    if not isinstance(clp, vs.VideoNode):
+        raise vs.Error('MinBlur: this is not a clip')
+
+    plane_range = range(clp.format.num_planes)
+
+    if planes is None:
+        planes = list(plane_range)
+    elif isinstance(planes, int):
+        planes = [planes]
+
+    matrix1 = [1, 2, 1, 2, 4, 2, 1, 2, 1]
+    matrix2 = [1, 1, 1, 1, 1, 1, 1, 1, 1]
+
+    # --- Helfer: Median mit Fallback statt hartem ctmf-Aufruf ---
+    def _median(clip, radius, planes):
+        if hasattr(core, 'ctmf'):
+            return core.ctmf.CTMF(clip, radius=radius, planes=planes)
+        if hasattr(core, 'zsmooth'):
+            return core.zsmooth.Median(clip, radius=radius, planes=planes)
+        raise RuntimeError("MinBlur: Weder ctmf noch zsmooth verfügbar")
+
+    if r <= 0:
+        RG11 = sbr(clp, planes=planes)
+        RG4 = clp.std.Median(planes=planes)
+    elif r == 1:
+        RG11 = clp.std.Convolution(matrix=matrix1, planes=planes)
+        RG4 = clp.std.Median(planes=planes)
+    elif r == 2:
+        RG11 = clp.std.Convolution(matrix=matrix1, planes=planes).std.Convolution(matrix=matrix2, planes=planes)
+        RG4 = _median(clp, radius=2, planes=planes)
+    else:
+        RG11 = clp.std.Convolution(matrix=matrix1, planes=planes).std.Convolution(matrix=matrix2, planes=planes).std.Convolution(matrix=matrix2, planes=planes)
+        # Hinweis: zsmooth.Median unterstützt max. radius=3
+        if clp.format.bits_per_sample == 16 and hasattr(core, 'ctmf'):
+            # Original-LimitFilter-Logik nur bei verfügbarem CTMF beibehalten
+            from mvsfunc import LimitFilter
+            s16 = clp
+            RG4 = depth(clp, 12, dither_type=Dither.NONE).ctmf.CTMF(radius=3, planes=planes)
+            RG4 = LimitFilter(s16, depth(RG4, 16), thr=0.0625, elast=2, planes=planes)
+        else:
+            RG4 = _median(clp, radius=3, planes=planes)
+
+    return core.std.Expr(
+        [clp, RG11, RG4],
+        expr=['x y - x z - * 0 < x x y - abs x z - abs < y z ? ?' if i in planes else '' for i in plane_range]
+    )
     
 # =============================================================================
 # Motion-vector plugin wrapper (mvtools / mvsf / mvutensils)

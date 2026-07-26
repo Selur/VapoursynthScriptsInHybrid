@@ -3,6 +3,7 @@ import vapoursynth as vs
 from vapoursynth import core
 
 import math
+import misc
 from typing import Optional, Union, Sequence, TypeVar
 
 def _hysteresis_fn():
@@ -130,7 +131,7 @@ def HQDeringmod(
           else:                      
             smoothed = input.dfttest.DFTTest(sbsize=sbsize, sosize=sosize, tbsize=1, slocation=[0.0, sigma2, 0.05, sigma, 0.5, sigma, 0.75, sigma2, 1.0, 0.0], planes=planes)
         else:
-            smoothed = MinBlur(input, nrmode, planes)
+            smoothed = misc.MinBlur(input, nrmode, planes)
 
     # Post-Process: Contra-Sharpening
     matrix1 = [1, 2, 1, 2, 4, 2, 1, 2, 1]
@@ -452,44 +453,7 @@ def LimitFilter(flt, src, ref=None, thr=None, elast=None, brighten_thr=None, thr
     return clip
 ################################################################################################################################
 
-
-# MinBlur   by Didée (http://avisynth.nl/index.php/MinBlur)
-# Nifty Gauss/Median combination
-def MinBlur(clp: vs.VideoNode, r: int=1, planes: Optional[Union[int, Sequence[int]]] = None) -> vs.VideoNode:
-    if not isinstance(clp, vs.VideoNode):
-        raise vs.Error('MinBlur: This is not a clip')
-
-    if planes is None:
-        planes = list(range(clp.format.num_planes))
-    elif isinstance(planes, int):
-        planes = [planes]
-
-    matrix1 = [1, 2, 1, 2, 4, 2, 1, 2, 1]
-    matrix2 = [1, 1, 1, 1, 1, 1, 1, 1, 1]
-    has_zsmooth = hasattr(core,'zsmooth')
-    if r <= 0:
-        RG11 = sbr(clp, planes=planes)
-        RG4 = clp.zsmooth.Median(planes=planes) if has_zsmooth else clp.std.Median(planes=planes)
-    elif r == 1:
-        RG11 = clp.std.Convolution(matrix=matrix1, planes=planes)
-        RG4 = clp.zsmooth.Median(planes=planes) if has_zsmooth else clp.std.Median(planes=planes)
-    elif r == 2:
-        RG11 = clp.std.Convolution(matrix=matrix1, planes=planes).std.Convolution(matrix=matrix2, planes=planes)
-        RG4 = clp.ctmf.CTMF(radius=2, planes=planes)
-    else:
-        RG11 = clp.std.Convolution(matrix=matrix1, planes=planes).std.Convolution(matrix=matrix2, planes=planes).std.Convolution(matrix=matrix2, planes=planes)
-        if clp.format.bits_per_sample == 16:
-            s16 = clp
-            RG4 = clp.fmtc.bitdepth(bits=12, planes=planes, dmode=1).ctmf.CTMF(radius=3, planes=planes).fmtc.bitdepth(bits=16, planes=planes)
-            RG4 = LimitFilter(s16, RG4, thr=0.0625, elast=2, planes=planes)
-        else:
-            RG4 = clp.ctmf.CTMF(radius=3, planes=planes, opt=2)
-
-    expr = 'x y - x z - * 0 < x x y - abs x z - abs < y z ? ?'
-    EXPR = core.akarin.Expr if hasattr(core, 'akarin') else core.cranexpr.Expr if hasattr(core, 'cranexpr') else core.std.Expr
-    return EXPR([clp, RG11, RG4], expr=[expr if i in planes else '' for i in range(clp.format.num_planes)])
-    
-    
+   
     
 ################################################################################################################################
 ## Helper function: CheckColorFamily()

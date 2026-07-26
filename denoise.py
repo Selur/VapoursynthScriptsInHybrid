@@ -7,6 +7,7 @@ from typing import Optional, Union, Sequence, TypeVar
 
 from vsutil import scale_value, types
 
+import misc
 from misc import MV
 
 try:
@@ -367,7 +368,7 @@ def MCTemporalDenoise(i, radius=None, pfMode=3, sigma=None, twopass=None, useTTm
         else:
           p = i.dfttest.DFTTest(tbsize=1, slocation=[0.0,4.0, 0.2,9.0, 1.0,15.0], planes=planes)
     else:
-        p = MinBlur(i, r=pfMode, planes=planes)
+        p = misc.MinBlur(i, r=pfMode, planes=planes)
 
     pD = core.std.MakeDiff(i, p, planes=planes)
     p = DitherLumaRebuild(p, s0=1, chroma=chroma)
@@ -1119,40 +1120,3 @@ def fallback(value: Optional[T], fallback_value: T) -> T:
     :return:                The input `value` or `fallback_value` if `value` is ``None``.
     """
     return fallback_value if value is None else value
-    
-    
-# MinBlur   by Didée (http://avisynth.nl/index.php/MinBlur)
-# Nifty Gauss/Median combination
-def MinBlur(clp: vs.VideoNode, r: int=1, planes: Optional[Union[int, Sequence[int]]] = None) -> vs.VideoNode:
-    if not isinstance(clp, vs.VideoNode):
-        raise vs.Error('MinBlur: This is not a clip')
-
-    if planes is None:
-        planes = list(range(clp.format.num_planes))
-    elif isinstance(planes, int):
-        planes = [planes]
-
-    matrix1 = [1, 2, 1, 2, 4, 2, 1, 2, 1]
-    matrix2 = [1, 1, 1, 1, 1, 1, 1, 1, 1]
-    has_zsmooth = hasattr(core,'zsmooth')
-    if r <= 0:
-        RG11 = sbr(clp, planes=planes)
-        RG4 = clp.zsmooth.Median(planes=planes) if has_zsmooth else clp.std.Median(planes=planes)
-    elif r == 1:
-        RG11 = clp.std.Convolution(matrix=matrix1, planes=planes)
-        RG4 = clp.zsmooth.Median(planes=planes) if has_zsmooth else clp.std.Median(planes=planes)
-    elif r == 2:
-        RG11 = clp.std.Convolution(matrix=matrix1, planes=planes).std.Convolution(matrix=matrix2, planes=planes)
-        RG4 = clp.ctmf.CTMF(radius=2, planes=planes)
-    else:
-        RG11 = clp.std.Convolution(matrix=matrix1, planes=planes).std.Convolution(matrix=matrix2, planes=planes).std.Convolution(matrix=matrix2, planes=planes)
-        if clp.format.bits_per_sample == 16:
-            s16 = clp
-            RG4 = clp.fmtc.bitdepth(bits=12, planes=planes, dmode=1).ctmf.CTMF(radius=3, planes=planes).fmtc.bitdepth(bits=16, planes=planes)
-            RG4 = LimitFilter(s16, RG4, thr=0.0625, elast=2, planes=planes)
-        else:
-            RG4 = clp.ctmf.CTMF(radius=3, planes=planes, opt=2)
-
-    expr = 'x y - x z - * 0 < x x y - abs x z - abs < y z ? ?'
-    EXPR = core.akarin.Expr if hasattr(core, 'akarin') else core.cranexpr.Expr if hasattr(core, 'cranexpr') else core.std.Expr
-    return EXPR([clp, RG11, RG4], expr=[expr if i in planes else '' for i in range(clp.format.num_planes)])
