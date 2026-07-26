@@ -362,10 +362,11 @@ def FineDehalo_contrasharp(dehaloed: vs.VideoNode, src: vs.VideoNode, level: flo
         dehaloed_orig = None
 
     bb = dehaloed.std.Convolution(matrix=[1, 2, 1, 2, 4, 2, 1, 2, 1])
+    bbb = misc.median_blur(bb, radius=2)
     if hasattr(core, 'zsmooth'):
-      bb2 = core.zsmooth.Repair(bb, core.zsmooth.Repair(bb, bb.ctmf.CTMF(radius=2), mode=1), mode=1)
+      bb2 = core.zsmooth.Repair(bb, core.zsmooth.Repair(bb, bbb, mode=1), mode=1)
     else:
-      bb2 = core.rgvs.Repair(bb, core.rgvs.Repair(bb, bb.ctmf.CTMF(radius=2), mode=1), mode=1)
+      bb2 = core.rgvs.Repair(bb, core.rgvs.Repair(bb, bbb, mode=1), mode=1)
     xd = core.std.MakeDiff(bb, bb2)
     EXPR = core.akarin.Expr if hasattr(core, 'akarin') else core.cranexpr.Expr if hasattr(core, 'cranexpr') else core.std.Expr
     xd = EXPR(xd, expr=f'x {neutral} - 2.49 * {level} * {neutral} +')

@@ -238,9 +238,10 @@ def mdering(clip: vs.VideoNode, thr: float = 2) -> vs.VideoNode:
     rg4_1 = core.std.Median(clip)
 
     if bits <= 12:
-        rg4_2 = core.ctmf.CTMF(clip, radius=2)
+        rg4_2 = misc.MedianBlur(clip, radius=2)
     else:
-        rg4_2 = core.fmtc.bitdepth(clip, bits=12, dmode=1).ctmf.CTMF(radius=2).fmtc.bitdepth(bits=bits)
+        rg4_2 = core.fmtc.bitdepth(clip, bits=12, dmode=1)
+        rg4_2 = misc.MedianBlur(rg4_2, radius=2).fmtc.bitdepth(bits=bits)
         rg4_2 = LimitFilter(clip, rg4_2, thr=0.0625, elast=2)
     EXPR = core.akarin.Expr if hasattr(core, 'akarin') else core.cranexpr.Expr if hasattr(core, 'cranexpr') else core.std.Expr
     minblur_1 = EXPR([clip, rg11_1, rg4_1], ['x y - x z - xor x x y - abs x z - abs < y z ? ?'])

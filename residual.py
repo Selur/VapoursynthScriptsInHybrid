@@ -16,7 +16,7 @@ def Vinverse(clp, sstr=2.7, amnt=255, chroma=True, scl=0.25):
 
     if hasattr(core,'vinverse'):
         uv=3 if chroma else 2
-        return core.vinverse.vinverse(clip=clp, sstr=sstr, amt=amt, scl=scl, uv=uv)
+        return core.vinverse.vinverse(clip=clp, sstr=sstr, amnt=amnt, scl=scl, uv=uv)
 
     if clp.format.sample_type == vs.INTEGER:
         neutral = 1 << (clp.format.bits_per_sample - 1)
@@ -55,7 +55,7 @@ def Vinverse2(clp, sstr=2.7, amnt=255, chroma=True, scl=0.25):
         
     if hasattr(core,'vinverse'):
         uv= 3 if chroma else 2
-        return core.vinverse.vinverse2(clip=clp, sstr=sstr, amt=amt, scl=scl, uv=uv)
+        return core.vinverse.vinverse2(clip=clp, sstr=sstr, amnt=amnt, scl=scl, uv=uv)
         
     if clp.format.sample_type == vs.INTEGER:
         neutral = 1 << (clp.format.bits_per_sample - 1)
