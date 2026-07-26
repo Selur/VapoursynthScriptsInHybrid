@@ -633,6 +633,38 @@ class MotionVectors:
 
     # -- Analyse / Analyze -------------------------------------------------
 
+    def _mvu_analyse_kwargs(
+        self, blksize, blksizev, levels, search, searchparam, pelsearch, lambda_, chroma,
+        truemotion, lsad, plevel, global_, pnew, pzero, pglobal, overlap, overlapv,
+        badsad, badrange, meander, trymany, fields, tff, dct,
+    ) -> dict:
+        '''Shared mvutensils Analyse/AnalyseMany kwarg translation (everything except delta/isb/radius).'''
+        kwargs = dict(
+            blksize=[blksize, blksizev or blksize],
+            overlap=[overlap, overlapv or overlap],
+            levels=levels,
+            search=_mvu_search_mode(search),
+            searchparam=searchparam,
+            mvlambda=(lambda_ if lambda_ is not None else (1000 if truemotion else 0)),
+            chroma=chroma,
+            lsad=(lsad if lsad is not None else 400),
+            plevel=(plevel if plevel is not None else 1),
+            globalmv=(global_ if global_ is not None else True),
+            pnew=(pnew if pnew is not None else 25),
+            pglobal=pglobal,
+            badsad=badsad,
+            badrange=badrange,
+            meander=meander,
+            trymany=(2 if trymany else 0),
+            fields=fields,
+            tff=bool(tff),
+            satd=_mvu_dct_to_satd(dct),
+        )
+        kwargs['pzero'] = pzero if pzero is not None else kwargs['pnew']
+        if pelsearch:
+            kwargs['pelsearch'] = pelsearch
+        return kwargs
+
     def _analyse(
         self,
         super: vs.VideoNode,
@@ -666,32 +698,13 @@ class MotionVectors:
         dct: int = 0,
     ) -> vs.VideoNode:
         if self.use_mvu:
-            kwargs = dict(
-                blksize=[blksize, blksizev or blksize],
-                overlap=[overlap, overlapv or overlap],
-                levels=levels,
-                search=_mvu_search_mode(search),
-                searchparam=searchparam,
-                # isb=True (old "is backward") -> positive delta; isb=False (forward) -> negative delta.
-                delta=delta if isb else -delta,
-                mvlambda=(lambda_ if lambda_ is not None else (1000 if truemotion else 0)),
-                chroma=chroma,
-                lsad=(lsad if lsad is not None else 400),
-                plevel=(plevel if plevel is not None else 1),
-                globalmv=(global_ if global_ is not None else True),
-                pnew=(pnew if pnew is not None else 25),
-                pglobal=pglobal,
-                badsad=badsad,
-                badrange=badrange,
-                meander=meander,
-                trymany=(2 if trymany else 0),
-                fields=fields,
-                tff=bool(tff),
-                satd=_mvu_dct_to_satd(dct),
+            kwargs = self._mvu_analyse_kwargs(
+                blksize, blksizev, levels, search, searchparam, pelsearch, lambda_, chroma,
+                truemotion, lsad, plevel, global_, pnew, pzero, pglobal, overlap, overlapv,
+                badsad, badrange, meander, trymany, fields, tff, dct,
             )
-            kwargs['pzero'] = pzero if pzero is not None else kwargs['pnew']
-            if pelsearch:
-                kwargs['pelsearch'] = pelsearch
+            # isb=True (old "is backward") -> positive delta; isb=False (forward) -> negative delta.
+            kwargs['delta'] = delta if isb else -delta
             return core.mvu.Analyse(super, **kwargs)
         ns = self._legacy_ns(super)
         func = self._legacy_analyse_func(ns)
@@ -708,6 +721,64 @@ class MotionVectors:
 
     def Analyze(self, *args, **kwargs) -> vs.VideoNode:
         return self._analyse(*args, **kwargs)
+
+    # -- AnalyseMany ---------------------------------------------------------
+
+    def AnalyseMany(
+        self,
+        super: vs.VideoNode,
+        radius: int = 1,
+        delta: int = 1,
+        blksize: int = 8,
+        blksizev: Optional[int] = None,
+        levels: int = 0,
+        search: int = 4,
+        searchparam: int = 2,
+        pelsearch: int = 0,
+        lambda_: Optional[int] = None,
+        chroma: bool = True,
+        truemotion: bool = True,
+        lsad: Optional[int] = None,
+        plevel: Optional[int] = None,
+        global_: Optional[bool] = None,
+        pnew: Optional[int] = None,
+        pzero: Optional[int] = None,
+        pglobal: int = 0,
+        overlap: int = 0,
+        overlapv: Optional[int] = None,
+        badsad: int = 10000,
+        badrange: int = 24,
+        meander: bool = True,
+        trymany: bool = False,
+        fields: bool = False,
+        tff: Optional[bool] = None,
+        dct: int = 0,
+    ) -> List[vs.VideoNode]:
+        '''
+        Returns a flat [bv1, fv1, bv2, fv2, ..., bv<radius>, fv<radius>] vector list - the same
+        order MV.Degrain()/MV.Compensate() expect - for delta steps delta, 2*delta, ..., radius*delta.
+
+        On mvutensils this is a single core.mvu.AnalyseMany() call; on the legacy backend (core.mv /
+        core.mvsf, which have no such helper) it's a loop over Analyse(isb=True/False, delta=step).
+        '''
+        if self.use_mvu:
+            kwargs = self._mvu_analyse_kwargs(
+                blksize, blksizev, levels, search, searchparam, pelsearch, lambda_, chroma,
+                truemotion, lsad, plevel, global_, pnew, pzero, pglobal, overlap, overlapv,
+                badsad, badrange, meander, trymany, fields, tff, dct,
+            )
+            return list(core.mvu.AnalyseMany(super, radius=radius, delta=delta, **kwargs))
+        vectors = []
+        for step in range(delta, delta * radius + 1, delta):
+            for isb in (True, False):
+                vectors.append(self._analyse(
+                    super, blksize=blksize, blksizev=blksizev, levels=levels, search=search,
+                    searchparam=searchparam, pelsearch=pelsearch, isb=isb, lambda_=lambda_, chroma=chroma,
+                    delta=step, truemotion=truemotion, lsad=lsad, plevel=plevel, global_=global_, pnew=pnew,
+                    pzero=pzero, pglobal=pglobal, overlap=overlap, overlapv=overlapv, badsad=badsad,
+                    badrange=badrange, meander=meander, trymany=trymany, fields=fields, tff=tff, dct=dct,
+                ))
+        return vectors
 
     # -- Recalculate -------------------------------------------------------
 
@@ -733,6 +804,34 @@ class MotionVectors:
         tff: Optional[bool] = None,
         dct: int = 0,
     ):
+        if isinstance(vectors, (list, tuple)):
+            if self.use_mvu:
+                # mvutensils takes/returns a whole vector list in one call (e.g. from AnalyseMany).
+                return list(core.mvu.Recalculate(
+                    super, list(vectors),
+                    thsad=thsad,
+                    smooth=bool(smooth),
+                    blksize=[blksize, blksizev or blksize],
+                    search=_mvu_search_mode(search),
+                    searchparam=searchparam,
+                    mvlambda=(lambda_ if lambda_ is not None else (1000 if truemotion else 0)),
+                    chroma=chroma,
+                    pnew=(pnew if pnew is not None else 25),
+                    overlap=[overlap, overlapv or overlap],
+                    meander=meander,
+                    fields=fields,
+                    tff=bool(tff),
+                    satd=_mvu_dct_to_satd(dct),
+                ))
+            # Legacy mv/mvsf Recalculate only takes a single vector clip at a time.
+            return [
+                self.Recalculate(
+                    super, v, thsad=thsad, smooth=smooth, blksize=blksize, blksizev=blksizev, search=search,
+                    searchparam=searchparam, lambda_=lambda_, chroma=chroma, truemotion=truemotion, pnew=pnew,
+                    overlap=overlap, overlapv=overlapv, divide=divide, meander=meander, fields=fields, tff=tff, dct=dct,
+                )
+                for v in vectors
+            ]
         if self.use_mvu:
             return core.mvu.Recalculate(
                 super, vectors,

@@ -254,7 +254,7 @@ def TemporalDegrain(          \
     if degrain == 3:
         bvec3 = MV.Analyse(srchSuper, isb=True, delta=3, blksize=blockSize\
             , overlap=overlapValue)
-        fvec3 = mv.Analyse(srchSuper, isb=False, delta=3, blksize=blockSize\
+        fvec3 = MV.Analyse(srchSuper, isb=False, delta=3, blksize=blockSize\
             , overlap=overlapValue)
 
     if degrain >= 2:
@@ -369,11 +369,6 @@ def MLD_helper(clip, srch, tr, thSAD, rec, chroma, soft):
     isFLOAT = clip.format.sample_type == vs.FLOAT
     isGRAY = clip.format.color_family == vs.GRAY
     S = MV.Super
-    A = MV.Analyse
-    R = MV.Recalculate
-    D1 = MV.Degrain1
-    D2 = MV.Degrain2
-    D3 = MV.Degrain3
     bs = 32 if clip.width > 2400 else 16 if clip.width > 960 else 8
     pel = 1 if clip.width > 960 else 2
     truemotion = False if clip.width > 960 else True
@@ -399,40 +394,13 @@ def MLD_helper(clip, srch, tr, thSAD, rec, chroma, soft):
         RG = clip
         sup2 = S(clip, hpad=bs, vpad=bs, pel=pel, levels=1, rfilter=1, blksize=bs, overlap=bs//2)
 
-    if tr < 4:
-        bv1 = A(sup1, isb=True,  delta=1, **analyse_args)
-        fv1 = A(sup1, isb=False, delta=1, **analyse_args)
-        if tr > 1:
-            bv2 = A(sup1, isb=True,  delta=2, **analyse_args)
-            fv2 = A(sup1, isb=False, delta=2, **analyse_args)
-        if tr > 2:
-            bv3 = A(sup1, isb=True,  delta=3, **analyse_args)
-            fv3 = A(sup1, isb=False, delta=3, **analyse_args)
-    else:
-        vec = mvmulti.Analyze(sup1, tr=tr, **analyse_args)
-        
+    # AnalyseMany returns [bv1, fv1, bv2, fv2, ...] directly; MV.Degrain() picks Degrain1/2/3/N
+    # (or mvu.Degrain for any radius) from how many vectors it's given.
+    vecs = MV.AnalyseMany(sup1, radius=tr, **analyse_args)
     if rec:
-        if tr < 4:
-            bv1 = R(sup1, bv1, **recalculate_args)
-            fv1 = R(sup1, fv1, **recalculate_args)
-            if tr > 1:
-                bv2 = R(sup1, bv2, **recalculate_args)
-                fv2 = R(sup1, fv2, **recalculate_args)
-            if tr > 2:
-                bv3 = R(sup1, bv3, **recalculate_args)
-                fv3 = R(sup1, fv3, **recalculate_args)    
-        else:
-            vec = mvmulti.Recalculate(sup1, vec, tr=tr, **recalculate_args)
-    
-    if tr < 4:
-        if tr == 1:
-            return D1(RG, sup2, bv1, fv1, thsad=thSAD, plane=plane)
-        elif tr == 2:
-            return D2(RG, sup2, bv1, fv1, bv2, fv2, thsad=thSAD, plane=plane)
-        else:
-            return D3(RG, sup2, bv1, fv1, bv2, fv2, bv3, fv3, thsad=thSAD, plane=plane)
-    else:
-        return mvmulti.DegrainN(RG, sup2, vec, tr=tr, thsad=thSAD, plane=plane)
+        vecs = MV.Recalculate(sup1, vecs, **recalculate_args)
+
+    return MV.Degrain(RG, sup2, *vecs, thsad=thSAD, plane=plane)
 
 
 def TemporalDegrain2(clip, degrainTR=1, degrainPlane=4, grainLevel=2, grainLevelSetup=False, meAlg=4, meAlgPar=None, meSubpel=None, meBlksz=None, meTM=False,
@@ -449,7 +417,10 @@ def TemporalDegrain2(clip, degrainTR=1, degrainPlane=4, grainLevel=2, grainLevel
                                                                            
     Required plugins:                                                         
     FFT3DFilter: https://github.com/myrsloik/VapourSynth-FFT3DFilter   
-    MVtools(sf): https://github.com/dubhater/vapoursynth-mvtools (https://github.com/IFeelBloated/vapoursynth-mvtools-sf)                   
+    Motion estimation/compensation goes through misc.MV, which uses mvutensils
+    (https://github.com/myrsloik/mvutensils) automatically when it's loaded, and
+    otherwise falls back to MVtools(sf): https://github.com/dubhater/vapoursynth-mvtools
+    (https://github.com/IFeelBloated/vapoursynth-mvtools-sf)
                                                                            
     Optional plugins:                                                         
     dfttest: https://github.com/HomeOfVapourSynthEvolution/VapourSynth-DFTTest            
@@ -536,12 +507,7 @@ def TemporalDegrain2(clip, degrainTR=1, degrainPlane=4, grainLevel=2, grainLevel
     bitDepthMultiplier = 0.00392 if isFLOAT else 1 << (bd - 8)
     mid = 0.5 if isFLOAT else 1 << (bd - 1)
     S = MV.Super
-    A = MV.Analyse
     C = MV.Compensate
-    R = MV.Recalculate
-    D1 = MV.Degrain1
-    D2 = MV.Degrain2
-    D3 = MV.Degrain3
     
     if hasattr(core, 'zsmooth'):
       RG = core.zsmooth.RemoveGrain
@@ -624,9 +590,6 @@ def TemporalDegrain2(clip, degrainTR=1, degrainPlane=4, grainLevel=2, grainLevel
         outputStage = 0
         degrainTR = 3
         
-    if degrainTR > 3 or postTR > 3:
-      import mvmulti
-
     rad = 3 if extraSharp else None
     mat = [1, 2, 1, 2, 4, 2, 1, 2, 1]
     hpad = meBlksz
@@ -685,34 +648,15 @@ def TemporalDegrain2(clip, degrainTR=1, degrainPlane=4, grainLevel=2, grainLevel
     srchSuper = S(lumaRebuild, rfilter=4, **super_args)
     recSuper = S(lumaRebuild, levels=1, **super_args)
     
-    if (maxTR > 0) and (degrainTR < 4 or postTR < 4):
-        bVec1 = A(srchSuper, isb=True,  delta=1, **analyse_args)
-        fVec1 = A(srchSuper, isb=False, delta=1, **analyse_args)
+    # AnalyseMany gives [bv1, fv1, bv2, fv2, ...] in one shot (mvu.AnalyseMany on mvutensils,
+    # a plain Analyse loop on the legacy backend) - one shared list covers both the degrain
+    # stages (first degrainTR pairs) and the post-filter compensation window (first postTR pairs).
+    if maxTR > 0:
+        vecs = MV.AnalyseMany(srchSuper, radius=maxTR, **analyse_args)
         if rec:
-            bVec1 = R(recSuper, bVec1, **recalculate_args)
-            fVec1 = R(recSuper, fVec1, **recalculate_args)
-        if maxTR > 1:
-            bVec2 = A(srchSuper, isb=True,  delta=2, **analyse_args)
-            fVec2 = A(srchSuper, isb=False, delta=2, **analyse_args)
-            if rec:
-                bVec2 = R(recSuper, bVec2, **recalculate_args)
-                fVec2 = R(recSuper, fVec2, **recalculate_args)
-        if maxTR > 2:
-            bVec3 = A(srchSuper, isb=True,  delta=3, **analyse_args)
-            fVec3 = A(srchSuper, isb=False, delta=3, **analyse_args)
-            if rec:
-                bVec3 = R(recSuper, bVec3, **recalculate_args)
-                fVec3 = R(recSuper, fVec3, **recalculate_args)
-
-    if degrainTR > 3:
-        vmulti1 = mvmulti.Analyze(srchSuper, tr=degrainTR, **analyse_args)
-        if rec:
-            vmulti1 = mvmulti.Recalculate(srchSuper, vmulti1, tr=degrainTR, **recalculate_args)
-
-    if postTR > 3:
-        vmulti2 = mvmulti.Analyze(srchSuper, tr=postTR, **analyse_args)
-        if rec:
-            vmulti2 = mvmulti.Recalculate(srchSuper, vmulti2, tr=postTR, **recalculate_args)
+            vecs = MV.Recalculate(recSuper, vecs, **recalculate_args)
+        degrainVecs = vecs[:2 * degrainTR]
+        postVecs = vecs[:2 * postTR]
     #---------------------------------------
     # Degrain
     # "spat" is a prefiltered clip which is used to limit the effect of the 1st MV-denoise stage.
@@ -736,15 +680,7 @@ def TemporalDegrain2(clip, degrainTR=1, degrainPlane=4, grainLevel=2, grainLevel
     # For simplicity, we just use MDegrain.
     if degrainTR > 0:
         supero = S(clip, **super_args)
-
-        if degrainTR < 2:
-            NR1 = D1(clip, supero, bVec1, fVec1, plane=degrainPlane, thsad=thSAD1, thscd1=thSCD1, thscd2=thSCD2)
-        elif degrainTR < 3:
-            NR1 = D2(clip, supero, bVec1, fVec1, bVec2, fVec2, plane=degrainPlane, thsad=thSAD1, thscd1=thSCD1, thscd2=thSCD2)
-        elif degrainTR < 4:
-            NR1 = D3(clip, supero, bVec1, fVec1, bVec2, fVec2, bVec3, fVec3, plane=degrainPlane, thsad=thSAD1, thscd1=thSCD1, thscd2=thSCD2)
-        else:
-            NR1 = mvmulti.DegrainN(clip, supero, vmulti1, tr=degrainTR, plane=degrainPlane, thsad=thSAD1, thscd1=thSCD1, thscd2=thSCD2)
+        NR1 = MV.Degrain(clip, supero, *degrainVecs, plane=degrainPlane, thsad=thSAD1, thscd1=thSCD1, thscd2=thSCD2)
 
     # Limit NR1 to not do more than what "spat" would do.
     if degrainTR > 0:
@@ -758,15 +694,7 @@ def TemporalDegrain2(clip, degrainTR=1, degrainPlane=4, grainLevel=2, grainLevel
     # Second MV-denoising stage. We use MDegrain.
     if degrainTR > 0:
         NR1x_super = S(NR1x, **super_args)
-
-        if degrainTR < 2:
-            NR2 = D1(NR1x, NR1x_super, bVec1, fVec1, plane=degrainPlane, thsad=thSAD2, thscd1=thSCD1, thscd2=thSCD2)
-        elif degrainTR < 3:
-            NR2 = D2(NR1x, NR1x_super, bVec1, fVec1, bVec2, fVec2, plane=degrainPlane, thsad=thSAD2, thscd1=thSCD1, thscd2=thSCD2)
-        elif degrainTR < 4:
-            NR2 = D3(NR1x, NR1x_super, bVec1, fVec1, bVec2, fVec2, bVec3, fVec3, plane=degrainPlane, thsad=thSAD2, thscd1=thSCD1, thscd2=thSCD2)
-        else:
-            NR2 = mvmulti.DegrainN(NR1x, NR1x_super, vmulti1, tr=degrainTR, plane=degrainPlane, thsad=thSAD2, thscd1=thSCD1, thscd2=thSCD2)
+        NR2 = MV.Degrain(NR1x, NR1x_super, *degrainVecs, plane=degrainPlane, thsad=thSAD2, thscd1=thSCD1, thscd2=thSCD2)
     else:
         NR2 = clip
     
@@ -774,25 +702,10 @@ def TemporalDegrain2(clip, degrainTR=1, degrainPlane=4, grainLevel=2, grainLevel
     # post FFT
     if postTR > 0:
         fullSuper = S(NR2, **super_args)
-
-    if postTR > 0:
-        if postTR == 1:
-            noiseWindow = core.std.Interleave([C(NR2, fullSuper, fVec1, thsad=thSAD2, thscd1=thSCD1, thscd2=thSCD2), NR2,
-                                               C(NR2, fullSuper, bVec1, thsad=thSAD2, thscd1=thSCD1, thscd2=thSCD2)])
-        elif postTR == 2:
-            noiseWindow = core.std.Interleave([C(NR2, fullSuper, fVec2, thsad=thSAD2, thscd1=thSCD1, thscd2=thSCD2),
-                                               C(NR2, fullSuper, fVec1, thsad=thSAD2, thscd1=thSCD1, thscd2=thSCD2), NR2,
-                                               C(NR2, fullSuper, bVec1, thsad=thSAD2, thscd1=thSCD1, thscd2=thSCD2),
-                                               C(NR2, fullSuper, bVec2, thsad=thSAD2, thscd1=thSCD1, thscd2=thSCD2)])
-        elif postTR == 3:
-            noiseWindow = core.std.Interleave([C(NR2, fullSuper, fVec3, thsad=thSAD2, thscd1=thSCD1, thscd2=thSCD2),
-                                               C(NR2, fullSuper, fVec2, thsad=thSAD2, thscd1=thSCD1, thscd2=thSCD2),
-                                               C(NR2, fullSuper, fVec1, thsad=thSAD2, thscd1=thSCD1, thscd2=thSCD2), NR2,
-                                               C(NR2, fullSuper, bVec1, thsad=thSAD2, thscd1=thSCD1, thscd2=thSCD2),
-                                               C(NR2, fullSuper, bVec2, thsad=thSAD2, thscd1=thSCD1, thscd2=thSCD2),
-                                               C(NR2, fullSuper, bVec3, thsad=thSAD2, thscd1=thSCD1, thscd2=thSCD2)])
-        else:
-            noiseWindow = mvmulti.Compensate(NR2, fullSuper, vmulti2, thsad=thSAD2, thscd1=thSCD1, thscd2=thSCD2, tr=postTR)
+        # postVecs is [bv1, fv1, ..., bv<postTR>, fv<postTR>]; interleave farthest-forward .. NR2 .. nearest..farthest-backward.
+        fwdComp = [C(NR2, fullSuper, postVecs[2 * (d - 1) + 1], thsad=thSAD2, thscd1=thSCD1, thscd2=thSCD2) for d in range(postTR, 0, -1)]
+        bwdComp = [C(NR2, fullSuper, postVecs[2 * (d - 1)], thsad=thSAD2, thscd1=thSCD1, thscd2=thSCD2) for d in range(1, postTR + 1)]
+        noiseWindow = core.std.Interleave(fwdComp + [NR2] + bwdComp)
     else:
         noiseWindow = NR2
     
