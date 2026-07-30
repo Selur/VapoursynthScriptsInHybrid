@@ -2,10 +2,10 @@
 # Script by pifroggi https://github.com/pifroggi/vs_temporalfix
 # or tepete and pifroggi on Discord
 
-# Based on plugins and functions from many different people. See function comments and readme requirements for details.
+# Based on plugins and functions from many different people. See function comments here and in utils for details.
 
 import vapoursynth as vs
-from vs_temporalfix_utils import temporal_median, median, basic_expr, advanced_expr, box_blur, average_color_fix, average_color_fix_fast, mvsf_analyze, mvsf_degrain, mv_analyze, mv_degrain, tweak_darks, contrasharp, exclude_regions, lowfreq_denoise
+from vs_temporalfix_utils import temporal_median, median, basic_expr, advanced_expr, box_blur, average_color_fix, average_color_fix_fast, tweak_darks, contrasharp, exclude_regions, lowfreq_denoise
 
 core = vs.core
 
@@ -19,22 +19,21 @@ def _motion_search_prefilter(clip, thsad=250, tr=6):
     # first pass with temporal median
     bs  = 128  # large blocksize to reduce warping
     pel = 1
-    sup = core.mv.Super(clip, pel=pel, sharp=1, rfilter=4, hpad=bs // 2, vpad=bs // 2)
-    analyse_args = dict(blksize=bs, overlap=bs // 2, search=4, searchparam=2, truemotion=False)
-    bv1 = core.mv.Analyse(sup, isb=True,  delta=1, **analyse_args)
-    fv1 = core.mv.Analyse(sup, isb=False, delta=1, **analyse_args)
-    bc1 = core.mv.Compensate(clip, sup, bv1)
-    fc1 = core.mv.Compensate(clip, sup, fv1)
-    fcb = core.std.Interleave([fc1, clip, bc1])
+    
+    sup  = core.mvu.Super(clip, blksize=bs, overlap=bs // 2, pad=bs // 2, pel=pel, sharp=1, rfilter=2)
+    bv1, fv1 = core.mvu.AnalyseMany(sup, radius=1, search=2, searchparam=2, mvlambda=0, lsad=400, plevel=0, pnew=0, pzero=0, globalmv=False)
+    bc1  = core.mvu.Compensate(clip, sup, bv1, thscd1=400, thscd2=51)
+    fc1  = core.mvu.Compensate(clip, sup, fv1, thscd1=400, thscd2=51)
+    fcb  = core.std.Interleave([fc1, clip, bc1])
     clip = temporal_median(fcb, radius=1, planes=0)[1::3]
 
     # second pass with degrain and a wide radius (improves pans, zooms and similar, reduces warping)
     bs  = 128  # large blocksize to reduce warping
     pel = 1
-    sup = core.mv.Super(clip, pel=pel, sharp=1, rfilter=4)
-    analyse_args = dict(blksize=bs, overlap=0, search=4, searchparam=1, truemotion=False)
-    vecs = mv_analyze(sup, tr, analyse_args)
-    return mv_degrain(clip, sup, vecs, tr, dict(thsad=thsad, plane=0))
+    
+    sup  = core.mvu.Super(clip, blksize=bs, overlap=0, pel=pel, sharp=1, rfilter=2)
+    vecs = core.mvu.AnalyseMany(sup, radius=tr, search=2, searchparam=1, mvlambda=0, lsad=400, plevel=0, pnew=0, pzero=0, globalmv=False)
+    return core.mvu.Degrain(clip, sup, vecs, thsad=[thsad, thsad], planes=[0])
 
 
 def _non_global_motion_mask(clip, downscale=320):
@@ -44,9 +43,9 @@ def _non_global_motion_mask(clip, downscale=320):
     clip = core.resize.Point(clip, format=vs.GRAY8, range_s="limited")
 
     # compensate next frame for motionmask so that it works on pans and zooms
-    sup  = core.mv.Super(clip, pel=2, sharp=1, rfilter=4, hpad=64, vpad=64)
-    vec  = core.mv.Analyse(sup, isb=False, delta=1, blksize=128, overlap=64, search=5, truemotion=True)
-    window = core.mv.Compensate(clip, sup, vec, thsad=200000, thscd1=1000, thscd2=1000)
+    sup = core.mvu.Super(clip, blksize=128, overlap=64, pad=64, pel=2, sharp=1, rfilter=2)
+    vec = core.mvu.Analyse(sup, delta=-1, search=3, mvlambda=1000, lsad=1200, plevel=1, pnew=50, pzero=50, globalmv=True)
+    window = core.mvu.Compensate(clip, sup, vec, thsad=200000, thscd1=1000, thscd2=100.0)
     window = core.std.Interleave([window, clip])
     
     # make textures and their motion more detectable
@@ -77,7 +76,7 @@ def _non_global_motion_mask(clip, downscale=320):
 
 def classic(clip, strength=500, tr=6, denoise=False, exclude=None, debug=False):
     """Add temporal coherence to single image AI upscaling models. Also known as temporal consistency, line wiggle fix, stabilization, deshimmering. 
-    This is the original CPU based version. It can run on any CPU, but may miss some areas, is slow and only works well for 2D animation. Check the 
+    This is the original CPU based version. It can run on any CPU, but is harder to tune, may miss some areas, and only works well for 2D animation. Check the 
     tips at the bottom for important usage information!
 
     Args:
@@ -96,10 +95,8 @@ def classic(clip, strength=500, tr=6, denoise=False, exclude=None, debug=False):
         debug: Shows areas that will be left untouched in pink. This includes areas with high motion, scene changes and excluded scenes. 
             May help while tuning parameters to see if the area is even affected.
 
-            Tip: It is important to increase the default frame cache by adding `core.max_cache_size = 15000` near the top of your vapoursynth script, 
-            else temporalfix classic will be very slow! High tr and resolution, or large filter scripts may need more.  
             Tip: Crop any black borders on the input clip, as those may cause ghosting on bright frames.  
-            Tip: There is a big drop in performance for `tr > 6`, due to switching from `mvtools` to `mvtools-sf`, which is slower.
+            Tip: If this is extremely slow, try increasing your frame cache to at least 10GB! `core.max_cache_size = 10000` Not needed on vapoursynth R78 and up.
     """
     
     # based on SMDegrain function from G41Fun https://github.com/Vapoursynth-Plugins-Gitify/G41Fun
@@ -117,8 +114,8 @@ def classic(clip, strength=500, tr=6, denoise=False, exclude=None, debug=False):
         raise ValueError("vs_temporalfix: Strength can not be negative.")
     if not isinstance(tr, int):
         raise TypeError("vs_temporalfix: Temporal radius (tr) must be an integer.")
-    if tr < 1:
-        raise ValueError("vs_temporalfix: Temporal radius (tr) must be at least 1.")
+    if tr < 1 or tr > 25:
+        raise ValueError("vs_temporalfix: Temporal radius (tr) must be in the 1-25 range.")
     if not isinstance(denoise, bool):
         raise TypeError("vs_temporalfix: Denoise must be either True or False.")
     if not isinstance(debug, bool):
@@ -127,53 +124,39 @@ def classic(clip, strength=500, tr=6, denoise=False, exclude=None, debug=False):
     # original props
     orig_clip   = clip
     props       = clip.get_frame(0).props
-    orig_width  = clip.width
+    orig_size   = max(clip.width, clip.height)
     orig_format = clip.format
     orig_family = clip.format.color_family
     dflt_range  = vs.RANGE_FULL if orig_family == vs.RGB else vs.RANGE_LIMITED  # if not tagged, default to full for rgb, limited for yuv/gray
     orig_range  = props.get('_Range', dflt_range) if vs.__version__.release_major >= 74 else 1 - props.get('_ColorRange', dflt_range)  # use _Range for R74 and up and _ColorRange and invert due to zimg for older versions
 
     # settings
-    mvsf        = tr > 6
     depth       = 16
     peak        = (1 << depth) - 1
     strengthc   = strength // 2
     chroma      = False if clip.format.color_family == vs.GRAY else True
-    plane       = 4  if chroma else 0
-    blksize     = 16 if orig_width > 2400 else 8
-    overlap     = 8  if orig_width > 2400 else 4
-    pel         = 1  if orig_width > 2400 else 2
+    blksize     = 16 if orig_size > 2400 else 8
+    overlap     = 8  if orig_size > 2400 else 4
+    pel         = 1  if orig_size > 2400 else 2
     subpixel    = 0
-    search      = 4
+    search      = 2
     searchparam = 1
-    dct         = 0
     thscd1      = 1000
-    thscd2      = 1000
-    truemotion  = False
-    extra_pad   = 16
+    thscd2      = 100.0
     dark_str    = 2.5
     dark_amp    = 0.2
-    if mvsf and not hasattr(core, "mvsf"):
-        raise RuntimeError("vs_temporalfix: Temporal radius (tr) > 6 requires the plugin 'mvtools-sf' and its dependency 'FFTW 3.3'. One or both are not installed.")
     
     # formats
     proc_format = core.get_video_format(getattr(vs, f"YUV444P{depth}")) if orig_family == vs.RGB else orig_format.replace(sample_type=vs.INTEGER, bits_per_sample=depth)  # format for the main processing steps
     pref_format = proc_format.replace(sample_type=vs.INTEGER, bits_per_sample=8, **(dict(subsampling_w=1, subsampling_h=1) if proc_format.color_family == vs.YUV else {}))  # format for the prefilter step
-    anal_format = proc_format.replace(sample_type=pref_format.sample_type, bits_per_sample=pref_format.bits_per_sample)  # format for motion analyzing during the main processing steps
-    if mvsf:
-        mvsf_legacy = not hasattr(core.mvsf, "Degrain")  # true is plugin version r9 or older, false is r10 pre-release or newer
-        mvsf_format = proc_format.replace(sample_type=vs.FLOAT, bits_per_sample=32)  # format for mvtools sf input
+    alys_format = proc_format.replace(sample_type=pref_format.sample_type, bits_per_sample=pref_format.bits_per_sample)  # format for motion analysing during the main processing steps
 
 
     ##### prepare input #####
 
     # convert to proc format
     if orig_format != proc_format or orig_range != 1:
-            clip = core.resize.Point(clip, format=proc_format, range=1, **({"matrix_s": "709"} if orig_family == vs.RGB else {}))
-    
-    # add borders
-    clip = core.std.AddBorders(clip, left=extra_pad, right=extra_pad, top=extra_pad, bottom=extra_pad)
-    clip = core.fb.FillBorders(clip, left=extra_pad, right=extra_pad, top=extra_pad, bottom=extra_pad, mode="fillmargins", interlaced=0)
+        clip = core.resize.Point(clip, format=proc_format, range=1, **({"matrix_s": "709"} if orig_family == vs.RGB else {}))
     ref  = clip
 
 
@@ -201,38 +184,18 @@ def classic(clip, strength=500, tr=6, denoise=False, exclude=None, debug=False):
     ##### degrain #####
 
     # resize and convert
-    if not mvsf:
-        if pel > 1:
-            pelclip = core.resize.Bilinear(pref, format=anal_format) if pref.format != anal_format else pref
-        if pel > 1 or pref.format != anal_format:
-            pref = core.resize.Bicubic(pref, format=anal_format, width=clip.width, height=clip.height)
-    else:
-        if pel > 1:
-            pelclip = core.resize.Bilinear(pref, format=mvsf_format)
-        pref = core.resize.Bicubic(pref, format=mvsf_format, width=clip.width, height=clip.height)
-        clip = core.resize.Point(clip,   format=mvsf_format)
+    if pel > 1:
+        pelclip = core.resize.Bilinear(pref, format=alys_format) if pref.format != alys_format else pref
+    if pel > 1 or pref.format != alys_format:
+        pref = core.resize.Bicubic(pref, format=alys_format, width=clip.width, height=clip.height)
     
-    # superclips
-    mv_mvsf_super = core.mv.Super if not mvsf else core.mvsf.Super
-    pref_sup = mv_mvsf_super(pref, chroma=chroma, rfilter=4, pel=pel, **({'pelclip': pelclip} if pel > 1 else {'sharp': 1}))
-    clip_sup = mv_mvsf_super(clip, chroma=chroma, rfilter=1, pel=pel, sharp=subpixel, levels=1)
-
-    # analyze and degrain
-    analyse_args = dict(blksize=blksize, search=search, chroma=chroma, truemotion=truemotion, overlap=overlap, dct=dct, searchparam=searchparam, fields=False)
-    if not mvsf:  # using mvtools because it is faster
-        degrain_args = dict(thsad=strength, thsadc=strengthc, plane=plane, thscd1=thscd1, thscd2=thscd2)
-        vecs = mv_analyze(pref_sup, tr, analyse_args)
-        clip = mv_degrain(clip, clip_sup, vecs, tr, degrain_args)
+    # create superclips
+    pref_sup = core.mvu.Super(pref, blksize=blksize, overlap=overlap, rfilter=2, pel=pel, **({'pelclip': pelclip} if pel > 1 else {'sharp': 1}))
+    clip_sup = core.mvu.Super(clip, blksize=blksize, overlap=overlap, pel=pel, sharp=subpixel, onelevel=True)
     
-    else:         # using mvtoolssf because it supports higher tr
-        degrain_args = dict(thsad=[strength, strengthc, strengthc], plane=plane, thscd1=thscd1, thscd2=thscd2)
-        if mvsf_legacy:
-            vecs = mvsf_analyze(pref_sup, tr, analyse_args)
-            clip = mvsf_degrain(clip, clip_sup, vecs, tr, degrain_args)
-        else:
-            vecs = core.mvsf.Analyze(pref_sup, radius=tr, **analyse_args)
-            clip = core.mvsf.Degrain(clip, clip_sup, vecs, **degrain_args)
-        clip = core.resize.Point(clip, format=proc_format)
+    # analyse and degrain
+    vecs = core.mvu.AnalyseMany(pref_sup, radius=tr, search=search, searchparam=searchparam, chroma=chroma, mvlambda=0, lsad=400, plevel=0, pnew=0, pzero=0, globalmv=False, fields=False, satd=False)
+    clip = core.mvu.Degrain(clip, clip_sup, vecs, thsad=[strength, strengthc], planes=[0, 1, 2] if chroma else [0], thscd1=thscd1, thscd2=thscd2)
 
 
     ##### recover details #####
@@ -276,9 +239,6 @@ def classic(clip, strength=500, tr=6, denoise=False, exclude=None, debug=False):
 
 
     ##### finalize output #####
-
-    # remove border
-    clip = core.std.Crop(clip, left=extra_pad, right=extra_pad, top=extra_pad, bottom=extra_pad)
     
     # convert back to original format
     if orig_format != proc_format or orig_range != 1:

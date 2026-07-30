@@ -1,4 +1,3 @@
-
 # Script by pifroggi https://github.com/pifroggi/vs_temporalfix
 # or tepete and pifroggi on Discord
 
@@ -100,71 +99,6 @@ def frequency_merge(low, high, radius=40, passes=3):
     return core.std.MergeDiff(low_remaining, high_remaining)
 
 
-def mvsf_analyze(sup, tr, args):
-    #function simplified from mvmulti: https://github.com/IFeelBloated/vapoursynth-mvtools-sf/blob/r9/src/mvmulti.py
-    vecs = []
-    for i in range(1, tr + 1):
-        vecs += [
-            core.mvsf.Analyze(sup, isb=True,  delta=i, **args),
-            core.mvsf.Analyze(sup, isb=False, delta=i, **args),
-        ]
-    return vecs
-
-
-def mvsf_degrain(clip, sup, vecs, tr, args):
-    #function simplified from mvmulti: https://github.com/IFeelBloated/vapoursynth-mvtools-sf/blob/r9/src/mvmulti.py
-    if not 1 <= tr <= 24:
-        raise ValueError("vs_temporalfix: Temporal radius (tr) can not be larger than 24 with mvtools-sf r9 or older. Upgrade to r10 pre-release or newer for larger radii.")
-
-    degrain = getattr(core.mvsf, f"Degrain{tr}")
-    return degrain(clip, sup, *vecs, **args)
-
-
-def mv_analyze(sup, tr, args):
-    bv1 = core.mv.Analyse(sup, isb=True,  delta=1, **args)
-    fv1 = core.mv.Analyse(sup, isb=False, delta=1, **args)
-    vecs = [bv1, fv1]
-
-    if tr > 1:
-        bv2 = core.mv.Analyse(sup, isb=True,  delta=2, **args)
-        fv2 = core.mv.Analyse(sup, isb=False, delta=2, **args)
-        vecs += [bv2, fv2]
-    if tr > 2:
-        bv3 = core.mv.Analyse(sup, isb=True,  delta=3, **args)
-        fv3 = core.mv.Analyse(sup, isb=False, delta=3, **args)
-        vecs += [bv3, fv3]
-    if tr > 3:
-        bv4 = core.mv.Analyse(sup, isb=True,  delta=4, **args)
-        fv4 = core.mv.Analyse(sup, isb=False, delta=4, **args)
-        vecs += [bv4, fv4]
-    if tr > 4:
-        bv5 = core.mv.Analyse(sup, isb=True,  delta=5, **args)
-        fv5 = core.mv.Analyse(sup, isb=False, delta=5, **args)
-        vecs += [bv5, fv5]
-    if tr > 5:
-        bv6 = core.mv.Analyse(sup, isb=True,  delta=6, **args)
-        fv6 = core.mv.Analyse(sup, isb=False, delta=6, **args)
-        vecs += [bv6, fv6]
-
-    return vecs
-
-
-def mv_degrain(clip, sup, vecs, tr, args):
-    if tr == 6:
-        return core.mv.Degrain6(clip, sup, *vecs, **args)
-    elif tr == 5:
-        return core.mv.Degrain5(clip, sup, *vecs, **args)
-    elif tr == 4:
-        return core.mv.Degrain4(clip, sup, *vecs, **args)
-    elif tr == 3:
-        return core.mv.Degrain3(clip, sup, *vecs, **args)
-    elif tr == 2:
-        return core.mv.Degrain2(clip, sup, *vecs, **args)
-    elif tr == 1:
-        return core.mv.Degrain1(clip, sup, *vecs, **args)
-    raise ValueError("Temporal radius (tr) must be in the range 1-6.")
-
-
 def tweak_darks(src, strength=2.5, amp=0.2):
     # simplified DitherLumaRebuild function that works on full range
     # DitherLumaRebuild function from G41Fun https://github.com/Vapoursynth-Plugins-Gitify/G41Fun
@@ -244,9 +178,6 @@ def lowfreq_denoise(low, high, motionmask, thsad=200, tr=6):
     bs  = 8
     pel = 1
 
-    analyze_args = dict(blksize=bs, overlap=bs // 2, search=4, searchparam=1, truemotion=False)
-    degrain_args = dict(thsad=thsad, plane=0)
-
     # downscale clips
     downscale_factor = 8
     width  = int(low.width  / downscale_factor) >> low.format.subsampling_w << low.format.subsampling_w
@@ -256,13 +187,13 @@ def lowfreq_denoise(low, high, motionmask, thsad=200, tr=6):
     motionmask = core.std.Maximum(motionmask)                  # expand mask
     prefilter  = tweak_darks(low_down, strength=2.5, amp=0.2)  # brighten darks
 
-    # create super clips
-    pref_sup = core.mv.Super(prefilter, pel=pel, sharp=1, rfilter=4)
-    low_sup  = core.mv.Super(low_down,  pel=pel, sharp=0, rfilter=1, levels=1)
+    # create superclips
+    pref_sup = core.mvu.Super(prefilter, blksize=bs, overlap=bs // 2, pel=pel, sharp=1, rfilter=2)
+    low_sup  = core.mvu.Super(low_down,  blksize=bs, overlap=bs // 2, pel=pel, sharp=0, onelevel=True)
 
-    # analyze and degrain
-    low_vecs = mv_analyze(pref_sup, tr, analyze_args)
-    low_degr = mv_degrain(low_down, low_sup, low_vecs, tr, degrain_args)
+    # analyse and degrain
+    low_vecs = core.mvu.AnalyseMany(pref_sup, radius=tr, search=2, searchparam=1, mvlambda=0, lsad=400, plevel=0, pnew=0, pzero=0, globalmv=False)
+    low_degr = core.mvu.Degrain(low_down, low_sup, low_vecs, thsad=[thsad, thsad], planes=[0])
 
     # merge
     low_degr = core.std.MaskedMerge(low_degr, low_down, motionmask)               # reduce blending/ghosting
