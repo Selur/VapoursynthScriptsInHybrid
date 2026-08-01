@@ -1,15 +1,16 @@
 import vapoursynth as vs
 from vapoursynth import core
 
+from typing import Sequence, Union, Optional
+
+
 import math
 
-from typing import Sequence, Union, Optional
-from misc import MV
+from helpers import scale
+from misc import MV, MinBlur
+from sharpen import LSFmod
+from nnedi3_resample import nnedi3_resample
 
-import misc
-import misc
-import nnedi3_resample
-import sharpen
 
 ################################################################################################
 ###                                                                                          ###
@@ -151,7 +152,7 @@ def SMDegrain(input, tr=2, thSAD=300, thSADC=None, RefineMotion=False, contrasha
         elif prefilter >= 4:
             pref = KNLMeansCL(inputP, d=1, a=1, h=7)
         else:
-            pref = misc.MinBlur(inputP, r=prefilter, planes=planes)
+            pref = MinBlur(inputP, r=prefilter, planes=planes)
     else:
         pref = inputP
 
@@ -166,9 +167,9 @@ def SMDegrain(input, tr=2, thSAD=300, thSADC=None, RefineMotion=False, contrasha
     if pelclip:
       nnediMode = 'nnedi3cl' if opencl else 'znedi3'
       cshift = 0.25 if pel == 2 else 0.375
-      pclip = nnedi3_resample.nnedi3_resample(pref, w * pel, h * pel, src_left=cshift, src_top=cshift, nns=4, mode=nnediMode, device=device)
+      pclip = nnedi3_resample(pref, w * pel, h * pel, src_left=cshift, src_top=cshift, nns=4, mode=nnediMode, device=device)
       if not GlobalR:
-         pclip2 = nnedi3_resample.nnedi3_resample(inputP, w * pel, h * pel, src_left=cshift, src_top=cshift, nns=4, mode=nnediMode, device=device)
+         pclip2 = nnedi3_resample(inputP, w * pel, h * pel, src_left=cshift, src_top=cshift, nns=4, mode=nnediMode, device=device)
       super_search = MV.Super(pref, chroma=chroma, rfilter=4, pelclip=pclip, **super_args)
     else:
       super_search = MV.Super(pref, chroma=chroma, sharp=subpixel, rfilter=4, **super_args)
@@ -271,11 +272,11 @@ def SMDegrain(input, tr=2, thSAD=300, thSADC=None, RefineMotion=False, contrasha
                 if ifC:
                     return Weave(ContraSharpening(output, CClip, planes=planes), tff=tff)
                 else:
-                    return Weave(sharpen.LSFmod(output, strength=contrasharp, source=CClip, Lmode=0, soothe=False, defaults='slow'), tff=tff)
+                    return Weave(LSFmod(output, strength=contrasharp, source=CClip, Lmode=0, soothe=False, defaults='slow'), tff=tff)
             elif ifC:
                 return ContraSharpening(output, CClip, planes=planes)
             else:
-                return sharpen.LSFmod(output, strength=contrasharp, source=CClip, Lmode=0, soothe=False, defaults='slow')
+                return LSFmod(output, strength=contrasharp, source=CClip, Lmode=0, soothe=False, defaults='slow')
         elif interlaced:
             return Weave(output, tff=tff)
         else:
@@ -304,7 +305,7 @@ def ContraSharpening(
     contra-sharpening: sharpen the denoised clip, but don't add more to any pixel than what was removed previously.
 
     Parameters:
-        denoised: Denoised clip to sharpen.
+        denoised: Denoised clip to 
 
         original: Original clip before denoising.
 
@@ -338,7 +339,7 @@ def ContraSharpening(
     matrix2 = [1, 1, 1, 1, 1, 1, 1, 1, 1]
 
     # damp down remaining spots of the denoised clip
-    s = misc.MinBlur(denoised, radius, planes)
+    s = MinBlur(denoised, radius, planes)
     # the difference achieved by the denoising
     allD = core.std.MakeDiff(original, denoised, planes=planes)
 
@@ -361,12 +362,6 @@ def ContraSharpening(
     # apply the limited difference (sharpening is just inverse blurring)
     last = core.std.MergeDiff(denoised, ssDD, planes=planes)
     return last.std.Crop(pad, pad, pad, pad)
-
-def cround(x: float) -> int:
-    return math.floor(x + 0.5) if x > 0 else math.ceil(x - 0.5)
-
-def scale(value, peak):
-    return cround(value * peak / 255) if peak != 1 else value / 255
     
 def DitherLumaRebuild(src, s0=2., c=0.0625, chroma=True):
     # Converts luma (and chroma) to PC levels, and optionally allows tweaking for pumping up the darks. (for the clip to be fed to motion search only)
@@ -388,28 +383,7 @@ def DitherLumaRebuild(src, s0=2., c=0.0625, chroma=True):
     e = '{} {} {} {} {} + / - * {} 1 {} - * + {} *'.format(k, c1, c2, t, c, t, k, 256*i)
     EXPR = core.akarin.Expr if hasattr(core, 'akarin') else core.cranexpr.Expr if hasattr(core, 'cranexpr') else core.std.Expr
     return EXPR([src], [e] if src.format.num_planes == 1 else [e, expr if chroma else ''])
-    
-# Taken from muvsfunc
-def GetPlane(clip, plane=None):
-    # input clip
-    if not isinstance(clip, vs.VideoNode):
-        raise type_error('"clip" must be a clip!')
 
-    # Get properties of input clip
-    sFormat = clip.format
-    sNumPlanes = sFormat.num_planes
-
-    # Parameters
-    if plane is None:
-        plane = 0
-    elif not isinstance(plane, int):
-        raise type_error('"plane" must be an int!')
-    elif plane < 0 or plane > sNumPlanes:
-        raise value_error(f'valid range of "plane" is [0, {sNumPlanes})!')
-
-    # Process
-    return core.std.ShufflePlanes(clip, plane, vs.GRAY)
-    
 # Taken from havsfunc
 def KNLMeansCL(
     clip: vs.VideoNode,
@@ -452,44 +426,7 @@ def KNLMeansCL(
           return nlmeans(d=d, a=a, s=s, h=h, channels='UV', wmode=wmode, wref=wref, device_type=device_type, device_id=device_id)
       else:
           return nlmeans(d=d, a=a, s=s, h=h, channels='YUV', wmode=wmode, wref=wref, device_type=device_type, device_id=device_id)
-        
-def sbr(c: vs.VideoNode, r: int = 1, planes: Optional[Union[int, Sequence[int]]] = None) -> vs.VideoNode:
-    '''make a highpass on a blur's difference (well, kind of that)'''
-    if not isinstance(c, vs.VideoNode):
-        raise vs.Error('sbr: this is not a clip')
-
-    neutral = 1 << (c.format.bits_per_sample - 1) if c.format.sample_type == vs.INTEGER else 0.0
-
-    plane_range = range(c.format.num_planes)
-
-    if planes is None:
-        planes = list(plane_range)
-    elif isinstance(planes, int):
-        planes = [planes]
-
-    matrix1 = [1, 2, 1, 2, 4, 2, 1, 2, 1]
-    matrix2 = [1, 1, 1, 1, 1, 1, 1, 1, 1]
-
-    RG11 = c.std.Convolution(matrix=matrix1, planes=planes)
-    if r >= 2:
-        RG11 = RG11.std.Convolution(matrix=matrix2, planes=planes)
-    if r >= 3:
-        RG11 = RG11.std.Convolution(matrix=matrix2, planes=planes)
-
-    RG11D = core.std.MakeDiff(c, RG11, planes=planes)
-
-    RG11DS = RG11D.std.Convolution(matrix=matrix1, planes=planes)
-    if r >= 2:
-        RG11DS = RG11DS.std.Convolution(matrix=matrix2, planes=planes)
-    if r >= 3:
-        RG11DS = RG11DS.std.Convolution(matrix=matrix2, planes=planes)
-    EXPR = core.akarin.Expr if hasattr(core, 'akarin') else core.cranexpr.Expr if hasattr(core, 'cranexpr') else core.std.Expr
-    RG11DD = EXPR(
-        [RG11D, RG11DS],
-        expr=[f'x y - x {neutral} - * 0 < {neutral} x y - abs x {neutral} - abs < x y - {neutral} + x ? ?' if i in planes else '' for i in plane_range],
-    )
-    return core.std.MakeDiff(c, RG11DD, planes=planes)
-    
+     
 def get_motion_vectors(super_search, refine, search_params, refine_params, tr, interlaced):
     vectors = {}
     

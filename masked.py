@@ -1,13 +1,11 @@
 import vapoursynth as vs
-from typing import Union, List, Optional, Tuple
-core = vs.core
+from math import sqrt
 
+from typing import Union
 import misc
+from helpers import GetPlane, Depth, BoxFilter
 
-try:
-    from gaussblur import GaussBlur
-except ImportError:
-    GaussBlur = None
+core = vs.core
 
 # collection of Mask filters.
 
@@ -83,10 +81,6 @@ def kirsch2(clip_y: vs.VideoNode) -> vs.VideoNode:
 def scale8(x, newmax):
         return x * newmax // 0xFF
 
-def _boxblur_fn():
-    """Pick the best available BoxBlur."""
-    if hasattr(core, 'vszip'): return core.vszip.BoxBlur
-    return core.std.BoxBlur
 
 def CartoonEdges(clip, low=0, high=255):
     """Should behave like mt_edge(mode="cartoon")"""
@@ -114,39 +108,34 @@ def RobertsEdges(clip, low=0, high=255):
 
 # from https://github.com/dnjulek/jvsfunc/blob/main/jvsfunc/mask.py -> Tcanny
 def dehalo_mask(src: vs.VideoNode, expand: float = 0.5, iterations: int = 2, brz: int = 255, shift: int = 8) -> vs.VideoNode:
-    from vsutil import depth, iterate, get_depth, get_y
-    from math import sqrt
-    """
-    Based on muvsfunc.YAHRmask(), stand-alone version with some tweaks.
+    if not 0 <= brz <= 255:
+        raise ValueError("dehalo_mask: brz must be between 0 and 255.")
 
-    :param src: Input clip. I suggest to descale (if possible) and nnedi3_rpow2 first, for a cleaner mask.
-    :param expand: Expansion of edge mask.
-    :param iterations: Protects parallel lines and corners that are usually damaged by YAHR.
-    :param brz: Adjusts the internal line thickness.
-    :param shift: Corrective shift for fine-tuning iterations
-    """
-    if brz > 255 or brz < 0:
-        raise ValueError('dehalo_mask: brz must be between 0 and 255.')
+    src8 = Depth(src, 8)
+    luma = GetPlane(src8, 0)
 
-    src_b = depth(src, 8)
-    luma = get_y(src_b)
     EXPR = core.akarin.Expr if hasattr(core, 'akarin') else core.cranexpr.Expr if hasattr(core, 'cranexpr') else core.std.Expr
-    vEdge = EXPR([luma, luma.std.Maximum().std.Maximum()], [f'y x - {shift} - 128 *'])
-    if hasattr(core,'tcanny'):
-      mask1 = EXPR(vEdge.tcanny.TCanny(sigma=sqrt(expand*2), mode=-1), ['x 16 *'])
-      
+    edge = EXPR([luma, luma.std.Maximum().std.Maximum()], [f"y x - {shift} - 128 *"])
+
+    if hasattr(core, "tcanny"):
+        mask1 = EXPR(edge.tcanny.TCanny(sigma=sqrt(expand * 2), mode=-1), ["x 16 *"])
     else:
-      radius = max(1, round(math.sqrt(expand * 2) * 1.5))
-      mask1 = EXPR(_boxblur_fn()(vEdge, hradius=radius, hpasses=3, vradius=radius, vpasses=3), ['x 16 *'])
-        
-    mask2 = iterate(vEdge, core.std.Maximum, iterations)
-    mask2 = iterate(mask2, core.std.Minimum, iterations)
+        radius = max(1, round(sqrt(expand * 2) * 1.5))
+        mask1 = EXPR(BoxFilter(edge, radius, 3), ["x 16 *"])
+
+    mask2 = edge
+    for _ in range(iterations):
+        mask2 = core.std.Maximum(mask2)
+    for _ in range(iterations):
+        mask2 = core.std.Minimum(mask2)
+
     mask2 = mask2.std.Invert().std.Binarize(80)
+
     mask3 = mask2.std.Inflate().std.Inflate().std.Binarize(brz)
     mask4 = mask3 if brz < 255 else mask2
     mask4 = mask4.std.Convolution(matrix=[1, 2, 1, 2, 4, 2, 1, 2, 1])
-    mask = EXPR([mask1, mask4], ['x y min'])
-    return depth(mask, get_depth(src), range=1)
+
+    return Depth(EXPR([mask1, mask4], ["x y min"]), src.format.bits_per_sample, range=1)
 
 
 def hue_mask(clip: vs.VideoNode, min_hue: Union[float, int], max_hue: Union[float, int]) -> vs.VideoNode:
@@ -452,51 +441,3 @@ def bilinear_denoise(clip: vs.VideoNode, scale: float = 0.5, rg: bool=False) -> 
 
     return up
 
-
-# Taken from muvsfunc
-def GetPlane(clip, plane=None):
-    # input clip
-    if not isinstance(clip, vs.VideoNode):
-        raise type_error('"clip" must be a clip!')
-
-    # Get properties of input clip
-    sFormat = clip.format
-    sNumPlanes = sFormat.num_planes
-
-    # Parameters
-    if plane is None:
-        plane = 0
-    elif not isinstance(plane, int):
-        raise type_error('"plane" must be an int!')
-    elif plane < 0 or plane > sNumPlanes:
-        raise value_error(f'valid range of "plane" is [0, {sNumPlanes})!')
-
-    # Process
-    return core.std.ShufflePlanes(clip, plane, vs.GRAY)
-    
-    
-def Depth(src, bits, dither_type='error_diffusion', range=None, range_in=None):
-    src_f = src.format
-    src_cf = src_f.color_family
-    src_st = src_f.sample_type
-    src_bits = src_f.bits_per_sample
-    src_sw = src_f.subsampling_w
-    src_sh = src_f.subsampling_h
-    dst_st = vs.INTEGER if bits < 32 else vs.FLOAT
-
-    if isinstance(range, str):
-        range = RANGEDICT[range]
-
-    if isinstance(range_in, str):
-        range_in = RANGEDICT[range_in]
-
-    if (src_bits, range_in) == (bits, range):
-        return src
-    _is_api4: bool = hasattr(vs, "__api_version__") and vs.__api_version__.api_major == 4
-    query_video_format = core.query_video_format if _is_api4 else core.register_format
-    out_f = query_video_format(src_cf, dst_st, bits, src_sw, src_sh)
-    return core.resize.Point(src, format=out_f.id, dither_type=dither_type, range=range, range_in=range_in)
-
-
-RANGEDICT = {'limited': 0, 'full': 1}
- 

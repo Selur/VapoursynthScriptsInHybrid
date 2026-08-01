@@ -123,6 +123,8 @@ import threading
 from dataclasses import dataclass
 from typing import Optional
 
+from helpers import GetPlane, cround
+
 import vapoursynth as vs
 
 core = vs.core
@@ -145,20 +147,11 @@ _MAGIC_OFFSET = 1.0 / 64.0
 # helpers
 # ---------------------------------------------------------------------------
 
-def _cround(x: float) -> int:
-    return math.floor(x + 0.5) if x > 0 else math.ceil(x - 0.5)
-
-
 def _nearest_lower_fps(src: float) -> float:
     candidates = [24000/1001, 24.0, 25.0, 30000/1001, 30.0,
                   48000/1001, 48.0, 50.0, 60000/1001, 60.0]
     below = [c for c in candidates if c < src - 0.01]
     return max(below) if below else src
-
-
-def _get_plane(clip: vs.VideoNode, plane: int = 0) -> vs.VideoNode:
-    return core.std.ShufflePlanes(clip, plane, vs.GRAY)
-
 
 # ---------------------------------------------------------------------------
 # Detection clip construction  (identical to srestore)
@@ -184,11 +177,9 @@ def _build_detection_clips(
     new_h = int(dclip.height / 2 / srad + 4) * 4
     small = dclip.resize.Point(new_w, new_h)
 
-    luma = _get_plane(small, 0).std.Trim(first=2)
+    luma = GetPlane(small, 0).std.Trim(first=2)
 
-    EXPR =  core.akarin.Expr   if hasattr(core, 'akarin')   else
-            core.cranexpr.Expr if hasattr(core, 'cranexpr') else
-            core.std.Expr)
+    EXPR =  core.akarin.Expr if hasattr(core, 'akarin') else core.cranexpr.Expr if hasattr(core, 'cranexpr') else core.std.Expr
 
     diff = core.std.MakeDiff(luma, luma.std.Trim(first=1))
 
@@ -200,7 +191,7 @@ def _build_detection_clips(
     bclp = bclp.resize.Bilinear(bsize, bsize)
 
     dclp = (diff.std.Trim(first=1)
-               .std.Lut(function=lambda x: max(_cround(abs(x - 128) ** 1.1 - 1), 0))
+               .std.Lut(function=lambda x: max(cround(abs(x - 128) ** 1.1 - 1), 0))
                .resize.Bilinear(bsize, bsize))
 
     return bclp, dclp, luma
@@ -267,7 +258,7 @@ def _compute_decision(
             state['offs'] -= 2 * denm
 
     pos = (0 if frfac == 1
-           else -_cround((cfo + state['offs']) / (2 * numr)) if bfo
+           else -cround((cfo + state['offs']) / (2 * numr)) if bfo
            else state['lpos'])
     cof = cfo + state['offs'] + 2 * numr * pos
 
@@ -413,7 +404,7 @@ def _compute_decision(
         odm = 2 * denm - numr
     else:
         odm = cof
-    odm += _cround((cof - odm) / (2 * denm)) * 2 * denm
+    odm += cround((cof - odm) / (2 * denm)) * 2 * denm
 
     if blend:
         odr = denm - numr
@@ -447,7 +438,7 @@ def _compute_decision(
     if frfac == 1:
         opos = 0
     else:
-        opos = -_cround(
+        opos = -cround(
             (cfo + state['offs'] +
              (denm if bfo and state['offs'] <= -4 * numr else 0))
             / (2 * numr)
@@ -800,13 +791,13 @@ def deblendS6(
 
     frfac = true_fps / src_fps
 
-    if abs(frfac * 1001 - _cround(frfac * 1001)) < 0.01:
-        numr = _cround(frfac * 1001)
-    elif abs(1001 / frfac - _cround(1001 / frfac)) < 0.01:
+    if abs(frfac * 1001 - cround(frfac * 1001)) < 0.01:
+        numr = cround(frfac * 1001)
+    elif abs(1001 / frfac - cround(1001 / frfac)) < 0.01:
         numr = 1001
     else:
-        numr = _cround(frfac * 9000)
-    denm = _cround(numr / frfac)
+        numr = cround(frfac * 9000)
+    denm = cround(numr / frfac)
 
     # _build_detection_clips returns luma post-trim(2), matching AviSynth's
     # det after .trim(2,0); used for bclp / dclp / dc_motion.
@@ -843,8 +834,7 @@ def deblendS6(
         if engine_name == "svp":
             of_clip = _build_of_clip_svp(clip)
         else:
-            mv = _get_mv_plugin()
-            of_clip = _build_of_clip(clip, mv, pel=of_pel, blksize=of_blksize)
+            of_clip = _build_of_clip(clip, pel=of_pel, blksize=of_blksize)
     else:
         of_clip = None
 
@@ -905,51 +895,73 @@ def deblendS6(
 # Optical-flow blend reconstruction
 # ---------------------------------------------------------------------------
 
-def _get_mv_plugin():
-    if hasattr(core, 'mvsf'):
-        return core.mvsf
-    if hasattr(core, 'mv'):
-        return core.mv
-    raise vs.Error(
-        "deblend: optical_flow=True requires MVTools2 (core.mv) or "
-        "MVTools-sf (core.mvsf) to be installed."
-    )
-
-
 def _build_of_clip(
     clip:    vs.VideoNode,
-    mv:      object,
     pel:     int = 2,
     blksize: int = 16,
 ) -> vs.VideoNode:
     fmt_orig = clip.format
 
-    if hasattr(core, 'mvsf'):
-        target_fmt = fmt_orig.replace(bits_per_sample=32, sample_type=vs.FLOAT)
-        src_work   = clip.resize.Bicubic(format=target_fmt.id)
-        needs_conv = True
-    else:
-        if fmt_orig.bits_per_sample != 8 or fmt_orig.sample_type != vs.INTEGER:
-            target_fmt = fmt_orig.replace(bits_per_sample=8, sample_type=vs.INTEGER)
+    if hasattr(core, 'mvu'):
+        mv       = core.mvu
+        overlap  = blksize // 2
+
+        needs_conv = False
+        if fmt_orig.sample_type == vs.FLOAT and fmt_orig.bits_per_sample != 32:
+            target_fmt = fmt_orig.replace(bits_per_sample=32, sample_type=vs.FLOAT)
+            needs_conv = True
+        elif fmt_orig.sample_type == vs.INTEGER and fmt_orig.bits_per_sample > 16:
+            target_fmt = fmt_orig.replace(bits_per_sample=16, sample_type=vs.INTEGER)
+            needs_conv = True
+        else:
+            target_fmt = fmt_orig
+
+        src_work = clip.resize.Bicubic(format=target_fmt.id) if needs_conv else clip
+
+        sup_src = mv.Super(
+            src_work, blksize=blksize, overlap=overlap,
+            pad=[blksize, blksize], pel=pel,
+        )
+        bwd = mv.Analyse(sup_src, delta=1)    # positive delta = backward
+        fwd = mv.Analyse(sup_src, delta=-1)   # negative delta = forward
+
+        interp = mv.FlowInter(src_work, sup_src, [bwd, fwd], time=50)
+
+    elif hasattr(core, 'mvsf') or hasattr(core, 'mv'):
+        # --- MVTools-sf / MVTools2 fallback
+        if hasattr(core, 'mvsf'):
+            mv = core.mvsf
+            target_fmt = fmt_orig.replace(bits_per_sample=32, sample_type=vs.FLOAT)
             src_work   = clip.resize.Bicubic(format=target_fmt.id)
             needs_conv = True
         else:
-            src_work   = clip
-            needs_conv = False
+            mv = core.mv
+            if fmt_orig.bits_per_sample != 8 or fmt_orig.sample_type != vs.INTEGER:
+                target_fmt = fmt_orig.replace(bits_per_sample=8, sample_type=vs.INTEGER)
+                src_work   = clip.resize.Bicubic(format=target_fmt.id)
+                needs_conv = True
+            else:
+                src_work   = clip
+                needs_conv = False
 
-    sup_src  = mv.Super(src_work, pel=pel, hpad=blksize, vpad=blksize)
-    _analyse = mv.Analyze if hasattr(mv, 'Analyze') else mv.Analyse
-    bwd      = _analyse(sup_src, isb=True,  blksize=blksize, overlap=blksize // 2)
-    fwd      = _analyse(sup_src, isb=False, blksize=blksize, overlap=blksize // 2)
+        sup_src  = mv.Super(src_work, pel=pel, hpad=blksize, vpad=blksize)
+        _analyse = mv.Analyze if hasattr(mv, 'Analyze') else mv.Analyse
+        bwd      = _analyse(sup_src, isb=True,  blksize=blksize, overlap=blksize // 2)
+        fwd      = _analyse(sup_src, isb=False, blksize=blksize, overlap=blksize // 2)
 
-    interp = mv.FlowInter(src_work, sup_src, bwd, fwd, time=50)
+        interp = mv.FlowInter(src_work, sup_src, bwd, fwd, time=50)
+
+    else:
+        raise vs.Error(
+            "deblend: optical_flow=True requires MVUtensils (core.mvu), "
+            "MVTools2 (core.mv) or MVTools-sf (core.mvsf) to be installed."
+        )
 
     if needs_conv and fmt_orig.id != interp.format.id:
         interp = interp.resize.Bicubic(
             format=fmt_orig.id, dither_type="error_diffusion"
         )
     return interp
-
 
 def _build_of_clip_svp(clip: vs.VideoNode) -> vs.VideoNode:
     if not hasattr(core, 'svp1') or not hasattr(core, 'svp2'):

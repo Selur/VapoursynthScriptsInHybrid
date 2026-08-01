@@ -3,7 +3,7 @@ import vapoursynth as vs
 from vapoursynth import core
 
 import math
-import misc
+from misc import MinBlur, median_blur
 from typing import Optional, Union, Sequence, TypeVar
 
 def _hysteresis_fn():
@@ -131,7 +131,7 @@ def HQDeringmod(
           else:                      
             smoothed = input.dfttest.DFTTest(sbsize=sbsize, sosize=sosize, tbsize=1, slocation=[0.0, sigma2, 0.05, sigma, 0.5, sigma, 0.75, sigma2, 1.0, 0.0], planes=planes)
         else:
-            smoothed = misc.MinBlur(input, nrmode, planes)
+            smoothed = MinBlur(input, nrmode, planes)
 
     # Post-Process: Contra-Sharpening
     matrix1 = [1, 2, 1, 2, 4, 2, 1, 2, 1]
@@ -238,15 +238,18 @@ def mdering(clip: vs.VideoNode, thr: float = 2) -> vs.VideoNode:
     rg4_1 = core.std.Median(clip)
 
     if bits <= 12:
-        rg4_2 = misc.MedianBlur(clip, radius=2)
+        rg4_2 = median_blur(clip, radius=2)
     else:
         rg4_2 = core.fmtc.bitdepth(clip, bits=12, dmode=1)
-        rg4_2 = misc.MedianBlur(rg4_2, radius=2).fmtc.bitdepth(bits=bits)
+        rg4_2 = median_blur(rg4_2, radius=2).fmtc.bitdepth(bits=bits)
         rg4_2 = LimitFilter(clip, rg4_2, thr=0.0625, elast=2)
     EXPR = core.akarin.Expr if hasattr(core, 'akarin') else core.cranexpr.Expr if hasattr(core, 'cranexpr') else core.std.Expr
     minblur_1 = EXPR([clip, rg11_1, rg4_1], ['x y - x z - xor x x y - abs x z - abs < y z ? ?'])
     minblur_2 = EXPR([clip, rg11_2, rg4_2], ['x y - x z - xor x x y - abs x z - abs < y z ? ?'])
     dering = EXPR([clip, minblur_1, minblur_2], ['y z - abs {thr} <= y x <= and y x ?'.format(thr=thr)])
+    
+    
+    
 
     return dering
 

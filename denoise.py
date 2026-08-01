@@ -3,17 +3,11 @@ from vapoursynth import core
 
 import math
 
-from typing import Optional, Union, Sequence, TypeVar
+from typing import Optional, Union, Sequence
 
-from vsutil import scale_value, types
+from helpers import GetPlane, scale_value, scale, cround
 
-import misc
-from misc import MV
-
-try:
-    from gaussblur import GaussBlur
-except ImportError:
-    GaussBlur = None
+from misc import MV, MinBlur, SCDetect
 
 # Taken from havsfunc
 def KNLMeansCL(
@@ -368,7 +362,7 @@ def MCTemporalDenoise(i, radius=None, pfMode=3, sigma=None, twopass=None, useTTm
         else:
           p = i.dfttest.DFTTest(tbsize=1, slocation=[0.0,4.0, 0.2,9.0, 1.0,15.0], planes=planes)
     else:
-        p = misc.MinBlur(i, r=pfMode, planes=planes)
+        p = MinBlur(i, r=pfMode, planes=planes)
 
     pD = core.std.MakeDiff(i, p, planes=planes)
     p = DitherLumaRebuild(p, s0=1, chroma=chroma)
@@ -511,7 +505,7 @@ def MCTemporalDenoise(i, radius=None, pfMode=3, sigma=None, twopass=None, useTTm
           sm = core.zsmooth.TTempSmooth(c, maxr=radius, thresh=[255], mdiff=[1], strength=radius + 1, scthresh=-1, fp=False, planes=planes)
         elif hasattr(core,'zsmooth'):
           import misc
-          c = misc.SCDetect(c, threshold=0.999)
+          c = SCDetect(c, threshold=0.999)
           sm = core.zsmooth.TTempSmooth(c, maxr=radius, thresh=[255], mdiff=[1], strength=radius + 1, scthresh=-1, fp=False, planes=planes)
         else:
           sm = c.ttmpsm.TTempSmooth(maxr=radius, thresh=[255], mdiff=[1], strength=radius + 1, scthresh=99.9, fp=False, planes=planes)
@@ -577,7 +571,7 @@ def MCTemporalDenoise(i, radius=None, pfMode=3, sigma=None, twopass=None, useTTm
         mF = mE.std.Convolution(matrix=[1, 1, 1, 1, 1, 1, 1, 1, 1])
         if has_zsmooth:
           import misc
-          smP = misc.SCDetect(smP, threshold=0.12)
+          smP = SCDetect(smP, threshold=0.12)
           TTc = smP.zsmooth.TTempSmooth(maxr=maxr, mdiff=[255], strength=TTstr, scthresh=-1, planes=planes)
         else:
           TTc = smP.ttmpsm.TTempSmooth(maxr=maxr, mdiff=[255], strength=TTstr, planes=planes)
@@ -585,11 +579,6 @@ def MCTemporalDenoise(i, radius=None, pfMode=3, sigma=None, twopass=None, useTTm
 
     ### OUTPUT
     return smP.std.Crop(**crop_args)
-
-def _boxblur_fn():
-    """Pick the best available BoxBlur."""
-    if hasattr(core, 'vszip'): return core.vszip.BoxBlur
-    return core.std.BoxBlur
     
 def mClean(clip, thSAD=400, chroma=True, sharp=10, rn=14, deband=0, depth=0, strength=20, outbits=None, icalc=True, rgmode=18):
     """
@@ -751,14 +740,16 @@ def mClean(clip, thSAD=400, chroma=True, sharp=10, rn=14, deband=0, depth=0, str
         if sharp <= 50:
             clsharp = core.std.MakeDiff(clean, Blur(clean2, amountH=0.08+0.03*sharp))
         else:
-          
-          if hasattr(core,'tcanny'):
-            clsharp = core.std.MakeDiff(clean, clean2.tcanny.TCanny(sigma=(sharp-46)/4, mode=-1))
-          elif 'GaussBlur' in globals():
-            clsharp = core.std.MakeDiff(clean, GaussBlur(clean2, sigma=(sharp-46)/4))
-          else:
-            radius = max(1, round(((sharp-46)/4) * 1.5))
-            clsharp = core.std.MakeDiff(clean, _boxblur_fn(clean2, hradius=radius, hpasses=3, vradius=radius, vpasses=3))
+            if hasattr(core, 'tcanny'):
+                clsharp = core.std.MakeDiff(clean, clean2.tcanny.TCanny(sigma=(sharp-46)/4, mode=-1))
+            else:
+                radius = max(1, round(((sharp-46)/4) * 1.5))
+
+                blur = clean2
+                for _ in range(3):
+                    blur = BoxFilter(blur, radius=radius, radius_v=radius)
+
+                clsharp = core.std.MakeDiff(clean, blur)
 
         clsharp = core.std.MergeDiff(clean2, RE(TM(clsharp), clsharp, 12))
 
@@ -869,84 +860,6 @@ def EZDenoise(
     
 ########################### HELPER FUNCTIONS ##########################
     
-def scale_value(value: Union[int, float],
-                input_depth: int,
-                output_depth: int,
-                range_in: Union[int, types.Range] = 0,
-                range: Optional[Union[int, types.Range]] = None,
-                scale_offsets: bool = False,
-                chroma: bool = False,
-                ) -> Union[int, float]:
-    """Scales a given numeric value between bit depths, sample types, and/or ranges.
-
-    >>> scale_value(16, 8, 32, range_in=Range.LIMITED)
-    0.0730593607305936
-    >>> scale_value(16, 8, 32, range_in=Range.LIMITED, scale_offsets=True)
-    0.0
-    >>> scale_value(16, 8, 32, range_in=Range.LIMITED, scale_offsets=True, chroma=True)
-    -0.5
-
-    :param value:          Numeric value to be scaled.
-    :param input_depth:    Bit depth of the `value` parameter. Use ``32`` for float sample type.
-    :param output_depth:   Bit depth to scale the input `value` to.
-    :param range_in:       Pixel range of the input `value`. No clamping is performed. See :class:`Range`.
-    :param range:          Pixel range of the output `value`. No clamping is performed. See :class:`Range`.
-    :param scale_offsets:  Whether or not to apply YUV offsets to float chroma and/or TV range integer values.
-        (When scaling a TV range value of ``16`` to float, setting this to ``True`` will return ``0.0``
-        rather than ``0.073059...``)
-    :param chroma:        Whether or not to treat values as chroma instead of luma.
-
-    :return:              Scaled numeric value.
-    """
-    range_in = types.resolve_enum(types.Range, range_in, 'range_in', scale_value)
-    range = types.resolve_enum(types.Range, range, 'range', scale_value)
-    range = fallback(range, range_in)
-
-    if input_depth == 32:
-        range_in = 1
-
-    if output_depth == 32:
-        range = 1
-
-    def peak_pixel_value(bits: int, range_: Union[int, types.Range], chroma_: bool) -> int:
-        """
-        _
-        """
-        if bits == 32:
-            return 1
-        if range_:
-            return (1 << bits) - 1
-        return (224 if chroma_ else 219) << (bits - 8)
-
-    input_peak = peak_pixel_value(input_depth, range_in, chroma)
-
-    output_peak = peak_pixel_value(output_depth, range, chroma)
-
-    if input_depth == output_depth and range_in == range:
-        return value
-
-    if scale_offsets:
-        if output_depth == 32 and chroma:
-            value -= 128 << (input_depth - 8)
-        elif range and not range_in:
-            value -= 16 << (input_depth - 8)
-
-    value *= output_peak / input_peak
-
-    if scale_offsets:
-        if input_depth == 32 and chroma:
-            value += 128 << (output_depth - 8)
-        elif range_in and not range:
-            value += 16 << (output_depth - 8)
-
-    return value
-
-def cround(x: float) -> int:
-    return math.floor(x + 0.5) if x > 0 else math.ceil(x - 0.5)
-    
-def scale(value, peak):
-    return cround(value * peak / 255) if peak != 1 else value / 255
-    
 def DitherLumaRebuild(src: vs.VideoNode, s0: float = 2.0, c: float = 0.0625, chroma: bool = True) -> vs.VideoNode:
     '''Converts luma (and chroma) to PC levels, and optionally allows tweaking for pumping up the darks. (for the clip to be fed to motion search only)'''
     if not isinstance(src, vs.VideoNode):
@@ -988,26 +901,6 @@ def AvsPrewitt(clip: vs.VideoNode, planes: Optional[Union[int, Sequence[int]]] =
         expr=['x y max z max a max' if i in planes else '' for i in plane_range],
     )
 
-# Taken from muvsfunc
-def GetPlane(clip, plane=None):
-    # input clip
-    if not isinstance(clip, vs.VideoNode):
-        raise type_error('"clip" must be a clip!')
-
-    # Get properties of input clip
-    sFormat = clip.format
-    sNumPlanes = sFormat.num_planes
-
-    # Parameters
-    if plane is None:
-        plane = 0
-    elif not isinstance(plane, int):
-        raise type_error('"plane" must be an int!')
-    elif plane < 0 or plane > sNumPlanes:
-        raise value_error(f'valid range of "plane" is [0, {sNumPlanes})!')
-
-    # Process
-    return core.std.ShufflePlanes(clip, plane, vs.GRAY)
     
 def Blur(clip: vs.VideoNode, amountH: float = 1.0, amountV: Optional[float] = None,
          planes: Optional[Union[int, Sequence[int]]] = None
@@ -1104,19 +997,3 @@ def Sharpen(clip: vs.VideoNode, amountH: float = 1.0, amountV: Optional[float] =
         clip = core.std.Convolution(clip, conv_mat_h, planes=planes, mode='h')
 
     return clip
-
-T = TypeVar('T')
-def fallback(value: Optional[T], fallback_value: T) -> T:
-    """Utility function that returns a value or a fallback if the value is ``None``.
-
-    >>> fallback(5, 6)
-    5
-    >>> fallback(None, 6)
-    6
-
-    :param value:           Argument that can be ``None``.
-    :param fallback_value:  Fallback value that is returned if `value` is ``None``.
-
-    :return:                The input `value` or `fallback_value` if `value` is ``None``.
-    """
-    return fallback_value if value is None else value

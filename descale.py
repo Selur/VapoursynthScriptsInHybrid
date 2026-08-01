@@ -45,10 +45,14 @@ def Descale(src, width, height, kernel=None, custom_kernel=None, taps=None, b=No
     src_sh = src_f.subsampling_h
 
     if src_cf == RGB and not gray:
-        rgb = to_rgbs(src).descale.Descale(width, height, kernel, custom_kernel, taps, b, c, border_handling=border_handling)
+        rgb = src.resize.Point(format=RGBS).descale.Descale(
+            width, height, kernel, custom_kernel, taps, b, c, border_handling=border_handling
+        )
         return rgb.resize.Point(format=src_f.id)
 
-    y = to_grays(src).descale.Descale(width, height, kernel, custom_kernel, taps, b, c, border_handling=border_handling)
+    y = src.resize.Point(format=GRAYS).descale.Descale(
+        width, height, kernel, custom_kernel, taps, b, c, border_handling=border_handling
+    )
     y_f = core.query_video_format(GRAY, src_st, src_bits, 0, 0)
     y = y.resize.Point(format=y_f.id)
 
@@ -61,18 +65,5 @@ def Descale(src, width, height, kernel=None, custom_kernel=None, taps=None, b=No
     uv_f = core.query_video_format(src_cf, src_st, src_bits, 0 if yuv444 else src_sw, 0 if yuv444 else src_sh)
     uv = src.resize.Spline36(width, height, format=uv_f.id, chromaloc_s=chromaloc)
 
-    return core.std.ShufflePlanes([y,uv], [0,1,2], YUV)
+    return core.std.ShufflePlanes([y, uv], [0, 1, 2], YUV)
 
-
-# Helpers
-
-def to_grays(src):
-    return src.resize.Point(format=GRAYS)
-
-
-def to_rgbs(src):
-    return src.resize.Point(format=RGBS)
-
-
-def get_plane(src, plane):
-    return core.std.ShufflePlanes(src, plane, GRAY)

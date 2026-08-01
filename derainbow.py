@@ -4,6 +4,8 @@ import vapoursynth as vs
 
 core = vs.core
 
+from helpers import GetPlane, scale
+
 try:
     from color import Tweak as _color_tweak  # type: ignore
 except ImportError:
@@ -108,16 +110,6 @@ def _luma(clip: vs.VideoNode) -> vs.VideoNode:
     return core.std.ShufflePlanes(clip, 0, vs.GRAY)
 
 
-def _get_plane(clip: vs.VideoNode, plane: int) -> vs.VideoNode:
-    """Extract a single plane as a GRAY clip."""
-    if not isinstance(clip, vs.VideoNode):
-        raise TypeError('"clip" must be a clip!')
-    sNumPlanes = clip.format.num_planes
-    if plane < 0 or plane >= sNumPlanes:
-        raise ValueError(f'valid range of "plane" is [0, {sNumPlanes})')
-    return core.std.ShufflePlanes(clip, plane, vs.GRAY)
-
-
 def _weave_fields(clip: vs.VideoNode) -> vs.VideoNode:
     """DoubleWeave then drop odd frames — equivalent to AviSynth Weave()."""
     return core.std.DoubleWeave(clip)[::2]
@@ -160,15 +152,6 @@ def _scale_chroma_mask(
     """Resize a chroma mask with the correct sub-sampling offset."""
     src_left = -0.25 if is_420_or_422 else 0.0
     return core.resize.Bilinear(mask, target_width, target_height, src_left=src_left)
-
-
-def _cround(x: float) -> int:
-    return math.floor(x + 0.5) if x > 0 else math.ceil(x - 0.5)
-
-
-def _scale_value(value: int | float, peak: int) -> int:
-    """Scale a value from 8-bit range to the target bit depth."""
-    return _cround(value * peak / 255) if peak != 1 else value / 255
 
 
 # ---------------------------------------------------------------------------
@@ -215,20 +198,20 @@ def LUTDeRainbow(
     shift = inputbits - 8
     peak  = (1 << inputbits) - 1
 
-    cthresh_scaled = _scale_value(cthresh, peak)
-    ythresh_scaled = _scale_value(ythresh, peak)
+    cthresh_scaled = scale(cthresh, peak)
+    ythresh_scaled = scale(ythresh, peak)
 
     input_minus = input.std.DuplicateFrames(frames=[0])
     input_plus  = input.std.Trim(first=1) + input.std.Trim(first=input.num_frames - 1)
 
-    input_u       = _get_plane(input, 1)
-    input_v       = _get_plane(input, 2)
-    input_minus_y = _get_plane(input_minus, 0)
-    input_minus_u = _get_plane(input_minus, 1)
-    input_minus_v = _get_plane(input_minus, 2)
-    input_plus_y  = _get_plane(input_plus, 0)
-    input_plus_u  = _get_plane(input_plus, 1)
-    input_plus_v  = _get_plane(input_plus, 2)
+    input_u       = GetPlane(input, 1)
+    input_v       = GetPlane(input, 2)
+    input_minus_y = GetPlane(input_minus, 0)
+    input_minus_u = GetPlane(input_minus, 1)
+    input_minus_v = GetPlane(input_minus, 2)
+    input_plus_y  = GetPlane(input_plus, 0)
+    input_plus_u  = GetPlane(input_plus, 1)
+    input_plus_v  = GetPlane(input_plus, 2)
 
     average_y = _expr(
         [input_minus_y, input_plus_y],

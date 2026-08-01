@@ -5,6 +5,8 @@ import math
 from functools import partial
 from typing import Optional, Union, Sequence, Any, Dict
 
+from helpers import GetPlane, BoxFilter, scale
+
 # taken from adjust
 def Tweak(clip, hue=None, sat=None, bright=None, cont=None, coring=True):
     if clip.format is None:
@@ -181,9 +183,6 @@ def Tweak(clip, hue=None, sat=None, bright=None, cont=None, coring=True):
 
 def sine_expr(expr: str) -> str:
     return f'{expr} pi * 0.5 * sin'
-
-def scale(val: int, peak: Union[int, float]) -> Union[int, float]:
-    return val * peak / 255 if peak != 1.0 else val / 255
     
 def SmoothLevels(
     input: vs.VideoNode,
@@ -842,7 +841,7 @@ def tm(clip="",source_peak="",desat=50,lin=True,show_satmask=False,show_clipped=
     g=core.std.ShufflePlanes(clips=[a], planes=[1], colorfamily=vs.GRAY)
     b=core.std.ShufflePlanes(clips=[a], planes=[2], colorfamily=vs.GRAY)
     #luminance
-    l=EXPR(clips=[r,g,b], expr="x 0.2627 *  y 0.678 * + z 0.0593 * +    ",format=vs.GRAY)
+    l=EXPR(clips=[r,g,b], expr="x 0.2627 *  y 0.678 * + z 0.0593 * +    ",format=vs.GRAYS)
 
 
     #value under 100nits after the tone mapping(tm_ldr_value) becomes 0, even tm_ldr_value becomes 0 and then scale all in the 0-1 range fo the mask 
@@ -863,7 +862,7 @@ def tm(clip="",source_peak="",desat=50,lin=True,show_satmask=False,show_clipped=
     rl=core.std.ShufflePlanes(clips=[tm], planes=[0], colorfamily=vs.GRAY)
     gl=core.std.ShufflePlanes(clips=[tm], planes=[1], colorfamily=vs.GRAY)
     bl=core.std.ShufflePlanes(clips=[tm], planes=[2], colorfamily=vs.GRAY)
-    l2=EXPR(clips=[rl,gl,bl], expr="x 0.2627 *  y 0.678 * + z 0.0593 * +    ",format=vs.GRAY)
+    l2=EXPR(clips=[rl,gl,bl], expr="x 0.2627 *  y 0.678 * + z 0.0593 * +    ",format=vs.GRAYS)
     nl= l2
     scale=EXPR(clips=[nl,l], expr="x y / ")
     r1=EXPR(clips=[r,scale], expr="x  y *")
@@ -918,14 +917,14 @@ def tm_simple(clip="",source_peak="" ) :
     r=core.std.ShufflePlanes(clips=[a], planes=[0], colorfamily=vs.GRAY)
     g=core.std.ShufflePlanes(clips=[a], planes=[1], colorfamily=vs.GRAY)
     b=core.std.ShufflePlanes(clips=[a], planes=[2], colorfamily=vs.GRAY)
-    l=EXPR(clips=[r,g,b], expr="x 0.2627 *  y 0.678 * + z 0.0593 * +    ",format=vs.GRAY)
+    l=EXPR(clips=[r,g,b], expr="x 0.2627 *  y 0.678 * + z 0.0593 * +    ",format=vs.GRAYS)
     #l=0.2627 * R + 0.678 * G + 0.0593 * B (formula for rec2020 luminance)
-    l=EXPR(clips=[l], expr="x 0 =  0.00001 x  ? ",format=vs.GRAY)#avoid dividing by 0
+    l=EXPR(clips=[l], expr="x 0 =  0.00001 x  ? ",format=vs.GRAYS)#avoid dividing by 0
 
     rl=core.std.ShufflePlanes(clips=[tm], planes=[0], colorfamily=vs.GRAY)
     gl=core.std.ShufflePlanes(clips=[tm], planes=[1], colorfamily=vs.GRAY)
     bl=core.std.ShufflePlanes(clips=[tm], planes=[2], colorfamily=vs.GRAY)
-    l2=EXPR(clips=[rl,gl,bl], expr="x 0.2627 *  y 0.678 * + z 0.0593 * +    ",format=vs.GRAY)
+    l2=EXPR(clips=[rl,gl,bl], expr="x 0.2627 *  y 0.678 * + z 0.0593 * +    ",format=vs.GRAYS)
 
     #r1=((r/l)^s)*l2
     #g1=((g/l)^s)*l2
@@ -1029,28 +1028,6 @@ def ClipRGB(clip: vs.VideoNode, min8: int = 16, max8: int = 235) -> vs.VideoNode
     expr = f'x {lo} max {hi} min'
     return EXPR(clip, [expr] * 3)
 
-# Taken from muvsfunc
-def GetPlane(clip, plane=None):
-    # input clip
-    if not isinstance(clip, vs.VideoNode):
-        raise type_error('"clip" must be a clip!')
-
-    # Get properties of input clip
-    sFormat = clip.format
-    sNumPlanes = sFormat.num_planes
-
-    # Parameters
-    if plane is None:
-        plane = 0
-    elif not isinstance(plane, int):
-        raise type_error('"plane" must be an int!')
-    elif plane < 0 or plane > sNumPlanes:
-        raise value_error(f'valid range of "plane" is [0, {sNumPlanes})!')
-
-    # Process
-    return core.std.ShufflePlanes(clip, plane, vs.GRAY)
-    
-# Taken from mvsfunc
 ################################################################################################################################
 ## Utility function: LimitFilter()
 ################################################################################################################################
@@ -1306,134 +1283,6 @@ def _limit_filter_expr(defref, thr, elast, largen_thr, value_range):
 ################################################################################################################################
 
 
-def BoxFilter(input: vs.VideoNode, radius: int = 16, radius_v: Optional[int] = None, planes: Optional[Union[int, Sequence[int]]] = None,
-              fmtc_conv: int = 0, radius_thr: Optional[int] = None,
-              resample_args: Optional[Dict[str, Any]] = None, keep_bits: bool = True,
-              depth_args: Optional[Dict[str, Any]] = None
-              ) -> vs.VideoNode:
-    '''Box filter
-
-    Performs a box filtering on the input clip.
-    Box filtering consists in averaging all the pixels in a square area whose center is the output pixel.
-    You can approximate a large gaussian filtering by cascading a few box filters.
-
-    Args:
-        input: Input clip to be filtered.
-
-        radius, radius_v: (int) Size of the averaged square. The size is (radius*2-1) * (radius*2-1).
-            If "radius_v" is None, it will be set to "radius".
-            Default is 16.
-
-        planes: (int []) Whether to process the corresponding plane. By default, every plane will be processed.
-            The unprocessed planes will be copied from the source clip, "input".
-
-        fmtc_conv: (0~2) Whether to use fmtc.resample for convolution.
-            It's recommended to input clip without chroma subsampling when using fmtc.resample, otherwise the output may be incorrect.
-            0: False. 1: True (except both "radius" and "radius_v" is strictly smaller than 4).
-                2: Auto, determined by radius_thr (exclusive).
-            Default is 0.
-
-        radius_thr: (int) Threshold of wheter to use fmtc.resample when "fmtc_conv" is 2.
-            Default is 11 for integer input and 21 for float input.
-            Only works when "fmtc_conv" is enabled.
-
-        resample_args: (dict) Additional parameters passed to core.fmtc.resample in the form of dict.
-            It's recommended to set "flt" to True for higher precision, like:
-                flt = muf.BoxFilter(src, resample_args=dict(flt=True))
-            Only works when "fmtc_conv" is enabled.
-            Default is {}.
-
-        keep_bits: (bool) Whether to keep the bitdepth of the output the same as input.
-            Only works when "fmtc_conv" is enabled and input is integer.
-
-        depth_args: (dict) Additional parameters passed to mvf.Depth in the form of dict.
-            Only works when "fmtc_conv" is enabled, input is integer and "keep_bits" is True.
-            Default is {}.
-
-    '''
-
-    funcName = 'BoxFilter'
-
-    if not isinstance(input, vs.VideoNode):
-        raise TypeError(funcName + ': \"input\" must be a clip!')
-
-    if planes is None:
-        planes = list(range(input.format.num_planes))
-    elif isinstance(planes, int):
-        planes = [planes]
-
-    if radius_v is None:
-        radius_v = radius
-
-    if radius == radius_v == 1:
-        return input
-
-    if radius_thr is None:
-        radius_thr = 21 if input.format.sample_type == vs.FLOAT else 11 # Values are measured from my experiment
-
-    if resample_args is None:
-        resample_args = {}
-
-    if depth_args is None:
-        depth_args = {}
-
-    planes2 = [(3 if i in planes else 2) for i in range(input.format.num_planes)]
-    width = radius * 2 - 1
-    width_v = radius_v * 2 - 1
-    kernel = [1 / width] * width
-    kernel_v = [1 / width_v] * width_v
-
-    # process
-    if input.format.sample_type == vs.FLOAT:
-        if core.core_version.release_major < 33:
-            raise NotImplementedError(funcName + (': Please update your VapourSynth.'
-                'BoxBlur on float sample has not yet been implemented on current version.'))
-        elif radius == radius_v == 2 or radius == radius_v == 3:
-            return core.std.Convolution(input, [1] * ((radius * 2 - 1) * (radius * 2 - 1)), planes=planes, mode='s')
-
-        else:
-            if fmtc_conv == 1 or (fmtc_conv != 0 and radius > radius_thr): # Use fmtc.resample for convolution
-                flt = core.fmtc.resample(input, kernel='impulse', impulseh=kernel, impulsev=kernel_v, planes=planes2,
-                    cnorm=False, fh=-1, fv=-1, center=False, **resample_args)
-                return flt # No bitdepth conversion is required since fmtc.resample outputs the same bitdepth as input
-
-            elif hasattr(core, 'vszip'):
-                return core.vszip.BoxBlur(input, hradius=radius-1, vradius=radius_v-1, planes=planes)
-
-            elif core.core_version.release_major >= 39:
-                return core.std.BoxBlur(input, hradius=radius-1, vradius=radius_v-1, planes=planes)
-
-            else: # BoxBlur on float sample has not been implemented
-                if radius > 1:
-                    input = core.std.Convolution(input, [1] * (radius * 2 - 1), planes=planes, mode='h')
-                if radius_v > 1:
-                    input = core.std.Convolution(input, [1] * (radius_v * 2 - 1), planes=planes, mode='v')
-                return input
-
-    else: # input.format.sample_type == vs.INTEGER
-        if radius == radius_v == 2 or radius == radius_v == 3:
-            return core.std.Convolution(input, [1] * ((radius * 2 - 1) * (radius * 2 - 1)), planes=planes, mode='s')
-
-        else:
-            if fmtc_conv == 1 or (fmtc_conv != 0 and radius > radius_thr): # Use fmtc.resample for convolution
-                flt = core.fmtc.resample(input, kernel='impulse', impulseh=kernel, impulsev=kernel_v, planes=planes2,
-                    cnorm=False, fh=-1, fv=-1, center=False, **resample_args)
-                if keep_bits and input.format.bits_per_sample != flt.format.bits_per_sample:
-                    flt = mvf.Depth(flt, depth=input.format.bits_per_sample, **depth_args)
-                return flt
-
-            elif hasattr(core, 'vszip'):
-                return core.vszip.BoxBlur(input, hradius=radius-1, vradius=radius_v-1, planes=planes)
-
-            elif hasattr(core.std, 'BoxBlur'):
-                return core.std.BoxBlur(input, hradius=radius-1, vradius=radius_v-1, planes=planes)
-
-            else: # BoxBlur was not found
-                if radius > 1:
-                    input = core.std.Convolution(input, [1] * (radius * 2 - 1), planes=planes, mode='h')
-                if radius_v > 1:
-                    input = core.std.Convolution(input, [1] * (radius_v * 2 - 1), planes=planes, mode='v')
-                return input
                 
                 
 ################################################################################################################################

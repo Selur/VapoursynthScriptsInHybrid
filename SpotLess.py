@@ -89,14 +89,6 @@ def _expr2(a: vs.VideoNode, b: vs.VideoNode, expr: str) -> vs.VideoNode:
 # Plane helpers
 # ---------------------------------------------------------------------------
 
-def _gray(clip: vs.VideoNode) -> vs.VideoNode:
-    """Extract luma plane as a GRAY clip."""
-    return core.std.ShufflePlanes(clip, 0, vs.GRAY)
-
-def _plane(clip: vs.VideoNode, p: int) -> vs.VideoNode:
-    """Extract any single plane as a GRAY clip."""
-    return core.std.ShufflePlanes(clip, p, vs.GRAY)
-
 def _blank_gray(ref: vs.VideoNode) -> vs.VideoNode:
     """Black GRAY clip matching the format/size of ref (which may be GRAY or YUV)."""
     gray_fmt = core.query_video_format(
@@ -239,7 +231,7 @@ def _z_padding(clip: vs.VideoNode,
 
 def _scharr(clip: vs.VideoNode) -> vs.VideoNode:
     """Scharr edge magnitude – operates on luma, returns GRAY."""
-    g  = _gray(clip)
+    g  = GetPlane(clip,0)
     # Convolution for the horizontal and vertical passes
     sx = core.std.Convolution(g, matrix=[3, 0, -3, 10, 0, -10, 3, 0, -3])
     sy = core.std.Convolution(g, matrix=[3, 10, 3, 0, 0, 0, -3, -10, -3])
@@ -272,7 +264,7 @@ def _luma_delta_mask(source: vs.VideoNode,
     thr  = int(mid * brightness)
     op   = '>' if direction == '>' else '<'
 
-    diff      = _makediff(_gray(source), _gray(filtered))
+    diff      = _makediff(GetPlane(source,0), GetPlane(filtered,0))
     mask      = _expr1(diff, f'x {thr} {op} {peak} 0 ?')
     mask_orig = mask
 
@@ -283,7 +275,7 @@ def _luma_delta_mask(source: vs.VideoNode,
 
     if limit_abs_brightness > 0.0:
         abs_thr = int(peak * limit_abs_brightness)
-        luma    = _gray(source)
+        luma    = GetPlane(source,0)
         mask    = _expr2(mask, luma, f'y {abs_thr} < 0 x ?')
 
     mask = _remove_small_spots(mask, spot_size)
@@ -306,8 +298,8 @@ def _chroma_delta_mask(source: vs.VideoNode,
     Returns a GRAY mask selecting pixels with large chroma difference
     (Euclidean distance sqrt(Δu² + Δv²)).
     """
-    u_diff = _makediff(_plane(source, 1), _plane(filtered, 1))
-    v_diff = _makediff(_plane(source, 2), _plane(filtered, 2))
+    u_diff = _makediff(GetPlane(source, 1), GetPlane(filtered, 1))
+    v_diff = _makediff(GetPlane(source, 2), GetPlane(filtered, 2))
 
     bits    = source.format.bits_per_sample
     mid     = 1 << (bits - 1)
@@ -372,7 +364,7 @@ def _unsharp_mask(clip: vs.VideoNode,
     Unsharp mask applied to luma only.
     Uses native BoxBlur and MakeDiff; inverse diff applied via Expr.
     """
-    luma    = _gray(clip)
+    luma    = GetPlane(clip,0)
     blurred = _boxblur_fn()(luma, hradius=radius, vradius=radius)
 
     bits = clip.format.bits_per_sample
@@ -428,8 +420,8 @@ def _restore_grain(filtered: vs.VideoNode,
     str1  = val1 * scale
     str2  = val2 * scale
 
-    src_luma = _gray(source)
-    flt_luma = _gray(filtered)
+    src_luma = GetPlane(source,0)
+    flt_luma = GetPlane(filtered,0)
 
     # diff = source - filtered, stored with mid offset (MakeDiff convention)
     diff = _makediff(src_luma, flt_luma)

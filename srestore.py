@@ -6,10 +6,9 @@ from functools import partial
 from typing import Any, Mapping, Optional, Sequence, Union
 
 import vapoursynth as vs
-from vsutil import Dither, depth, fallback, get_depth, get_y, join, plane, scale_value
 
-import functools
-import ChangeFPS
+from helpers import Depth, GetPlane, scale_value, cround
+from ChangeFPS import ChangeFPS
 
 core = vs.core
 
@@ -611,7 +610,7 @@ def sRestoreMUVs(
             prop_src.append(last_frames[-1])
 
         frame = source[n].std.FrameEval(
-            eval=functools.partial(srestore_inside, real_n=n, state_obj=state_obj),
+            eval=partial(srestore_inside, real_n=n, state_obj=state_obj),
             prop_src=prop_src
         )
         last_frames.append(frame)
@@ -619,30 +618,4 @@ def sRestoreMUVs(
     last = core.std.Splice(last_frames)
 
     ###### final decimation ######
-    return ChangeFPS.ChangeFPS(last, source.fps_num * numr, source.fps_den * denm)
-    
-def GetPlane(clip, plane=None):
-    # input clip
-    if not isinstance(clip, vs.VideoNode):
-        raise type_error('"clip" must be a clip!')
-
-    # Get properties of input clip
-    sFormat = clip.format
-    sNumPlanes = sFormat.num_planes
-
-    # Parameters
-    if plane is None:
-        plane = 0
-    elif not isinstance(plane, int):
-        raise type_error('"plane" must be an int!')
-    elif plane < 0 or plane > sNumPlanes:
-        raise value_error(f'valid range of "plane" is [0, {sNumPlanes})!')
-
-    # Process
-    return core.std.ShufflePlanes(clip, plane, vs.GRAY)
-        
-def cround(x: float) -> int:
-    return math.floor(x + 0.5) if x > 0 else math.ceil(x - 0.5)
-    
-def scale(value, peak):
-    return cround(value * peak / 255) if peak != 1 else value / 255
+    return ChangeFPS(last, source.fps_num * numr, source.fps_den * denm)

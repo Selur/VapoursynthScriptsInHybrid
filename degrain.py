@@ -5,15 +5,9 @@ from vapoursynth import core
 import math
 
 from typing import Sequence, Union, Optional
+from helpers import scale_value, cround, m4
+from misc import MV, MinBlur
 
-from vsutil import scale_value
-from misc import MV
-import misc
-
-try:
-    from gaussblur import GaussBlur
-except ImportError:
-    GaussBlur = None
 
 def _boxblur_fn():
     """Pick the best available BoxBlur."""
@@ -387,7 +381,7 @@ def MLD_helper(clip, srch, tr, thSAD, rec, chroma, soft):
         elif clip.width > 640:
             RG = core.std.Convolution(clip, matrix=[1, 2, 1, 2, 4, 2, 1, 2, 1], planes=planes)
         else:
-            RG = misc.MinBlur(clip, 1, planes)
+            RG = MinBlur(clip, 1, planes)
         RG = core.std.Merge(clip, RG, [soft] if chroma or isGRAY else [soft, 0]) if soft < 1 else RG
         EXPR = core.akarin.Expr if hasattr(core, 'akarin') else core.cranexpr.Expr if hasattr(core, 'cranexpr') else core.std.Expr
         sup2 = S(EXPR([clip, RG], ['x dup y - +'] if chroma or isGRAY else ['x dup y - +', '']), hpad=bs, vpad=bs, pel=pel, levels=1, rfilter=1, blksize=bs, overlap=bs//2)
@@ -418,7 +412,7 @@ def TemporalDegrain2(clip, degrainTR=1, degrainPlane=4, grainLevel=2, grainLevel
                                                                            
     Required plugins:                                                         
     FFT3DFilter: https://github.com/myrsloik/VapourSynth-FFT3DFilter   
-    Motion estimation/compensation goes through misc.MV, which uses mvutensils
+    Motion estimation/compensation goes through MV, which uses mvutensils
     (https://github.com/myrsloik/mvutensils) automatically when it's loaded, and
     otherwise falls back to MVtools(sf): https://github.com/dubhater/vapoursynth-mvtools
     (https://github.com/IFeelBloated/vapoursynth-mvtools-sf)
@@ -627,8 +621,6 @@ def TemporalDegrain2(clip, degrainTR=1, degrainPlane=4, grainLevel=2, grainLevel
     elif SrchClipPP > 1:
         if hasattr(core,'tcanny'):
           spatialBlur = core.tcanny.TCanny(clip, sigma=2, mode=-1, planes=CMplanes)
-        elif 'GaussBlur' in globals():
-          spatialBlur = GaussBlur(clip, sigma=2, planes=CMplanes)
         else:
           spatialBlur = _boxblur_fn()(clip, planes=CMplanes, hradius=2, hpasses=3, vradius=2, vpasses=3)
         spatialBlur = core.std.Merge(spatialBlur, clip, [0.1] if ChromaMotion or isGRAY else [0.1, 0])
@@ -742,15 +734,7 @@ def TemporalDegrain2(clip, degrainTR=1, degrainPlane=4, grainLevel=2, grainLevel
 
 
 
-# Helpers
-    
-def cround(x: float) -> int:
-    return math.floor(x + 0.5) if x > 0 else math.ceil(x - 0.5)
-
-def m4(x: Union[float, int]) -> int:
-    return 16 if x < 16 else cround(x / 4) * 4
-   
-    
+# Helpers    
 def DitherLumaRebuild(src: vs.VideoNode, s0: float = 2.0, c: float = 0.0625, chroma: bool = True) -> vs.VideoNode:
     '''Converts luma (and chroma) to PC levels, and optionally allows tweaking for pumping up the darks. (for the clip to be fed to motion search only)'''
     if not isinstance(src, vs.VideoNode):
@@ -798,7 +782,7 @@ def ContraSharpening(denoised, original, radius=None, rep=13, planes=None):
     if radius is None:
         radius = 2 if denoised.width > 1024 or denoised.height > 576 else 1
 
-    s = misc.MinBlur(denoised, r=radius, planes=planes)                                                                   # damp down remaining spots of the denoised clip
+    s = MinBlur(denoised, r=radius, planes=planes)                                                                   # damp down remaining spots of the denoised clip
 
     matrix1 = [1, 2, 1, 2, 4, 2, 1, 2, 1]
     matrix2 = [1, 1, 1, 1, 1, 1, 1, 1, 1]
@@ -1067,8 +1051,6 @@ def _sharpen(clip, strength, planes):
     core = vs.core
     if hasattr(core,'tcanny'):
       blur = core.tcanny.TCanny(clip, sigma=strength, mode=-1, planes=planes)
-    elif 'GaussBlur' in globals():
-      blur = GaussBlur(clip, sigma=2, planes=planes)
     else:
       radius = max(1, round(strength * 1.5))
       blur = _boxblur_fn()(clip, planes=planes, hradius=radius, hpasses=3, vradius=radius, vpasses=3)
@@ -1122,8 +1104,6 @@ def mcdegrainsharp(clip, frames=2, bblur=0.3, csharp=0.3, bsrch=True, thsad=400,
     
     if hasattr(core,'tcanny'):
       c2 = core.tcanny.TCanny(clip, sigma=bblur, mode=-1, planes=planes)
-    elif 'GaussBlur' in globals():
-      c2 = GaussBlur(clip, sigma=bblur, planes=planes)
     else:
       radius = max(1, round(bblur * 1.5))
       c2 = _boxblur_fn()(clip, planes=planes, hradius=radius, hpasses=3, vradius=radius, vpasses=3)

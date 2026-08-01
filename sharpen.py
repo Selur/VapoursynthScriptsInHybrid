@@ -5,18 +5,9 @@ import math
 import importlib
 from functools import partial
 from typing import Optional, Union, Sequence
-import misc
 
-def _expr_fn():
-    """Pick the best available Expr plugin."""
-    if hasattr(core, 'akarin'):    return core.akarin.Expr
-    if hasattr(core, 'cranexpr'): return core.cranexpr.Expr
-    return core.std.Expr
-
-def _boxblur_fn():
-    """Pick the best available BoxBlur."""
-    if hasattr(core, 'vszip'): return core.vszip.BoxBlur
-    return core.std.BoxBlur
+from misc import MinBlur
+from helpers import GetPlane, cround, scale, clamp
 
 ################################################################################################
 ###                                                                                          ###
@@ -432,7 +423,7 @@ def LSFmod(input, strength=None, Smode=None, Smethod=None, kernel=11, preblur=No
         else:
           pre = core.std.MaskedMerge(tmp.dfttest.DFTTest(tbsize=1, slocation=[0.0,4.0, 0.2,9.0, 1.0,15.0]), tmp, EXPR(tmp, expr=[expr]))
     else:
-        pre = misc.MinBlur(tmp, r=preblur)
+        pre = MinBlur(tmp, r=preblur)
 
     dark_limit = pre.std.Minimum()
     bright_limit = pre.std.Maximum()
@@ -760,80 +751,6 @@ def psharpen(clip, strength=25, threshold=75, ss_x=1.0, ss_y=1.0, dest_x=None, d
 
 ########################### HELPER
 
-
-def clamp(minimum, value, maximum):
-    return int(max(minimum, min(round(value), maximum)))
-
-
-def m4(value, mult=4.0):
-    return 16 if value < 16 else int(round(value / mult) * mult)
-
-
-
-def cround(x: float) -> int:
-    return math.floor(x + 0.5) if x > 0 else math.ceil(x - 0.5)
-    
-def scale(value, peak):
-    return cround(value * peak / 255) if peak != 1 else value / 255
-    
-def GetPlane(clip, plane=None):
-    # input clip
-    if not isinstance(clip, vs.VideoNode):
-        raise type_error('"clip" must be a clip!')
-
-    # Get properties of input clip
-    sFormat = clip.format
-    sNumPlanes = sFormat.num_planes
-
-    # Parameters
-    if plane is None:
-        plane = 0
-    elif not isinstance(plane, int):
-        raise type_error('"plane" must be an int!')
-    elif plane < 0 or plane > sNumPlanes:
-        raise value_error(f'valid range of "plane" is [0, {sNumPlanes})!')
-
-    # Process
-    return core.std.ShufflePlanes(clip, plane, vs.GRAY)
-    
-    
-def sbr(c: vs.VideoNode, r: int = 1, planes: Optional[Union[int, Sequence[int]]] = None) -> vs.VideoNode:
-    '''make a highpass on a blur's difference (well, kind of that)'''
-    if not isinstance(c, vs.VideoNode):
-        raise vs.Error('sbr: this is not a clip')
-
-    neutral = 1 << (c.format.bits_per_sample - 1) if c.format.sample_type == vs.INTEGER else 0.0
-
-    plane_range = range(c.format.num_planes)
-
-    if planes is None:
-        planes = list(plane_range)
-    elif isinstance(planes, int):
-        planes = [planes]
-
-    matrix1 = [1, 2, 1, 2, 4, 2, 1, 2, 1]
-    matrix2 = [1, 1, 1, 1, 1, 1, 1, 1, 1]
-
-    RG11 = c.std.Convolution(matrix=matrix1, planes=planes)
-    if r >= 2:
-        RG11 = RG11.std.Convolution(matrix=matrix2, planes=planes)
-    if r >= 3:
-        RG11 = RG11.std.Convolution(matrix=matrix2, planes=planes)
-
-    RG11D = core.std.MakeDiff(c, RG11, planes=planes)
-
-    RG11DS = RG11D.std.Convolution(matrix=matrix1, planes=planes)
-    if r >= 2:
-        RG11DS = RG11DS.std.Convolution(matrix=matrix2, planes=planes)
-    if r >= 3:
-        RG11DS = RG11DS.std.Convolution(matrix=matrix2, planes=planes)
-    EXPR = core.akarin.Expr if hasattr(core, 'akarin') else core.cranexpr.Expr if hasattr(core, 'cranexpr') else core.std.Expr
-    RG11DD = EXPR(
-        [RG11D, RG11DS],
-        expr=[f'x y - x {neutral} - * 0 < {neutral} x y - abs x {neutral} - abs < x y - {neutral} + x ? ?' if i in planes else '' for i in plane_range],
-    )
-    return core.std.MakeDiff(c, RG11DD, planes=planes)
-    
 def mt_clamp(
     clip: vs.VideoNode,
     bright_limit: vs.VideoNode,
@@ -943,7 +860,7 @@ def ContraSharpening(
     matrix2 = [1, 1, 1, 1, 1, 1, 1, 1, 1]
 
     # damp down remaining spots of the denoised clip
-    s = misc.MinBlur(denoised, radius, planes)
+    s = MinBlur(denoised, radius, planes)
     # the difference achieved by the denoising
     allD = core.std.MakeDiff(original, denoised, planes=planes)
 

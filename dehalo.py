@@ -2,9 +2,10 @@ import vapoursynth as vs
 from vapoursynth import core
 
 import math
-from typing import Union, Optional, Sequence, TypeVar
+from typing import Union, Optional, Sequence
+
 import misc
-from vsutil import scale_value
+from helper import GetPlane, m4, scale_value, cround
 
 def DeHalo_alpha(
     clp: vs.VideoNode,
@@ -44,7 +45,7 @@ def DeHalo_alpha(
 
     if clp.format.color_family != vs.GRAY:
         clp_orig = clp
-        clp = get_y(clp)
+        clp = GetPlane(clip,0)
     else:
         clp_orig = None
 
@@ -118,7 +119,7 @@ def EdgeCleaner(c: vs.VideoNode, strength: int = 10, rep: bool = True, rmode: in
 
     if c.format.color_family != vs.GRAY:
         c_orig = c
-        c = get_y(c)
+        c = GetPlane(c,0)
     else:
         c_orig = None
 
@@ -227,11 +228,11 @@ def FineDehalo(
 
     if src.format.color_family != vs.GRAY:
         src_orig = src
-        src = get_y(src)
+        src = GetPlane(src,0)
     else:
         src_orig = None
 
-    ry = fallback(ry, rx)
+    ry = rx if ry is None else ry
 
     rx_i = cround(rx)
     ry_i = cround(ry)
@@ -247,7 +248,7 @@ def FineDehalo(
     # Main edges #
 
     # Basic edge detection, thresholding will be applied later
-    edges = fallback(mask, AvsPrewitt(src))
+    edges = mask if mask is not None else AvsPrewitt(src)
 
     vszip = hasattr(core,'vszip')
     # Keeps only the sharpest edges (line edges)
@@ -356,8 +357,8 @@ def FineDehalo_contrasharp(dehaloed: vs.VideoNode, src: vs.VideoNode, level: flo
 
     if dehaloed.format.color_family != vs.GRAY:
         dehaloed_orig = dehaloed
-        dehaloed = get_y(dehaloed)
-        src = get_y(src)
+        dehaloed = GetPlane(dehaloed,0)
+        src = GetPlaney(src,0)
     else:
         dehaloed_orig = None
 
@@ -398,7 +399,7 @@ def YAHR(clp: vs.VideoNode, blur: int = 2, depth: int = 32) -> vs.VideoNode:
 
     if clp.format.color_family != vs.GRAY:
         clp_orig = clp
-        clp = get_y(clp)
+        clp = GetPlane(clip,0)
     else:
         clp_orig = None
 
@@ -825,34 +826,7 @@ def BlindDeHalo3(clp: vs.VideoNode, rx: float = 3.0, ry: float = 3.0, strength: 
         last = core.std.ShufflePlanes([last, clp_src], list(range(clp_src.format.num_planes)), clp_src.format.color_family)
 
     return last
-    
-# Taken from muvsfunc
-def GetPlane(clip, plane=None):
-    # input clip
-    if not isinstance(clip, vs.VideoNode):
-        raise type_error('"clip" must be a clip!')
 
-    # Get properties of input clip
-    sFormat = clip.format
-    sNumPlanes = sFormat.num_planes
-
-    # Parameters
-    if plane is None:
-        plane = 0
-    elif not isinstance(plane, int):
-        raise type_error('"plane" must be an int!')
-    elif plane < 0 or plane > sNumPlanes:
-        raise value_error(f'valid range of "plane" is [0, {sNumPlanes})!')
-
-    # Process
-    return core.std.ShufflePlanes(clip, plane, vs.GRAY)
-    
-def cround(x: float) -> int:
-    return math.floor(x + 0.5) if x > 0 else math.ceil(x - 0.5)
-
-def m4(value, mult=4.0):
-    return 16 if value < 16 else int(round(value / mult) * mult)
-    
 def Blur(clip: vs.VideoNode, amountH: float = 1.0, amountV: Optional[float] = None,
          planes: Optional[Union[int, Sequence[int]]] = None
          ) -> vs.VideoNode:
@@ -947,53 +921,4 @@ def Sharpen(clip: vs.VideoNode, amountH: float = 1.0, amountV: Optional[float] =
         clip = core.std.Convolution(clip, conv_mat_h, planes=planes, mode='h')
 
     return clip
-        
-# Taken from sfrom vsutil
-T = TypeVar('T')
-def fallback(value: Optional[T], fallback_value: T) -> T:
-    """Utility function that returns a value or a fallback if the value is ``None``.
 
-    >>> fallback(5, 6)
-    5
-    >>> fallback(None, 6)
-    6
-
-    :param value:           Argument that can be ``None``.
-    :param fallback_value:  Fallback value that is returned if `value` is ``None``.
-
-    :return:                The input `value` or `fallback_value` if `value` is ``None``.
-    """
-    return fallback_value if value is None else value
-
-
-# from vsutil
-def plane(clip: vs.VideoNode, planeno: int, /) -> vs.VideoNode:
-    """Extracts the plane with the given index from the input clip.
-
-    If given a one-plane clip and ``planeno=0``, returns `clip` (no-op).
-
-    >>> src = vs.core.std.BlankClip(format=vs.YUV420P8)
-    >>> V = plane(src, 2)
-
-    :param clip:     The clip to extract the plane from.
-    :param planeno:  The index of which plane to extract.
-
-    :return:         A grayscale clip that only contains the given plane.
-    """
-    if clip.format.num_planes == 1 and planeno == 0:
-        return clip
-    return core.std.ShufflePlanes(clip, planeno, vs.GRAY)
-
-def get_y(clip: vs.VideoNode, /) -> vs.VideoNode:
-    """Helper to get the luma plane of a clip.
-
-    If passed a single-plane ``vapoursynth.GRAY`` clip, :func:`plane` will assume it to `be` the luma plane
-    itself and returns the `clip` (no-op).
-
-    :param clip: Input clip.
-
-    :return:     Luma plane of the input `clip`. Will return the input `clip` if it is a single-plane grayscale clip.
-    """
-    if clip.format.color_family not in (vs.YUV, vs.GRAY):
-        raise ValueError('The clip must have a luma plane.')
-    return plane(clip, 0)

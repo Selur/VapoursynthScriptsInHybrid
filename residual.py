@@ -1,8 +1,8 @@
 import vapoursynth as vs
 from vapoursynth import core
 
-
 from typing import Optional, Union, Sequence
+from helpers import GetPlane
 
 # Taken form old havsfunc
 # Vinverse: a small, but effective function against (residual) combing, by Didée
@@ -123,25 +123,3 @@ def sbrV(c: vs.VideoNode, r: int = 1, planes: Optional[Union[int, Sequence[int]]
         expr=[f'x y - x {neutral} - * 0 < {neutral} x y - abs x {neutral} - abs < x y - {neutral} + x ? ?' if i in planes else '' for i in plane_range],
     )
     return core.std.MakeDiff(c, RG11DD, planes=planes)
-    
-    
-# Taken from muvsfunc
-def GetPlane(clip, plane=None):
-    # input clip
-    if not isinstance(clip, vs.VideoNode):
-        raise type_error('"clip" must be a clip!')
-
-    # Get properties of input clip
-    sFormat = clip.format
-    sNumPlanes = sFormat.num_planes
-
-    # Parameters
-    if plane is None:
-        plane = 0
-    elif not isinstance(plane, int):
-        raise type_error('"plane" must be an int!')
-    elif plane < 0 or plane > sNumPlanes:
-        raise value_error(f'valid range of "plane" is [0, {sNumPlanes})!')
-
-    # Process
-    return core.std.ShufflePlanes(clip, plane, vs.GRAY)

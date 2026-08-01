@@ -6,7 +6,7 @@ import math
 from typing import TypeVar, Optional
 from functools import partial
 
-T = TypeVar('T')
+from helpers import GetPlane, m4, scale
 
 # Taken from old havsfunc
 def daa(
@@ -145,124 +145,6 @@ def maa(input: vs.VideoNode) -> vs.VideoNode:
     else:
         return core.std.ShufflePlanes([last, input_src], planes=list(range(input_src.format.num_planes)),
             colorfamily=input_src.format.color_family)
-
-# Taken from old havsfunc
-def santiag(
-    c: vs.VideoNode,
-    strh: int = 1,
-    strv: int = 1,
-    type: str = 'nnedi3',
-    nsize: Optional[int] = None,
-    nns: Optional[int] = None,
-    qual: Optional[int] = None,
-    pscrn: Optional[int] = None,
-    int16_prescreener: Optional[bool] = None,
-    int16_predictor: Optional[bool] = None,
-    exp: Optional[int] = None,
-    aa: Optional[int] = None,
-    alpha: Optional[float] = None,
-    beta: Optional[float] = None,
-    gamma: Optional[float] = None,
-    nrad: Optional[int] = None,
-    mdis: Optional[int] = None,
-    vcheck: Optional[int] = None,
-    fw: Optional[int] = None,
-    fh: Optional[int] = None,
-    halfres: bool = False,
-    typeh: Optional[str] = None,
-    typev: Optional[str] = None,
-    opencl: bool = False,
-    device: Optional[int] = None,
-) -> vs.VideoNode:
-    '''
-    santiag v1.6
-    Simple antialiasing
-
-    type = "nnedi3", "eedi2", "eedi3" or "sangnom"
-    '''
-
-    def santiag_dir(c: vs.VideoNode, strength: int, type: str, fw: Optional[int] = None, fh: Optional[int] = None) -> vs.VideoNode:
-        fw = fallback(fw, c.width)
-        fh = fallback(fh, c.height)
-
-        c = santiag_stronger(c, strength, type)
-
-        return c.resize.Spline36(fw, fh, src_top=0 if halfres else 0.5)
-
-    def santiag_stronger(c: vs.VideoNode, strength: int, type: str) -> vs.VideoNode:
-        if opencl:
-            if hasattr(core, 'nnedi3vk'):
-              nnedi3 = partial(core.nnedi3vk.NNEDI3, nsize=nsize, nns=nns, qual=qual, pscrn=pscrn, device_index=device)
-            elif hasattr(core, 'sneedif'):
-              nnedi3 = partial(core.sneedif.NNEDI3, nsize=nsize, nns=nns, qual=qual, pscrn=pscrn, device=device)
-            else:
-              nnedi3 = partial(core.nnedi3cl.NNEDI3CL, nsize=nsize, nns=nns, qual=qual, pscrn=pscrn, device=device)
-        else:
-            if hasattr(core, 'znedi3'):
-              nnedi3 = partial(core.znedi3.nnedi3, nsize=nsize, nns=nns, qual=qual, pscrn=pscrn, int16_prescreener=int16_prescreener, int16_predictor=int16_predictor, exp=exp)
-            else:
-              nnedi3 = partial(core.nnedi3.nnedi3, nsize=nsize, nns=nns, qual=qual, pscrn=pscrn, int16_prescreener=int16_prescreener, int16_predictor=int16_predictor, exp=exp)
-
-        def get_eedi3():
-            if hasattr(core, 'eedi3vk2'):
-                return partial(core.eedi3vk2.EEDI3, alpha=alpha, beta=beta, gamma=gamma, nrad=nrad, mdis=mdis, vcheck=vcheck, device_id=device)
-            if hasattr(core, 'eedi3vk'):
-                return partial(core.eedi3vk.EEDI3, alpha=alpha, beta=beta, gamma=gamma, nrad=nrad, mdis=mdis, vcheck=vcheck, device_id=device)
-            elif hasattr(core, 'eedi3m') and hasattr(core.eedi3m, 'EEDI3CL'):
-                return partial(core.eedi3m.EEDI3CL, alpha=alpha, beta=beta, gamma=gamma, nrad=nrad, mdis=mdis, vcheck=vcheck, device=device)
-            elif hasattr(core, 'eedi3m'):
-                return partial(core.eedi3m.EEDI3, alpha=alpha, beta=beta, gamma=gamma, nrad=nrad, mdis=mdis, vcheck=vcheck)
-            else:
-                raise vs.Error('santiag: no eedi3 plugin (eedi3vk or eedi3m) found')
-
-        strength = max(strength, 0)
-        field = strength % 2
-        dh = strength <= 0 and not halfres
-
-        if strength > 0:
-            c = santiag_stronger(c, strength - 1, type)
-
-        w = c.width
-        h = c.height
-
-        if type == 'nnedi3':
-            return nnedi3(c, field=field, dh=dh)
-        elif type == 'eedi2':
-            if not dh:
-                c = c.resize.Point(w, h // 2, src_top=1 - field)
-            return c.eedi2.EEDI2(field=field)
-        elif type == 'eedi3':
-            sclip = nnedi3(c, field=field, dh=dh)
-            return get_eedi3()(c, field=field, dh=dh, sclip=sclip)
-        elif type == 'sangnom':
-            if dh:
-                c = c.resize.Spline36(w, h * 2, src_top=-0.25)
-            return c.sangnom.SangNom(order=field + 1, aa=aa)
-        else:
-            raise vs.Error('santiag: unexpected value for type')
-
-    if not isinstance(c, vs.VideoNode):
-        raise vs.Error('santiag: this is not a clip')
-
-    type = type.lower()
-    typeh = type if typeh is None else typeh.lower()
-    typev = type if typev is None else typev.lower()
-
-    w = c.width
-    h = c.height
-    fwh = fw if strv < 0 else w
-    fhh = fh if strv < 0 else h
-
-    if strh >= 0:
-        c = santiag_dir(c, strh, typeh, fwh, fhh)
-    if strv >= 0:
-        c = santiag_dir(c.std.Transpose(), strv, typev, fh, fw).std.Transpose()
-
-    fw = fallback(fw, w)
-    fh = fallback(fh, h)
-    if strh < 0 and strv < 0:
-        c = c.resize.Spline36(fw, fh)
-    return c
     
 def nnedi3aa(a: vs.VideoNode, opencl: bool=False, device: Optional[int] = None,):
     """Using nnedi3 (Emulgator):
@@ -414,45 +296,123 @@ def aaf(                \
         return merged
     return core.zsmooth.Repair(merged, inputClip, mode=repMode) if zsmooth else core.rgvs.Repair(merged, inputClip, mode=repMode)
 
-# Taken from sfrom vsutil
-def fallback(value: Optional[T], fallback_value: T) -> T:
-    """Utility function that returns a value or a fallback if the value is ``None``.
 
-    >>> fallback(5, 6)
-    5
-    >>> fallback(None, 6)
-    6
+T = TypeVar('T')
 
-    :param value:           Argument that can be ``None``.
-    :param fallback_value:  Fallback value that is returned if `value` is ``None``.
+# Taken from old havsfunc
+def santiag(
+    c: vs.VideoNode,
+    strh: int = 1,
+    strv: int = 1,
+    type: str = 'nnedi3',
+    nsize: Optional[int] = None,
+    nns: Optional[int] = None,
+    qual: Optional[int] = None,
+    pscrn: Optional[int] = None,
+    int16_prescreener: Optional[bool] = None,
+    int16_predictor: Optional[bool] = None,
+    exp: Optional[int] = None,
+    aa: Optional[int] = None,
+    alpha: Optional[float] = None,
+    beta: Optional[float] = None,
+    gamma: Optional[float] = None,
+    nrad: Optional[int] = None,
+    mdis: Optional[int] = None,
+    vcheck: Optional[int] = None,
+    fw: Optional[int] = None,
+    fh: Optional[int] = None,
+    halfres: bool = False,
+    typeh: Optional[str] = None,
+    typev: Optional[str] = None,
+    opencl: bool = False,
+    device: Optional[int] = None,
+) -> vs.VideoNode:
+    '''
+    santiag v1.6
+    Simple antialiasing
 
-    :return:                The input `value` or `fallback_value` if `value` is ``None``.
-    """
-    return fallback_value if value is None else value
-    
-# Taken from muvsfunc
-def GetPlane(clip, plane=None):
-    # input clip
-    if not isinstance(clip, vs.VideoNode):
-        raise type_error('"clip" must be a clip!')
+    type = "nnedi3", "eedi2", "eedi3" or "sangnom"
+    '''
 
-    # Get properties of input clip
-    sFormat = clip.format
-    sNumPlanes = sFormat.num_planes
+    def santiag_dir(c: vs.VideoNode, strength: int, type: str, fw: Optional[int] = None, fh: Optional[int] = None) -> vs.VideoNode:
+        fw = c.width if fw is None else fw
+        fh = c.height if fh is None else fh
 
-    # Parameters
-    if plane is None:
-        plane = 0
-    elif not isinstance(plane, int):
-        raise type_error('"plane" must be an int!')
-    elif plane < 0 or plane > sNumPlanes:
-        raise value_error(f'valid range of "plane" is [0, {sNumPlanes})!')
+        c = santiag_stronger(c, strength, type)
 
-    # Process
-    return core.std.ShufflePlanes(clip, plane, vs.GRAY)
-    
-def cround(x: float) -> int:
-    return math.floor(x + 0.5) if x > 0 else math.ceil(x - 0.5)
+        return c.resize.Spline36(fw, fh, src_top=0 if halfres else 0.5)
 
-def scale(value, peak):
-    return cround(value * peak / 255) if peak != 1 else value / 255
+    def santiag_stronger(c: vs.VideoNode, strength: int, type: str) -> vs.VideoNode:
+        if opencl:
+            if hasattr(core, 'nnedi3vk'):
+              nnedi3 = partial(core.nnedi3vk.NNEDI3, nsize=nsize, nns=nns, qual=qual, pscrn=pscrn, device_index=device)
+            elif hasattr(core, 'sneedif'):
+              nnedi3 = partial(core.sneedif.NNEDI3, nsize=nsize, nns=nns, qual=qual, pscrn=pscrn, device=device)
+            else:
+              nnedi3 = partial(core.nnedi3cl.NNEDI3CL, nsize=nsize, nns=nns, qual=qual, pscrn=pscrn, device=device)
+        else:
+            if hasattr(core, 'znedi3'):
+              nnedi3 = partial(core.znedi3.nnedi3, nsize=nsize, nns=nns, qual=qual, pscrn=pscrn, int16_prescreener=int16_prescreener, int16_predictor=int16_predictor, exp=exp)
+            else:
+              nnedi3 = partial(core.nnedi3.nnedi3, nsize=nsize, nns=nns, qual=qual, pscrn=pscrn, int16_prescreener=int16_prescreener, int16_predictor=int16_predictor, exp=exp)
+
+        def get_eedi3():
+            if hasattr(core, 'eedi3vk2'):
+                return partial(core.eedi3vk2.EEDI3, alpha=alpha, beta=beta, gamma=gamma, nrad=nrad, mdis=mdis, vcheck=vcheck, device_id=device)
+            if hasattr(core, 'eedi3vk'):
+                return partial(core.eedi3vk.EEDI3, alpha=alpha, beta=beta, gamma=gamma, nrad=nrad, mdis=mdis, vcheck=vcheck, device_id=device)
+            elif hasattr(core, 'eedi3m') and hasattr(core.eedi3m, 'EEDI3CL'):
+                return partial(core.eedi3m.EEDI3CL, alpha=alpha, beta=beta, gamma=gamma, nrad=nrad, mdis=mdis, vcheck=vcheck, device=device)
+            elif hasattr(core, 'eedi3m'):
+                return partial(core.eedi3m.EEDI3, alpha=alpha, beta=beta, gamma=gamma, nrad=nrad, mdis=mdis, vcheck=vcheck)
+            else:
+                raise vs.Error('santiag: no eedi3 plugin (eedi3vk or eedi3m) found')
+
+        strength = max(strength, 0)
+        field = strength % 2
+        dh = strength <= 0 and not halfres
+
+        if strength > 0:
+            c = santiag_stronger(c, strength - 1, type)
+
+        w = c.width
+        h = c.height
+
+        if type == 'nnedi3':
+            return nnedi3(c, field=field, dh=dh)
+        elif type == 'eedi2':
+            if not dh:
+                c = c.resize.Point(w, h // 2, src_top=1 - field)
+            return c.eedi2.EEDI2(field=field)
+        elif type == 'eedi3':
+            sclip = nnedi3(c, field=field, dh=dh)
+            return get_eedi3()(c, field=field, dh=dh, sclip=sclip)
+        elif type == 'sangnom':
+            if dh:
+                c = c.resize.Spline36(w, h * 2, src_top=-0.25)
+            return c.sangnom.SangNom(order=field + 1, aa=aa)
+        else:
+            raise vs.Error('santiag: unexpected value for type')
+
+    if not isinstance(c, vs.VideoNode):
+        raise vs.Error('santiag: this is not a clip')
+
+    type = type.lower()
+    typeh = type if typeh is None else typeh.lower()
+    typev = type if typev is None else typev.lower()
+
+    w = c.width
+    h = c.height
+    fwh = fw if strv < 0 else w
+    fhh = fh if strv < 0 else h
+
+    if strh >= 0:
+        c = santiag_dir(c, strh, typeh, fwh, fhh)
+    if strv >= 0:
+        c = santiag_dir(c.std.Transpose(), strv, typev, fh, fw).std.Transpose()
+
+    fw = w if fw is None else fw
+    fh = h if fh is None else fh
+    if strh < 0 and strv < 0:
+        c = c.resize.Spline36(fw, fh)
+    return c

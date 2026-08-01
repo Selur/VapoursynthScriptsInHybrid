@@ -1,3 +1,4 @@
+
 from vapoursynth import core
 import vapoursynth as vs
 
@@ -5,7 +6,7 @@ import math
 
 from typing import Optional, Union, Sequence
 
-
+from helpers import GetPlane, scale
 
 
 ##############################
@@ -145,28 +146,3 @@ def Padding(clip: vs.VideoNode, left: int = 0, right: int = 0, top: int = 0, bot
 
     return clip.resize.Point(width, height, src_left=-left, src_top=-top, src_width=width, src_height=height)
 
-def GetPlane(clip, plane=None):
-    # input clip
-    if not isinstance(clip, vs.VideoNode):
-        raise type_error('"clip" must be a clip!')
-
-    # Get properties of input clip
-    sFormat = clip.format
-    sNumPlanes = sFormat.num_planes
-
-    # Parameters
-    if plane is None:
-        plane = 0
-    elif not isinstance(plane, int):
-        raise type_error('"plane" must be an int!')
-    elif plane < 0 or plane > sNumPlanes:
-        raise value_error(f'valid range of "plane" is [0, {sNumPlanes})!')
-
-    # Process
-    return core.std.ShufflePlanes(clip, plane, vs.GRAY)
-        
-def cround(x: float) -> int:
-    return math.floor(x + 0.5) if x > 0 else math.ceil(x - 0.5)
-
-def scale(value, peak):
-    return cround(value * peak / 255) if peak != 1 else value / 255

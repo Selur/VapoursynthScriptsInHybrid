@@ -484,8 +484,6 @@ def median_blur(
         If neither vapoursynth-ctmf nor vapoursynth-zsmooth is available.
     """
 
-    core = clip.core
-
     # Normalize planes to a list so we can iterate uniformly later
     if planes is None:
         planes = list(range(clip.format.num_planes))
@@ -566,7 +564,47 @@ def MinBlur(clp: vs.VideoNode, r: int = 1, planes: Optional[Union[int, Sequence[
         [clp, RG11, RG4],
         expr=['x y - x z - * 0 < x x y - abs x z - abs < y z ? ?' if i in planes else '' for i in plane_range]
     )
+
     
+def sbr(c: vs.VideoNode, r: int = 1, planes: Optional[Union[int, Sequence[int]]] = None) -> vs.VideoNode:
+    '''make a highpass on a blur's difference (well, kind of that)'''
+    if not isinstance(c, vs.VideoNode):
+        raise vs.Error('sbr: this is not a clip')
+
+    neutral = 1 << (c.format.bits_per_sample - 1) if c.format.sample_type == vs.INTEGER else 0.0
+
+    plane_range = range(c.format.num_planes)
+
+    if planes is None:
+        planes = list(plane_range)
+    elif isinstance(planes, int):
+        planes = [planes]
+
+    matrix1 = [1, 2, 1, 2, 4, 2, 1, 2, 1]
+    matrix2 = [1, 1, 1, 1, 1, 1, 1, 1, 1]
+
+    RG11 = c.std.Convolution(matrix=matrix1, planes=planes)
+    if r >= 2:
+        RG11 = RG11.std.Convolution(matrix=matrix2, planes=planes)
+    if r >= 3:
+        RG11 = RG11.std.Convolution(matrix=matrix2, planes=planes)
+
+    RG11D = core.std.MakeDiff(c, RG11, planes=planes)
+
+    RG11DS = RG11D.std.Convolution(matrix=matrix1, planes=planes)
+    if r >= 2:
+        RG11DS = RG11DS.std.Convolution(matrix=matrix2, planes=planes)
+    if r >= 3:
+        RG11DS = RG11DS.std.Convolution(matrix=matrix2, planes=planes)
+    EXPR = core.akarin.Expr if hasattr(core, 'akarin') else core.cranexpr.Expr if hasattr(core, 'cranexpr') else core.std.Expr
+    RG11DD = EXPR(
+        [RG11D, RG11DS],
+        expr=[f'x y - x {neutral} - * 0 < {neutral} x y - abs x {neutral} - abs < x y - {neutral} + x ? ?' if i in planes else '' for i in plane_range],
+    )
+    return core.std.MakeDiff(c, RG11DD, planes=planes)
+    
+
+
 # =============================================================================
 # Motion-vector plugin wrapper (mvtools / mvsf / mvutensils)
 # =============================================================================
