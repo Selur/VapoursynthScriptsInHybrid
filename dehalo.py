@@ -4,8 +4,8 @@ from vapoursynth import core
 import math
 from typing import Union, Optional, Sequence
 
-import misc
-from helper import GetPlane, m4, scale_value, cround
+from misc import MinBlur, median_blur
+from helpers import GetPlane, m4, scale_value, cround
 
 def DeHalo_alpha(
     clp: vs.VideoNode,
@@ -363,7 +363,7 @@ def FineDehalo_contrasharp(dehaloed: vs.VideoNode, src: vs.VideoNode, level: flo
         dehaloed_orig = None
 
     bb = dehaloed.std.Convolution(matrix=[1, 2, 1, 2, 4, 2, 1, 2, 1])
-    bbb = misc.median_blur(bb, radius=2)
+    bbb = median_blur(bb, radius=2)
     if hasattr(core, 'zsmooth'):
       bb2 = core.zsmooth.Repair(bb, core.zsmooth.Repair(bb, bbb, mode=1), mode=1)
     else:
@@ -403,7 +403,7 @@ def YAHR(clp: vs.VideoNode, blur: int = 2, depth: int = 32) -> vs.VideoNode:
     else:
         clp_orig = None
 
-    b1 = misc.MinBlur(clp, 2).std.Convolution(matrix=[1, 2, 1, 2, 4, 2, 1, 2, 1])
+    b1 = MinBlur(clp, 2).std.Convolution(matrix=[1, 2, 1, 2, 4, 2, 1, 2, 1])
     b1D = core.std.MakeDiff(clp, b1)
     
     w1 = Padding(clp, 6, 6, 6, 6)
@@ -414,7 +414,7 @@ def YAHR(clp: vs.VideoNode, blur: int = 2, depth: int = 32) -> vs.VideoNode:
       w1 = sharpen.AWarpSharp2(w1, blur=blur, depth=depth)
     w1 = core.std.Crop(w1, 6, 6, 6, 6)      
     
-    w1b1 = misc.MinBlur(w1, 2).std.Convolution(matrix=[1, 2, 1, 2, 4, 2, 1, 2, 1])
+    w1b1 = MinBlur(w1, 2).std.Convolution(matrix=[1, 2, 1, 2, 4, 2, 1, 2, 1])
     w1b1D = core.std.MakeDiff(w1, w1b1)
     if hasattr(core, 'zsmooth'):
       DD = core.zsmooth.Repair(b1D, w1b1D, mode=13)
