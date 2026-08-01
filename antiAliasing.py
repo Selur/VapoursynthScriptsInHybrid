@@ -5,7 +5,6 @@ import math
 
 from typing import TypeVar, Optional
 from functools import partial
-
 from helpers import GetPlane, m4, scale
 
 # Taken from old havsfunc

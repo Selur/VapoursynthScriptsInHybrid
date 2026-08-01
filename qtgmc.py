@@ -4,10 +4,12 @@ from vapoursynth import core
 import math
 import importlib
 from functools import partial
-from typing import Any, Mapping, Optional, Sequence, Union
-from vsutil import Dither, depth, fallback, get_y, join, plane, scale_value
+from typing import Any, Mapping, Optional, Sequence, Union, TypeVar
 
+from helpers import Depth, scale_value
 from misc import MV
+
+
 
 QTGMC_globals = {}
 
@@ -684,7 +686,7 @@ def QTGMC(
             srchClip = EXPR([spatialBlur, tweaked], expr=expr if ChromaMotion or is_gray else [expr, ''])
         srchClip = DitherLumaRebuild(srchClip, s0=Str, c=Amp, chroma=ChromaMotion)
         if bits > 8 and FastMA:
-            srchClip = depth(srchClip, 8, dither_type=Dither.NONE)
+            srchClip = Depth(srchClip, 8, dither_type=Dither.NONE)
 
     super_args = dict(pel=SubPel, hpad=hpad, vpad=vpad,blksize=BlockSize, overlap=Overlap)
     analyse_args = dict(
@@ -800,7 +802,7 @@ def QTGMC(
             
             # Ensure float32 input for bm3d
             if noiseWindow.format.sample_type != vs.FLOAT:
-                bm3d_input = depth(noiseWindow, 32, sample_type=vs.FLOAT)
+                bm3d_input = Depth(noiseWindow, 32, sample_type=vs.FLOAT)
             else:
                 bm3d_input = noiseWindow
             
@@ -818,7 +820,7 @@ def QTGMC(
             
             # Restore original format
             if dnWindow.format.id != noiseWindow.format.id:
-                dnWindow = depth(dnWindow, noiseWindow.format.bits_per_sample, 
+                dnWindow = Depth(dnWindow, noiseWindow.format.bits_per_sample, 
                                 sample_type=noiseWindow.format.sample_type)
         elif Denoiser == 'dfttest':
           if opencl:
@@ -1739,3 +1741,18 @@ def KNLMeansCL(
       else:
           return nlmeans(d=d, a=a, s=s, h=h, channels='YUV', wmode=wmode, wref=wref, device_type=device_type, device_id=device_id)
         
+# for readability
+T = TypeVar('T')
+def fallback(value: Optional[T], fallback_value: T) -> T:
+    """Utility function that returns a value or a fallback if the value is `None`.
+
+    >>> fallback(5, 6)
+    5
+    >>> fallback(None, 6)
+    6
+
+    :param value: Argument that can be `None`.
+    :param fallback_value: Fallback value that is returned if `value` is `None`.
+    :return: The input `value` or `fallback_value` if `value` is `None`.
+    """
+    return fallback_value if value is None else value

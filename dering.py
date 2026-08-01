@@ -5,6 +5,7 @@ from vapoursynth import core
 import math
 from misc import MinBlur, median_blur
 from typing import Optional, Union, Sequence, TypeVar
+from helpers import scale
 
 def _hysteresis_fn():
     """Pick the best available Hysteresis."""
@@ -111,12 +112,12 @@ def HQDeringmod(
 
     HD = input.width > 1024 or input.height > 576
 
-    nrmode = fallback(nrmode, 2 if HD else 1)
-    sigma2 = fallback(sigma2, sigma / 16)
-    sbsize = fallback(sbsize, 8 if HD else 6)
-    sosize = fallback(sosize, 6 if HD else 4)
-    drrep = fallback(drrep, 24 if nrmode > 0 else 0)
-    darkthr = fallback(darkthr, thr / 4)
+    nrmode = (2 if HD else 1) if nrmode is None else nrmode
+    sigma2 = sigma / 16 if sigma2 is None else sigma2
+    sbsize = (8 if HD else 6) if sbsize is None else sbsize
+    sosize = (6 if HD else 4) if sosize is None else sosize
+    drrep = (24 if nrmode > 0 else 0) if drrep is None else drrep
+    darkthr = thr / 4 if darkthr is None else darkthr
 
     # Kernel: Smoothing
     if smoothed is None:
@@ -901,27 +902,4 @@ def mt_inflate_multi(src: vs.VideoNode, planes: Optional[Union[int, Sequence[int
     for _ in range(radius):
         src = src.std.Inflate(planes=planes)
     return src
-    
-    
-def cround(x: float) -> int:
-    return math.floor(x + 0.5) if x > 0 else math.ceil(x - 0.5)
-    
-def scale(value, peak):
-    return cround(value * peak / 255) if peak != 1 else value / 255
-        
-# Taken from sfrom vsutil
-T = TypeVar('T')
-def fallback(value: Optional[T], fallback_value: T) -> T:
-    """Utility function that returns a value or a fallback if the value is ``None``.
 
-    >>> fallback(5, 6)
-    5
-    >>> fallback(None, 6)
-    6
-
-    :param value:           Argument that can be ``None``.
-    :param fallback_value:  Fallback value that is returned if `value` is ``None``.
-
-    :return:                The input `value` or `fallback_value` if `value` is ``None``.
-    """
-    return fallback_value if value is None else value
