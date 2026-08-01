@@ -3,6 +3,7 @@ from vapoursynth import core
 
 import math
 from functools import partial
+from helpers import scale
 
 # Taken from old havsfunc
 # a.k.a. BalanceBordersMod
@@ -66,13 +67,3 @@ def bbmod(c, cTop, cBottom, cLeft, cRight, thresh=128, blur=999):
     if cRight > 0:
         c = btb(c, cRight)
     return c.std.Transpose().std.FlipHorizontal()
-
-
-# Helpers
-
-
-def cround(x: float) -> int:
-    return math.floor(x + 0.5) if x > 0 else math.ceil(x - 0.5)
-
-def scale(value, peak):
-    return cround(value * peak / 255) if peak != 1 else value / 255

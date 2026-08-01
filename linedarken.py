@@ -6,7 +6,7 @@ import math
 
 from typing import Optional, Union, Sequence
 
-from helpers import GetPlane, scale
+from helpers import GetPlane, scale, Padding
 
 
 ##############################
@@ -133,16 +133,4 @@ def Toon(input, str=1.0, l_thr=2, u_thr=12, blur=2, depth=32):
     if input_orig is not None:
         last = core.std.ShufflePlanes([last, input_orig], planes=[0, 1, 2], colorfamily=input_orig.format.color_family)
     return last
-
-def Padding(clip: vs.VideoNode, left: int = 0, right: int = 0, top: int = 0, bottom: int = 0) -> vs.VideoNode:
-    if not isinstance(clip, vs.VideoNode):
-        raise vs.Error('Padding: this is not a clip')
-
-    if left < 0 or right < 0 or top < 0 or bottom < 0:
-        raise vs.Error('Padding: border size to pad must not be negative')
-
-    width = clip.width + left + right
-    height = clip.height + top + bottom
-
-    return clip.resize.Point(width, height, src_left=-left, src_top=-top, src_width=width, src_height=height)
 

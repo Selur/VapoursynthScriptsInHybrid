@@ -276,12 +276,6 @@ def aaf(                \
     if mode != "edge":
         return aa
 
-    def cround(x: float) -> int:
-       return math.floor(x + 0.5) if x > 0 else math.ceil(x - 0.5)
-
-    def scale(value, peak):
-      return cround(value * peak / 255) if peak != 1 else value / 255
-
     # u=1, v=1 is not directly so use the copy
     mask = core.std.MakeDiff(inputClip.std.Maximum(planes=0)\
                              , inputClip.std.Minimum(planes=0)\
@@ -295,8 +289,6 @@ def aaf(                \
         return merged
     return core.zsmooth.Repair(merged, inputClip, mode=repMode) if zsmooth else core.rgvs.Repair(merged, inputClip, mode=repMode)
 
-
-T = TypeVar('T')
 
 # Taken from old havsfunc
 def santiag(

@@ -1281,214 +1281,7 @@ def _limit_filter_expr(defref, thr, elast, largen_thr, value_range):
 
     return limitExpr
 ################################################################################################################################
-
-
-                
-                
-################################################################################################################################
-## Main function: Depth()
-################################################################################################################################
-## Bit depth conversion with dithering (if needed).
-## It's a wrapper for fmtc.bitdepth and zDepth (core.resize/zimg).
-## Only constant format is supported, frame properties of the input clip is mostly ignored (only available with zDepth).
-################################################################################################################################
-## Basic parameters
-##     input {clip}: clip to be converted
-##         can be of YUV/RGB/Gray color family, can be of 8~16 bit integer or 16/32 bit float
-##     depth {int}: output bit depth, can be 1~16 bit integer or 16/32 bit float
-##         note that 1~7 bit content is still stored as 8 bit integer format
-##         default is the same as that of the input clip
-##     sample {int}: output sample type, can be 0 (vs.INTEGER) or 1 (vs.FLOAT)
-##         default is the same as that of the input clip
-##     fulls {bool}: define if input clip is of full range
-##         default: None, assume True for RGB/YCgCo input, assume False for Gray/YUV input
-##     fulld {bool}: define if output clip is of full range
-##         default is the same as "fulls"
-################################################################################################################################
-## Advanced parameters
-##     dither {int|str}: dithering algorithm applied for depth conversion
-##         - {int}: same as "dmode" in fmtc.bitdepth, will be automatically converted if using zDepth
-##         - {str}: same as "dither_type" in zDepth, will be automatically converted if using fmtc.bitdepth
-##         - default:
-##             - output depth is 32, and conversions without quantization error: 1 | "none"
-##             - otherwise: 3 | "error_diffusion"
-##     useZ {bool}: prefer zDepth or fmtc.bitdepth for depth conversion
-##         When 11,13~15 bit integer or 16 bit float is involved, zDepth is always used.
-##         - False: prefer fmtc.bitdepth
-##         - True: prefer zDepth
-##         default: False
-################################################################################################################################
-## Parameters of fmtc.bitdepth
-##     ampo, ampn, dyn, staticnoise, cpuopt, patsize, tpdfo, tpdfn, corplane:
-##         same as those in fmtc.bitdepth, ignored when useZ=True
-##         *NOTE* no positional arguments, only keyword arguments are accepted
-################################################################################################################################
-def Depth(input, depth=None, sample=None, fulls=None, fulld=None,
-    dither=None, useZ=None, **kwargs):
-    # input clip
-    clip = input
-
-    if not isinstance(input, vs.VideoNode):
-        raise type_error('"input" must be a clip!')
-
-    ## Default values for kwargs
-    if 'ampn' not in kwargs:
-        kwargs['ampn'] = None
-    if 'ampo' not in kwargs:
-        kwargs['ampo'] = None
-
-    # Get properties of input clip
-    sFormat = input.format
-
-    sColorFamily = sFormat.color_family
-    CheckColorFamily(sColorFamily)
-    sIsYUV = sColorFamily == vs.YUV
-    sIsGRAY = sColorFamily == vs.GRAY
-
-    sbitPS = sFormat.bits_per_sample
-    sSType = sFormat.sample_type
-
-    if fulls is None:
-        # If not set, assume limited range for YUV and Gray input
-        fulls = False if sIsYUV or sIsGRAY else True
-    elif not isinstance(fulls, int):
-        raise type_error('"fulls" must be a bool!')
-
-    # Get properties of output clip
-    lowDepth = False
-
-    if depth is None:
-        dbitPS = sbitPS
-    elif not isinstance(depth, int):
-        raise type_error('"depth" must be an int!')
-    else:
-        if depth < 8:
-            dbitPS = 8
-            lowDepth = True
-        else:
-            dbitPS = depth
-    if sample is None:
-        if depth is None:
-            dSType = sSType
-            depth = dbitPS
-        else:
-            dSType = vs.FLOAT if dbitPS >= 32 else vs.INTEGER
-    elif not isinstance(sample, int):
-        raise type_error('"sample" must be an int!')
-    elif sample != vs.INTEGER and sample != vs.FLOAT:
-        raise value_error('"sample" must be either 0 (vs.INTEGER) or 1 (vs.FLOAT)!')
-    else:
-        dSType = sample
-    if depth is None and sSType != vs.FLOAT and sample == vs.FLOAT:
-        dbitPS = 32
-    elif depth is None and sSType != vs.INTEGER and sample == vs.INTEGER:
-        dbitPS = 16
-    if dSType == vs.INTEGER and (dbitPS < 1 or dbitPS > 16):
-        raise value_error(f'{dbitPS}-bit integer output is not supported!')
-    if dSType == vs.FLOAT and (dbitPS != 16 and dbitPS != 32):
-        raise value_error(f'{dbitPS}-bit float output is not supported!')
-
-    if fulld is None:
-        fulld = fulls
-    elif not isinstance(fulld, int):
-        raise type_error('"fulld" must be a bool!')
-
-    # Low-depth support
-    if lowDepth:
-        if dither == "none" or dither == 1:
-            clip = _quantization_conversion(clip, sbitPS, depth, vs.INTEGER, fulls, fulld, False, False, 8, 0)
-            clip = _quantization_conversion(clip, depth, 8, vs.INTEGER, fulld, fulld, False, False, 8, 0)
-            return clip
-        else:
-            full = fulld
-            clip = _quantization_conversion(clip, sbitPS, depth, vs.INTEGER, fulls, full, False, False, 16, 1)
-            sSType = vs.INTEGER
-            sbitPS = 16
-            fulls = False
-            fulld = False
-
-    # Whether to use zDepth or fmtc.bitdepth for conversion
-    # When 11,13~15 bit integer or 16 bit float is involved, force using zDepth
-    if useZ is None:
-        useZ = False
-    elif not isinstance(useZ, int):
-        raise type_error('"useZ" must be a bool!')
-    if sSType == vs.INTEGER and (sbitPS == 13 or sbitPS == 15):
-        useZ = True
-    if dSType == vs.INTEGER and (dbitPS == 11 or 13 <= dbitPS <= 15):
-        useZ = True
-    if (sSType == vs.FLOAT and sbitPS < 32) or (dSType == vs.FLOAT and dbitPS < 32):
-        useZ = True
-
-    # Dithering type
-    if kwargs['ampn'] is not None and not isinstance(kwargs['ampn'], (int, float)):
-        raise type_error('"ampn" must be an int or a float!')
-
-    if dither is None:
-        if dbitPS == 32 or (dbitPS >= sbitPS and fulld == fulls and fulld == False):
-            dither = "none" if useZ else 1
-        else:
-            dither = "error_diffusion" if useZ else 3
-    elif not isinstance(dither, (int, str)):
-        raise type_error('"dither" must be an int or a str!')
-    else:
-        if isinstance(dither, str):
-            dither = dither.lower()
-            if dither != "none" and dither != "ordered" and dither != "random" and dither != "error_diffusion":
-                raise value_error('Unsupported "dither" specified!')
-        else:
-            if dither < 0 or dither > 9:
-                raise value_error('Unsupported "dither" specified!')
-        if useZ and isinstance(dither, int):
-            if dither == 0:
-                dither = "ordered"
-            elif dither == 1 or dither == 2:
-                if kwargs['ampn'] is not None and kwargs['ampn'] > 0:
-                    dither = "random"
-                else:
-                    dither = "none"
-            else:
-                dither = "error_diffusion"
-        elif not useZ and isinstance(dither, str):
-            if dither == "none":
-                dither = 1
-            elif dither == "ordered":
-                dither = 0
-            elif dither == "random":
-                if kwargs['ampn'] is None:
-                    dither = 1
-                    kwargs['ampn'] = 1
-                elif kwargs['ampn'] > 0:
-                    dither = 1
-                else:
-                    dither = 3
-            else:
-                dither = 3
-
-    if not useZ:
-        if kwargs['ampo'] is None:
-            kwargs['ampo'] = 1.5 if dither == 0 else 1
-        elif not isinstance(kwargs['ampo'], (int, float)):
-            raise type_error('"ampo" must be an int or a float!')
-
-    # Skip processing if not needed
-    if dSType == sSType and dbitPS == sbitPS and (sSType == vs.FLOAT or fulld == fulls) and not lowDepth:
-        return clip
-
-    # Apply conversion
-    if useZ:
-        clip = zDepth(clip, sample=dSType, depth=dbitPS, range=fulld, range_in=fulls, dither_type=dither)
-    else:
-        clip = core.fmtc.bitdepth(clip, bits=dbitPS, flt=dSType, fulls=fulls, fulld=fulld, dmode=dither, **kwargs)
-        clip = SetColorSpace(clip, ColorRange=0 if fulld else 1)
-
-    # Low-depth support
-    if lowDepth:
-        clip = _quantization_conversion(clip, depth, 8, vs.INTEGER, full, full, False, False, 8, 0)
-
-    # Output
-    return clip
-################################################################################################################################
+  
 
 ################################################################################################################################
 ## Helper function: CheckColorFamily()
@@ -1589,18 +1382,7 @@ def SetColorSpace(clip, ChromaLocation=None, ColorRange=None, Primaries=None, Ma
 ################################################################################################################################
 
 
-import vapoursynth as vs
-
-core = vs.core
-
-
-def FixChromaticAberration(clip,
-                           red=1.0,
-                           green=1.0,
-                           blue=1.0,
-                           x=None,
-                           y=None,
-                           resizer=None):
+def FixChromaticAberration(clip, red=1.0, green=1.0, blue=1.0, x=None, y=None, resizer=None):
     """
     VapourSynth port of the Avisynth FixChromaticAberration function.
 
@@ -1628,10 +1410,7 @@ def FixChromaticAberration(clip,
 
     # Ensure RGB format
     if clip.format.color_family != vs.RGB:
-        c = core.resize.Bicubic(
-            clip,
-            format=vs.RGBS
-        )
+        c = core.resize.Bicubic(clip, format=vs.RGBS)
     else:
         c = clip
 
@@ -1659,30 +1438,11 @@ def FixChromaticAberration(clip,
         if scale > 1.0:
             # Enlarge then crop
             resized = resizer(c, width=sw, height=sh)
+            return core.std.CropAbs(resized, width=w, height=h, left=sl, top=st)
 
-            return core.std.CropAbs(
-                resized,
-                width=w,
-                height=h,
-                left=sl,
-                top=st
-            )
-
-        else:
-            # Shrink then restore canvas and resize back
-            bordered = core.std.AddBorders(
-                c,
-                left=-sl,
-                top=-st,
-                right=w - sw + sl,
-                bottom=h - sh + st
-            )
-
-            return resizer(
-                bordered,
-                width=w,
-                height=h
-            )
+        # Shrink then restore canvas and resize back
+        bordered = core.std.AddBorders(c, left=-sl, top=-st, right=w - sw + sl, bottom=h - sh + st)
+        return resizer(bordered, width=w,height=h)
 
     rc = process_channel(red)
     gc = process_channel(green)

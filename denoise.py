@@ -5,53 +5,9 @@ import math
 
 from typing import Optional, Union, Sequence
 
-from helpers import GetPlane, scale_value, scale, cround
+from helpers import GetPlane, scale_value, scale, cround, DitherLumaRebuild, KNLMeansCL
 
-from misc import MV, MinBlur, SCDetect
-
-# Taken from havsfunc
-def KNLMeansCL(
-    clip: vs.VideoNode,
-    d: Optional[int] = None,
-    a: Optional[int] = None,
-    s: Optional[int] = None,
-    h: Optional[float] = None,
-    wmode: Optional[int] = None,
-    wref: Optional[float] = None,
-    device_type: Optional[str] = None,
-    device_id: Optional[int] = None,
-) -> vs.VideoNode:
-    if not isinstance(clip, vs.VideoNode):
-        raise vs.Error('KNLMeansCL: this is not a clip')
-
-    if clip.format.color_family != vs.YUV:
-        raise vs.Error('KNLMeansCL: this wrapper is intended to be used only for YUV format')
-
-    subsampled = clip.format.subsampling_w > 0 or clip.format.subsampling_h > 0
-    if hasattr(core, 'nlm_ispc'):
-        nlmeans = clip.nlm_ispc.NLMeans
-        if subsampled:
-          clip = nlmeans(d=d, a=a, s=s, h=h, channels='Y', wmode=wmode, wref=wref)
-          return nlmeans(d=d, a=a, s=s, h=h, channels='UV', wmode=wmode, wref=wref)
-        else:
-          return nlmeans(d=d, a=a, s=s, h=h, channels='YUV', wmode=wmode, wref=wref)
-    elif hasattr(core, 'nlm_cuda') and (device_type != "cpu"):
-        nlmeans = clip.nlm_cuda.NLMeans
-        if subsampled:
-          clip = nlmeans(d=d, a=a, s=s, h=h, channels='Y', wmode=wmode, wref=wref, device_id=device_id)
-          return nlmeans(d=d, a=a, s=s, h=h, channels='UV', wmode=wmode, wref=wref, device_id=device_id)
-        else:
-          return nlmeans(d=d, a=a, s=s, h=h, channels='YUV', wmode=wmode, wref=wref, device_id=device_id)
-    else:
-      nlmeans = clip.knlm.KNLMeansCL
-      if subsampled:
-          clip = nlmeans(d=d, a=a, s=s, h=h, channels='Y', wmode=wmode, wref=wref, device_type=device_type, device_id=device_id)
-          return nlmeans(d=d, a=a, s=s, h=h, channels='UV', wmode=wmode, wref=wref, device_type=device_type, device_id=device_id)
-      else:
-          return nlmeans(d=d, a=a, s=s, h=h, channels='YUV', wmode=wmode, wref=wref, device_type=device_type, device_id=device_id)
-        
-        
-        
+from misc import MV, MinBlur, SCDetect, mt_expand_multi
         
 ####################################################################################################################################
 ###                                                                                                                              ###
@@ -859,26 +815,6 @@ def EZDenoise(
         
     
 ########################### HELPER FUNCTIONS ##########################
-    
-def DitherLumaRebuild(src: vs.VideoNode, s0: float = 2.0, c: float = 0.0625, chroma: bool = True) -> vs.VideoNode:
-    '''Converts luma (and chroma) to PC levels, and optionally allows tweaking for pumping up the darks. (for the clip to be fed to motion search only)'''
-    if not isinstance(src, vs.VideoNode):
-        raise vs.Error('DitherLumaRebuild: this is not a clip')
-
-    if src.format.color_family == vs.RGB:
-        raise vs.Error('DitherLumaRebuild: RGB format is not supported')
-
-    is_gray = src.format.color_family == vs.GRAY
-    is_integer = src.format.sample_type == vs.INTEGER
-
-    bits = src.format.bits_per_sample
-    neutral = 1 << (bits - 1)
-
-    k = (s0 - 1) * c
-    t = f'x {scale_value(16, 8, bits)} - {scale_value(219, 8, bits)} / 0 max 1 min' if is_integer else 'x 0 max 1 min'
-    e = f'{k} {1 + c} {(1 + c) * c} {t} {c} + / - * {t} 1 {k} - * + ' + (f'{scale_value(256, 8, bits)} *' if is_integer else '')
-    EXPR = core.akarin.Expr if hasattr(core, 'akarin') else core.cranexpr.Expr if hasattr(core, 'cranexpr') else core.std.Expr
-    return EXPR(src, expr=e if is_gray else [e, f'x {neutral} - 128 * 112 / {neutral} +' if chroma and is_integer else ''])
     
 def AvsPrewitt(clip: vs.VideoNode, planes: Optional[Union[int, Sequence[int]]] = None) -> vs.VideoNode:
     if not isinstance(clip, vs.VideoNode):

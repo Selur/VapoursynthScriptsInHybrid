@@ -203,6 +203,37 @@ def Depth(
 
     return core.resize.Point(src, format=out_f.id, dither_type=dither_type, range=range, range_in=range_in)
 
+def Padding(clip: vs.VideoNode, left: int = 0, right: int = 0, top: int = 0, bottom: int = 0) -> vs.VideoNode:
+    if not isinstance(clip, vs.VideoNode):
+        raise vs.Error('Padding: this is not a clip')
+
+    if left < 0 or right < 0 or top < 0 or bottom < 0:
+        raise vs.Error('Padding: border size to pad must not be negative')
+
+    width = clip.width + left + right
+    height = clip.height + top + bottom
+
+    return clip.resize.Point(width, height, src_left=-left, src_top=-top, src_width=width, src_height=height)
+
+def DitherLumaRebuild(src: vs.VideoNode, s0: float = 2.0, c: float = 0.0625, chroma: bool = True) -> vs.VideoNode:
+    '''Converts luma (and chroma) to PC levels, and optionally allows tweaking for pumping up the darks. (for the clip to be fed to motion search only)'''
+    if not isinstance(src, vs.VideoNode):
+        raise vs.Error('DitherLumaRebuild: this is not a clip')
+
+    if src.format.color_family == vs.RGB:
+        raise vs.Error('DitherLumaRebuild: RGB format is not supported')
+
+    is_gray = src.format.color_family == vs.GRAY
+    is_integer = src.format.sample_type == vs.INTEGER
+
+    bits = src.format.bits_per_sample
+    neutral = 1 << (bits - 1)
+
+    k = (s0 - 1) * c
+    t = f'x {scale_value(16, 8, bits)} - {scale_value(219, 8, bits)} / 0 max 1 min' if is_integer else 'x 0 max 1 min'
+    e = f'{k} {1 + c} {(1 + c) * c} {t} {c} + / - * {t} 1 {k} - * + ' + (f'{scale_value(256, 8, bits)} *' if is_integer else '')
+    EXPR = core.akarin.Expr if hasattr(core, 'akarin') else core.cranexpr.Expr if hasattr(core, 'cranexpr') else core.std.Expr
+    return EXPR(src, expr=e if is_gray else [e, f'x {neutral} - 128 * 112 / {neutral} +' if chroma and is_integer else ''])
 
 def BoxFilter(input: vs.VideoNode, radius: int = 16, radius_v: Optional[int] = None, planes: Optional[Union[int, Sequence[int]]] = None,
               fmtc_conv: int = 0, radius_thr: Optional[int] = None,
@@ -244,8 +275,9 @@ def BoxFilter(input: vs.VideoNode, radius: int = 16, radius_v: Optional[int] = N
         keep_bits: (bool) Whether to keep the bitdepth of the output the same as input.
             Only works when "fmtc_conv" is enabled and input is integer.
 
-        depth_args: (dict) Additional parameters passed to mvf.Depth in the form of dict.
+        depth_args: (dict) Additional parameters passed to Depth in the form of dict.
             Only works when "fmtc_conv" is enabled, input is integer and "keep_bits" is True.
+            Keys should match helpers.Depth's signature (range, range_in, dither_type)"
             Default is {}.
 
     '''
@@ -317,7 +349,7 @@ def BoxFilter(input: vs.VideoNode, radius: int = 16, radius_v: Optional[int] = N
                 flt = core.fmtc.resample(input, kernel='impulse', impulseh=kernel, impulsev=kernel_v, planes=planes2,
                     cnorm=False, fh=-1, fv=-1, center=False, **resample_args)
                 if keep_bits and input.format.bits_per_sample != flt.format.bits_per_sample:
-                    flt = mvf.Depth(flt, depth=input.format.bits_per_sample, **depth_args)
+                    flt = Depth(flt, bits=input.format.bits_per_sample, **depth_args)
                 return flt
 
             elif hasattr(core, 'vszip'):
@@ -332,3 +364,47 @@ def BoxFilter(input: vs.VideoNode, radius: int = 16, radius_v: Optional[int] = N
                 if radius_v > 1:
                     input = core.std.Convolution(input, [1] * (radius_v * 2 - 1), planes=planes, mode='v')
                 return input
+                
+# Taken from havsfunc
+def KNLMeansCL(
+    clip: vs.VideoNode,
+    d: Optional[int] = None,
+    a: Optional[int] = None,
+    s: Optional[int] = None,
+    h: Optional[float] = None,
+    wmode: Optional[int] = None,
+    wref: Optional[float] = None,
+    device_type: Optional[str] = None,
+    device_id: Optional[int] = None,
+) -> vs.VideoNode:
+    if not isinstance(clip, vs.VideoNode):
+        raise vs.Error('KNLMeansCL: this is not a clip')
+
+    if clip.format.color_family != vs.YUV:
+        raise vs.Error('KNLMeansCL: this wrapper is intended to be used only for YUV format')
+
+    use_cuda = hasattr(core, 'nlm_cuda')
+    use_ispc = hasattr(core, 'nlm_ispc')
+    subsampled = clip.format.subsampling_w > 0 or clip.format.subsampling_h > 0
+    if use_ispc:
+        nlmeans = clip.nlm_ispc.NLMeans
+        if subsampled:
+          clip = nlmeans(d=d, a=a, s=s, h=h, channels='Y', wmode=wmode, wref=wref)
+          return nlmeans(d=d, a=a, s=s, h=h, channels='UV', wmode=wmode, wref=wref)
+        else:
+          return nlmeans(d=d, a=a, s=s, h=h, channels='YUV', wmode=wmode, wref=wref)
+    if use_cuda:
+        nlmeans = clip.nlm_cuda.NLMeans
+        if subsampled:
+          clip = nlmeans(d=d, a=a, s=s, h=h, channels='Y', wmode=wmode, wref=wref, device_id=device_id)
+          return nlmeans(d=d, a=a, s=s, h=h, channels='UV', wmode=wmode, wref=wref, device_id=device_id)
+        else:
+          return nlmeans(d=d, a=a, s=s, h=h, channels='YUV', wmode=wmode, wref=wref, device_id=device_id)
+    else:
+      nlmeans = clip.knlm.KNLMeansCL
+      if subsampled:
+          clip = nlmeans(d=d, a=a, s=s, h=h, channels='Y', wmode=wmode, wref=wref, device_type=device_type, device_id=device_id)
+          return nlmeans(d=d, a=a, s=s, h=h, channels='UV', wmode=wmode, wref=wref, device_type=device_type, device_id=device_id)
+      else:
+          return nlmeans(d=d, a=a, s=s, h=h, channels='YUV', wmode=wmode, wref=wref, device_type=device_type, device_id=device_id)
+          

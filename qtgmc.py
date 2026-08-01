@@ -6,8 +6,8 @@ import importlib
 from functools import partial
 from typing import Any, Mapping, Optional, Sequence, Union, TypeVar
 
-from helpers import Depth, scale_value
-from misc import MV
+from helpers import Depth, scale_value, DitherLumaRebuild, KNLMeansCL
+from misc import MV, mt_clamp
 
 
 
@@ -686,7 +686,7 @@ def QTGMC(
             srchClip = EXPR([spatialBlur, tweaked], expr=expr if ChromaMotion or is_gray else [expr, ''])
         srchClip = DitherLumaRebuild(srchClip, s0=Str, c=Amp, chroma=ChromaMotion)
         if bits > 8 and FastMA:
-            srchClip = Depth(srchClip, 8, dither_type=Dither.NONE)
+            srchClip = Depth(srchClip, 8, dither_type='none')
 
     super_args = dict(pel=SubPel, hpad=hpad, vpad=vpad,blksize=BlockSize, overlap=Overlap)
     analyse_args = dict(
@@ -802,7 +802,7 @@ def QTGMC(
             
             # Ensure float32 input for bm3d
             if noiseWindow.format.sample_type != vs.FLOAT:
-                bm3d_input = Depth(noiseWindow, 32, sample_type=vs.FLOAT)
+                bm3d_input = Depth(noiseWindow, 32)
             else:
                 bm3d_input = noiseWindow
             
@@ -1641,28 +1641,7 @@ def Gauss(clip: vs.VideoNode, p: Optional[float] = None, sigma: Optional[float] 
     kernel = kernel[:0:-1] + kernel  # Reverse all except [0], then add full kernel
 
     return clip.std.Convolution(matrix=kernel, planes=planes, mode='hv')
-    
-def DitherLumaRebuild(src: vs.VideoNode, s0: float = 2.0, c: float = 0.0625, chroma: bool = True) -> vs.VideoNode:
-    '''Converts luma (and chroma) to PC levels, and optionally allows tweaking for pumping up the darks. (for the clip to be fed to motion search only)'''
-    if not isinstance(src, vs.VideoNode):
-        raise vs.Error('DitherLumaRebuild: this is not a clip')
-
-    if src.format.color_family == vs.RGB:
-        raise vs.Error('DitherLumaRebuild: RGB format is not supported')
-
-    is_gray = src.format.color_family == vs.GRAY
-    is_integer = src.format.sample_type == vs.INTEGER
-
-    bits = src.format.bits_per_sample
-    neutral = 1 << (bits - 1)
-
-    k = (s0 - 1) * c
-    t = f'x {scale_value(16, 8, bits)} - {scale_value(219, 8, bits)} / 0 max 1 min' if is_integer else 'x 0 max 1 min'
-    e = f'{k} {1 + c} {(1 + c) * c} {t} {c} + / - * {t} 1 {k} - * + ' + (f'{scale_value(256, 8, bits)} *' if is_integer else '')
-    EXPR = core.akarin.Expr if hasattr(core, 'akarin') else core.std.Expr
-    return EXPR(src, expr=e if is_gray else [e, f'x {neutral} - 128 * 112 / {neutral} +' if chroma and is_integer else ''])
-
-    
+        
 def Weave(clip: vs.VideoNode, tff: Optional[bool] = None) -> vs.VideoNode:
     if not isinstance(clip, vs.VideoNode):
         raise vs.Error('Weave: this is not a clip')
@@ -1673,73 +1652,6 @@ def Weave(clip: vs.VideoNode, tff: Optional[bool] = None) -> vs.VideoNode:
                 raise vs.Error('Weave: tff was not specified and field order could not be determined from frame properties')
 
     return clip.std.DoubleWeave(tff=tff)[::2]
-    
-def mt_clamp(
-    clip: vs.VideoNode,
-    bright_limit: vs.VideoNode,
-    dark_limit: vs.VideoNode,
-    overshoot: int = 0,
-    undershoot: int = 0,
-    planes: Optional[Union[int, Sequence[int]]] = None,
-) -> vs.VideoNode:
-    if not (isinstance(clip, vs.VideoNode) and isinstance(bright_limit, vs.VideoNode) and isinstance(dark_limit, vs.VideoNode)):
-        raise vs.Error('mt_clamp: this is not a clip')
-
-    if bright_limit.format.id != clip.format.id or dark_limit.format.id != clip.format.id:
-        raise vs.Error('mt_clamp: clips must have the same format')
-
-    plane_range = range(clip.format.num_planes)
-
-    if planes is None:
-        planes = list(plane_range)
-    elif isinstance(planes, int):
-        planes = [planes]
-    EXPR = core.akarin.Expr if hasattr(core, 'akarin') else core.std.Expr
-    return EXPR([clip, bright_limit, dark_limit], expr=[f'x y {overshoot} + min z {undershoot} - max' if i in planes else '' for i in plane_range])
-    
-    
-# Taken from havsfunc
-def KNLMeansCL(
-    clip: vs.VideoNode,
-    d: Optional[int] = None,
-    a: Optional[int] = None,
-    s: Optional[int] = None,
-    h: Optional[float] = None,
-    wmode: Optional[int] = None,
-    wref: Optional[float] = None,
-    device_type: Optional[str] = None,
-    device_id: Optional[int] = None,
-) -> vs.VideoNode:
-    if not isinstance(clip, vs.VideoNode):
-        raise vs.Error('KNLMeansCL: this is not a clip')
-
-    if clip.format.color_family != vs.YUV:
-        raise vs.Error('KNLMeansCL: this wrapper is intended to be used only for YUV format')
-
-    use_ispc = hasattr(core, 'nlm_ispc')
-    use_cuda = hasattr(core, 'nlm_cuda')
-    subsampled = clip.format.subsampling_w > 0 or clip.format.subsampling_h > 0
-    if use_ispc:
-        nlmeans = clip.nlm_ispc.NLMeans
-        if subsampled:
-          clip = nlmeans(d=d, a=a, s=s, h=h, channels='Y', wmode=wmode, wref=wref)
-          return nlmeans(d=d, a=a, s=s, h=h, channels='UV', wmode=wmode, wref=wref)
-        else:
-          return nlmeans(d=d, a=a, s=s, h=h, channels='YUV', wmode=wmode, wref=wref)
-    elif use_cuda:
-        nlmeans = clip.nlm_cuda.NLMeans
-        if subsampled:
-          clip = nlmeans(d=d, a=a, s=s, h=h, channels='Y', wmode=wmode, wref=wref)
-          return nlmeans(d=d, a=a, s=s, h=h, channels='UV', wmode=wmode, wref=wref)
-        else:
-          return nlmeans(d=d, a=a, s=s, h=h, channels='YUV', wmode=wmode, wref=wref)
-    else:
-      nlmeans = clip.knlm.KNLMeansCL
-      if subsampled:
-          clip = nlmeans(d=d, a=a, s=s, h=h, channels='Y', wmode=wmode, wref=wref, device_type=device_type, device_id=device_id)
-          return nlmeans(d=d, a=a, s=s, h=h, channels='UV', wmode=wmode, wref=wref, device_type=device_type, device_id=device_id)
-      else:
-          return nlmeans(d=d, a=a, s=s, h=h, channels='YUV', wmode=wmode, wref=wref, device_type=device_type, device_id=device_id)
         
 # for readability
 T = TypeVar('T')

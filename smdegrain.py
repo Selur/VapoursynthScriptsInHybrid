@@ -6,9 +6,9 @@ from typing import Sequence, Union, Optional
 
 import math
 
-from helpers import scale
+from helpers import scale, Padding, DitherLumaRebuild
 from misc import MV, MinBlur
-from sharpen import LSFmod
+from sharpen import LSFmod, ContraSharpening
 from nnedi3_resample import nnedi3_resample
 
 
@@ -285,147 +285,6 @@ def SMDegrain(input, tr=2, thSAD=300, thSADC=None, RefineMotion=False, contrasha
         return input
 
 # Helpers
-
-def Padding(clip: vs.VideoNode, left: int = 0, right: int = 0, top: int = 0, bottom: int = 0) -> vs.VideoNode:
-    if not isinstance(clip, vs.VideoNode):
-        raise vs.Error('Padding: this is not a clip')
-
-    if left < 0 or right < 0 or top < 0 or bottom < 0:
-        raise vs.Error('Padding: border size to pad must not be negative')
-
-    width = clip.width + left + right
-    height = clip.height + top + bottom
-
-    return clip.resize.Point(width, height, src_left=-left, src_top=-top, src_width=width, src_height=height)
-
-def ContraSharpening(
-    denoised: vs.VideoNode, original: vs.VideoNode, radius: int = 1, rep: int = 1, planes: Optional[Union[int, Sequence[int]]] = None
-) -> vs.VideoNode:
-    '''
-    contra-sharpening: sharpen the denoised clip, but don't add more to any pixel than what was removed previously.
-
-    Parameters:
-        denoised: Denoised clip to 
-
-        original: Original clip before denoising.
-
-        radius: Spatial radius for contra-sharpening.
-
-        rep: Mode of repair to limit the difference.
-
-        planes: Specifies which planes will be processed. Any unprocessed planes will be simply copied.
-            By default only luma plane will be processed for non-RGB formats.
-    '''
-    if not (isinstance(denoised, vs.VideoNode) and isinstance(original, vs.VideoNode)):
-        raise vs.Error('ContraSharpening: this is not a clip')
-
-    if denoised.format.id != original.format.id:
-        raise vs.Error('ContraSharpening: clips must have the same format')
-
-    neutral = (1 << denoised.format.bits_per_sample) - 1
-
-    plane_range = range(denoised.format.num_planes)
-
-    if planes is None:
-        planes = [0] if denoised.format.color_family != vs.RGB else [0, 1, 2]
-    elif isinstance(planes, int):
-        planes = [planes]
-
-    pad = 2 if radius < 3 else 4
-    denoised = Padding(denoised, pad, pad, pad, pad)
-    original = Padding(original, pad, pad, pad, pad)
-
-    matrix1 = [1, 2, 1, 2, 4, 2, 1, 2, 1]
-    matrix2 = [1, 1, 1, 1, 1, 1, 1, 1, 1]
-
-    # damp down remaining spots of the denoised clip
-    s = MinBlur(denoised, radius, planes)
-    # the difference achieved by the denoising
-    allD = core.std.MakeDiff(original, denoised, planes=planes)
-
-    RG11 = s.std.Convolution(matrix=matrix1, planes=planes)
-    if radius >= 2:
-        RG11 = RG11.std.Convolution(matrix=matrix2, planes=planes)
-    if radius >= 3:
-        RG11 = RG11.std.Convolution(matrix=matrix2, planes=planes)
-
-    # the difference of a simple kernel blur
-    ssD = core.std.MakeDiff(s, RG11, planes=planes)
-    # limit the difference to the max of what the denoising removed locally
-    if hasattr(core,'zsmooth'):
-      ssDD = core.zsmooth.Repair(ssD, allD, mode=[rep if i in planes else 0 for i in plane_range])
-    else:
-      ssDD = core.rgvs.Repair(ssD, allD, mode=[rep if i in planes else 0 for i in plane_range])
-    # abs(diff) after limiting may not be bigger than before
-    EXPR = core.akarin.Expr if hasattr(core, 'akarin') else core.cranexpr.Expr if hasattr(core, 'cranexpr') else core.std.Expr
-    ssDD = EXPR([ssDD, ssD], expr=[f'x {neutral} - abs y {neutral} - abs < x y ?' if i in planes else '' for i in plane_range])
-    # apply the limited difference (sharpening is just inverse blurring)
-    last = core.std.MergeDiff(denoised, ssDD, planes=planes)
-    return last.std.Crop(pad, pad, pad, pad)
-    
-def DitherLumaRebuild(src, s0=2., c=0.0625, chroma=True):
-    # Converts luma (and chroma) to PC levels, and optionally allows tweaking for pumping up the darks. (for the clip to be fed to motion search only)
-    # By courtesy of cretindesalpes. (https://forum.doom9.org/showthread.php?p=1548318)
-
-    if not isinstance(src, vs.VideoNode):
-        raise TypeError("DitherLumaRebuild: This is not a clip!")
-    
-    bd = src.format.bits_per_sample
-    isFLOAT = src.format.sample_type == vs.FLOAT
-    i = 0.00390625 if isFLOAT else 1 << (bd - 8)
-
-    x = 'x {} /'.format(i) if bd != 8 else 'x'
-    expr = 'x 128 * 112 /' if isFLOAT else '{} 128 - 128 * 112 / 128 + {} *'.format(x, i)
-    k = (s0 - 1) * c
-    t = '{} 16 - 219 / 0 max 1 min'.format(x)
-    c1 = 1 + c
-    c2 = c1 * c
-    e = '{} {} {} {} {} + / - * {} 1 {} - * + {} *'.format(k, c1, c2, t, c, t, k, 256*i)
-    EXPR = core.akarin.Expr if hasattr(core, 'akarin') else core.cranexpr.Expr if hasattr(core, 'cranexpr') else core.std.Expr
-    return EXPR([src], [e] if src.format.num_planes == 1 else [e, expr if chroma else ''])
-
-# Taken from havsfunc
-def KNLMeansCL(
-    clip: vs.VideoNode,
-    d: Optional[int] = None,
-    a: Optional[int] = None,
-    s: Optional[int] = None,
-    h: Optional[float] = None,
-    wmode: Optional[int] = None,
-    wref: Optional[float] = None,
-    device_type: Optional[str] = None,
-    device_id: Optional[int] = None,
-) -> vs.VideoNode:
-    if not isinstance(clip, vs.VideoNode):
-        raise vs.Error('KNLMeansCL: this is not a clip')
-
-    if clip.format.color_family != vs.YUV:
-        raise vs.Error('KNLMeansCL: this wrapper is intended to be used only for YUV format')
-
-    use_cuda = hasattr(core, 'nlm_cuda')
-    use_ispc = hasattr(core, 'nlm_ispc')
-    subsampled = clip.format.subsampling_w > 0 or clip.format.subsampling_h > 0
-    if use_ispc:
-        nlmeans = clip.nlm_ispc.NLMeans
-        if subsampled:
-          clip = nlmeans(d=d, a=a, s=s, h=h, channels='Y', wmode=wmode, wref=wref)
-          return nlmeans(d=d, a=a, s=s, h=h, channels='UV', wmode=wmode, wref=wref)
-        else:
-          return nlmeans(d=d, a=a, s=s, h=h, channels='YUV', wmode=wmode, wref=wref)
-    if use_cuda:
-        nlmeans = clip.nlm_cuda.NLMeans
-        if subsampled:
-          clip = nlmeans(d=d, a=a, s=s, h=h, channels='Y', wmode=wmode, wref=wref, device_id=device_id)
-          return nlmeans(d=d, a=a, s=s, h=h, channels='UV', wmode=wmode, wref=wref, device_id=device_id)
-        else:
-          return nlmeans(d=d, a=a, s=s, h=h, channels='YUV', wmode=wmode, wref=wref, device_id=device_id)
-    else:
-      nlmeans = clip.knlm.KNLMeansCL
-      if subsampled:
-          clip = nlmeans(d=d, a=a, s=s, h=h, channels='Y', wmode=wmode, wref=wref, device_type=device_type, device_id=device_id)
-          return nlmeans(d=d, a=a, s=s, h=h, channels='UV', wmode=wmode, wref=wref, device_type=device_type, device_id=device_id)
-      else:
-          return nlmeans(d=d, a=a, s=s, h=h, channels='YUV', wmode=wmode, wref=wref, device_type=device_type, device_id=device_id)
      
 def get_motion_vectors(super_search, refine, search_params, refine_params, tr, interlaced):
     vectors = {}

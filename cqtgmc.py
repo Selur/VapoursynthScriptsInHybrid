@@ -2,7 +2,7 @@ import vapoursynth as vs
 from functools import partial
 from typing import Optional, Union, Sequence
 
-from misc import MV
+from misc import MV, mt_clamp
 
 core = vs.core
 
@@ -106,32 +106,6 @@ def CQTGMC(clip: vs.VideoNode, Sharpness: float=0.25, thSAD1: int=192, thSAD2: i
     degrained = core.std.Crop(degrained, left=0, top=0, right=pWidth - clip.width, bottom=pHeight - clip.height)
     
     return degrained
-
-def mt_clamp(
-    clip: vs.VideoNode,
-    bright_limit: vs.VideoNode,
-    dark_limit: vs.VideoNode,
-    overshoot: int = 0,
-    undershoot: int = 0,
-    planes: Optional[Union[int, Sequence[int]]] = None,
-) -> vs.VideoNode:
-    if not (isinstance(clip, vs.VideoNode) and isinstance(bright_limit, vs.VideoNode) and isinstance(dark_limit, vs.VideoNode)):
-        raise vs.Error('mt_clamp: this is not a clip')
-
-    if bright_limit.format.id != clip.format.id or dark_limit.format.id != clip.format.id:
-        raise vs.Error('mt_clamp: clips must have the same format')
-
-    plane_range = range(clip.format.num_planes)
-
-    if planes is None:
-        planes = list(plane_range)
-    elif isinstance(planes, int):
-        planes = [planes]
-
-    expr = [f'x y {overshoot} + < y {overshoot} + x ? z {undershoot} - > z {undershoot} - x ?' if i in planes else '' for i in plane_range]
-    EXPR = core.akarin.Expr if hasattr(core, 'akarin') else core.cranexpr.Expr if hasattr(core, 'cranexpr') else core.std.Expr
-    return EXPR(clips=[clip, bright_limit, dark_limit], expr=expr)
-
 
 def Padding(input: vs.VideoNode, top: int=0, bottom: int=0, left: int=0, right: int=0, color: Optional[Sequence[int]] = None) -> vs.VideoNode:
     return input.std.AddBorders(left=left, right=right, top=top, bottom=bottom, color=color or [0] * input.format.num_planes)

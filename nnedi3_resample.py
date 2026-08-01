@@ -7,6 +7,19 @@ from typing import Union, Optional, Callable, Dict, Any, Sequence
 
 from helpers import Depth, BoxFilter
 
+# --- shim to preserve color.Depth's range/dither defaults on top of helpers.Depth ---
+def _range(full):
+    return 'full' if full else 'limited'
+
+def _depth(clip, depth, fulls, fulld=None):
+    if fulld is None:
+        fulld = fulls
+    sbits = clip.format.bits_per_sample
+    if depth == 32 or (depth >= sbits and fulld == fulls and fulld is False):
+        dither = 'none'
+    else:
+        dither = 'error_diffusion'
+    return Depth(clip, bits=depth, dither_type=dither, range=_range(fulld), range_in=_range(fulls))
 
 def nnedi3_resample(input, target_width=None, target_height=None, src_left=None, src_top=None, src_width=None, src_height=None, csp=None, mats=None, matd=None, cplaces=None, cplaced=None, fulls=None, fulld=None, curves=None, curved=None, sigmoid=None, scale_thr=None, nsize=None, nns=None, qual=None, etype=None, pscrn=None, opt=None, int16_prescreener=None, int16_predictor=None, exp=None, kernel=None, invks=False, taps=None, invkstaps=3, a1=None, a2=None, chromak_up=None, chromak_up_taps=None, chromak_up_a1=None, chromak_up_a2=None, chromak_down=None, chromak_down_invks=False, chromak_down_invkstaps=3, chromak_down_taps=None, chromak_down_a1=None, chromak_down_a2=None, mode=None, device=None):
     funcName = 'nnedi3_resample'
@@ -187,7 +200,7 @@ def nnedi3_resample(input, target_width=None, target_height=None, src_left=None,
     dVCPlace = 0
     
     # Convert depth to 16-bit
-    last = color.Depth(input, depth=16, fulls=fulls)
+    last = _depth(input, 16, fulls)
     
     # Color space conversion before scaling
     if scaleInGRAY and sIsYUV:
@@ -261,11 +274,11 @@ def nnedi3_resample(input, target_width=None, target_height=None, src_left=None,
     if scaleInGRAY and dIsYUV:
         dCw = target_width // dHSubS
         dCh = target_height // dVSubS
-        last = color.Depth(last, depth=dbitPS, fulls=fulls, fulld=fulld)
+        last = _depth(last, dbitPS, fulls, fulld)
         blkUV = core.std.BlankClip(last, dCw, dCh, color=[1 << (dbitPS - 1)])
         last = core.std.ShufflePlanes([last, blkUV, blkUV], [0, 0, 0], dColorFamily)
     elif scaleInGRAY and dIsRGB:
-        last = color.Depth(last, depth=dbitPS, fulls=fulls, fulld=fulld)
+        last = _depth(last, dbitPS, fulls, fulld)
         last = core.std.ShufflePlanes([last, last, last], [0, 0, 0], dColorFamily)
     elif scaleInRGB and dIsYUV:
         # Matrix conversion
@@ -277,16 +290,16 @@ def nnedi3_resample(input, target_width=None, target_height=None, src_left=None,
         if dIsSubS:
             dCSS = '411' if dHSubS == 4 else '420' if dVSubS == 2 else '422'
             last = core.fmtc.resample(last, kernel=chromak_down, taps=chromak_down_taps, a1=chromak_down_a1, a2=chromak_down_a2, css=dCSS, fulls=fulld, cplaced=cplaced, invks=chromak_down_invks, invkstaps=chromak_down_invkstaps, planes=[2,3,3])
-        last = color.Depth(last, depth=dbitPS, fulls=fulld)
+        last = _depth(last, dbitPS, fulld)
     elif scaleInYUV and dIsRGB:
         # Matrix conversion
         if mats == '2020cl':
             last = core.fmtc.matrix2020cl(last, fulls)
         else:
             last = core.fmtc.matrix(last, mat=mats, fulls=fulls, fulld=True, col_fam=vs.RGB, singleout=-1)
-        last = color.Depth(last, depth=dbitPS, fulls=True, fulld=fulld)
+        last = _depth(last, dbitPS, True, fulld)
     else:
-        last = color.Depth(last, depth=dbitPS, fulls=fulls, fulld=fulld)
+        last = _depth(last, dbitPS, fulls, fulld)
     
     # Output
     return last
@@ -611,7 +624,7 @@ def SSIM_downsample(clip: vs.VideoNode, w: int, h: int,
         use_fmtc: (bool) Whether to use fmtconv for downsampling. If not, vszimg (core.resize.*) will be used.
             Default is False.
 
-        depth_args: (dict) Additional arguments passed to color.Depth().
+        depth_args: (dict) Additional arguments passed to Depth().
             Default is {}.
 
         gamma: (bool) Default is False.
@@ -670,9 +683,9 @@ def SSIM_downsample(clip: vs.VideoNode, w: int, h: int,
         kernel = 'Bicubic'
 
     if gamma:
-        clip = color.GammaToLinear(color.Depth(clip, 16), fulls=fulls, fulld=fulld, curve=curve, sigmoid=sigmoid, planes=[0])
+        clip = color.GammaToLinear(Depth(clip, 16), fulls=fulls, fulld=fulld, curve=curve, sigmoid=sigmoid, planes=[0])
 
-    clip = color.Depth(clip, depth=32, sample=vs.FLOAT, **depth_args)
+    clip = Depth(clip, 32, **depth_args)
 
     EXPR = core.akarin.Expr if hasattr(core, 'akarin') else core.cranexpr.Expr if hasattr(core, 'cranexpr') else core.std.Expr
 

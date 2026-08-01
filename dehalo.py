@@ -4,8 +4,8 @@ from vapoursynth import core
 import math
 from typing import Union, Optional, Sequence
 
-from misc import MinBlur, median_blur
-from helpers import GetPlane, m4, scale_value, cround
+from misc import MinBlur, median_blur, mt_expand_multi, mt_inpand_multi
+from helpers import GetPlane, m4, scale_value, cround, Padding
 
 def DeHalo_alpha(
     clp: vs.VideoNode,
@@ -447,83 +447,6 @@ def AvsPrewitt(clip: vs.VideoNode, planes: Optional[Union[int, Sequence[int]]] =
         ],
         expr=['x y max z max a max' if i in planes else '' for i in plane_range],
     )
-
-def Padding(clip: vs.VideoNode, left: int = 0, right: int = 0, top: int = 0, bottom: int = 0) -> vs.VideoNode:
-    if not isinstance(clip, vs.VideoNode):
-        raise vs.Error('Padding: this is not a clip')
-
-    if left < 0 or right < 0 or top < 0 or bottom < 0:
-        raise vs.Error('Padding: border size to pad must not be negative')
-
-    width = clip.width + left + right
-    height = clip.height + top + bottom
-
-    return clip.resize.Point(width, height, src_left=-left, src_top=-top, src_width=width, src_height=height)
-    
-def mt_expand_multi(src: vs.VideoNode, mode: str = 'rectangle', planes: Optional[Union[int, Sequence[int]]] = None, sw: int = 1, sh: int = 1) -> vs.VideoNode:
-    '''
-    Calls std.Maximum multiple times in order to grow the mask from the desired width and height.
-
-    Parameters:
-        src: Clip to process.
-
-        mode: "rectangle", "ellipse" or "losange". Ellipses are actually combinations of rectangles and losanges and look more like octogons.
-            Losanges are truncated (not scaled) when sw and sh are not equal.
-
-        planes: Specifies which planes will be processed. Any unprocessed planes will be simply copied.
-
-        sw: Growing shape width. 0 is allowed.
-
-        sh: Growing shape height. 0 is allowed.
-    '''
-    if not isinstance(src, vs.VideoNode):
-        raise vs.Error('mt_expand_multi: this is not a clip')
-
-    if sw > 0 and sh > 0:
-        mode_m = [0, 1, 0, 1, 1, 0, 1, 0] if mode == 'losange' or (mode == 'ellipse' and (sw % 3) != 1) else [1, 1, 1, 1, 1, 1, 1, 1]
-    elif sw > 0:
-        mode_m = [0, 0, 0, 1, 1, 0, 0, 0]
-    elif sh > 0:
-        mode_m = [0, 1, 0, 0, 0, 0, 1, 0]
-    else:
-        mode_m = None
-
-    if mode_m is not None:
-        src = mt_expand_multi(src.std.Maximum(planes=planes, coordinates=mode_m), mode=mode, planes=planes, sw=sw - 1, sh=sh - 1)
-    return src
-
-
-def mt_inpand_multi(src: vs.VideoNode, mode: str = 'rectangle', planes: Optional[Union[int, Sequence[int]]] = None, sw: int = 1, sh: int = 1) -> vs.VideoNode:
-    '''
-    Calls std.Minimum multiple times in order to shrink the mask from the desired width and height.
-
-    Parameters:
-        src: Clip to process.
-
-        mode: "rectangle", "ellipse" or "losange". Ellipses are actually combinations of rectangles and losanges and look more like octogons.
-            Losanges are truncated (not scaled) when sw and sh are not equal.
-
-        planes: Specifies which planes will be processed. Any unprocessed planes will be simply copied.
-
-        sw: Shrinking shape width. 0 is allowed.
-
-        sh: Shrinking shape height. 0 is allowed.
-    '''
-    if not isinstance(src, vs.VideoNode):
-        raise vs.Error('mt_inpand_multi: this is not a clip')
-
-    if sw > 0 and sh > 0:
-        mode_m = [0, 1, 0, 1, 1, 0, 1, 0] if mode == 'losange' or (mode == 'ellipse' and (sw % 3) != 1) else [1, 1, 1, 1, 1, 1, 1, 1]
-    elif sw > 0:
-        mode_m = [0, 0, 0, 1, 1, 0, 0, 0]
-    elif sh > 0:
-        mode_m = [0, 1, 0, 0, 0, 0, 1, 0]
-    else:
-        mode_m = None
-
-    if mode_m is not None:
-        src = mt_inpand_multi(src.std.Minimum(planes=planes, coordinates=mode_m), mode=mode, planes=planes, sw=sw - 1, sh=sh - 1)
-    return src
     
 # Try to remove 2nd order halos
 # Added presets to classic FineDehalo2
