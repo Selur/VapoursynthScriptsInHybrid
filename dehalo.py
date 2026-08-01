@@ -45,7 +45,7 @@ def DeHalo_alpha(
 
     if clp.format.color_family != vs.GRAY:
         clp_orig = clp
-        clp = GetPlane(clip,0)
+        clp = GetPlane(clp,0)
     else:
         clp_orig = None
 
@@ -399,7 +399,7 @@ def YAHR(clp: vs.VideoNode, blur: int = 2, depth: int = 32) -> vs.VideoNode:
 
     if clp.format.color_family != vs.GRAY:
         clp_orig = clp
-        clp = GetPlane(clip,0)
+        clp = GetPlane(clp,0)
     else:
         clp_orig = None
 
@@ -763,7 +763,7 @@ def BlindDeHalo3(clp: vs.VideoNode, rx: float = 3.0, ry: float = 3.0, strength: 
 
     if not isGray:
         clp_src = clp
-        clp = GetPlane(clp)
+        clp = GetPlane(clp, 0)
 
     sharpness = min(sharpness, 1.58)
     tweaker = min(tweaker, 1.0)

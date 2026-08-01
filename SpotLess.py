@@ -1,6 +1,7 @@
 import vapoursynth as vs
 core = vs.core
 from misc import MV
+from helpers import GetPlane
 
 """
 SpotDelta (Spotless + Delta Restore) – VapourSynth Port
@@ -46,7 +47,6 @@ Usage
 """
 
 from typing import Optional
-
 
 # ---------------------------------------------------------------------------
 # Plugin selectors
