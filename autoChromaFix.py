@@ -103,8 +103,9 @@ class ChromaFixer:
     def calculate_alignment_diff(self, y, chroma):
         """Calculate alignment difference between luma and chroma edges"""
         # Edge detection
-        y_edges = core.std.Prewitt(y)
-        chroma_edges = core.std.Prewitt(chroma)
+        PREWITT = core.edgemasks.ExPrewitt if hasattr(core,"edgemasks") else core.std.Prewitt
+        y_edges = PREWITT(y)
+        chroma_edges = PREWITT(chroma)
         
         # Calculate absolute difference
         EXPR = core.akarin.Expr if hasattr(core, 'akarin') else core.cranexpr.Expr if hasattr(core, 'cranexpr') else core.std.Expr

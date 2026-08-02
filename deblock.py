@@ -197,7 +197,8 @@ def AutoDeblock(src: vs.VideoNode, edgevalue: int = 24, db1: int = 1, db2: int =
         if deblocky: planes.append(0)
         if deblockuv: planes.extend([1, 2])
 
-    orig = core.std.Prewitt(src)
+    PREWITT = core.edgemasks.ExPrewitt if hasattr(core,"edgemasks") else core.std.Prewitt
+    orig = PREWITT(src)
     EXPR = core.akarin.Expr if hasattr(core, 'akarin') else core.cranexpr.Expr if hasattr(core, 'cranexpr') else core.std.Expr
     orig = EXPR(orig, f"x {edgevalue} >= {maxvalue} x ?")
 

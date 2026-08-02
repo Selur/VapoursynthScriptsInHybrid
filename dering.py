@@ -182,7 +182,8 @@ def HQDeringmod(
     # Post-Process: Ringing Mask Generating
     if ringmask is None:
         expr = f'x {scale(mthr, bits)} < 0 x ?'
-        prewittm = EXPR(AvsPrewitt(input, planes=0), expr=expr if is_gray else [expr, ''])
+        PREWITT = core.edgemasks.ExPrewitt if hasattr(core,"edgemasks") else core.std.Prewitt
+        prewittm = EXPR(PREWITT(input, planes=0), expr=expr if is_gray else [expr, ''])
         fmask = _hysteresis_fn()(prewittm.zsmooth.Median(planes=0), prewittm, planes=0) if has_zsmooth else _hysteresis_fn()(prewittm.std.Median(planes=0), prewittm, planes=0)
         if mrad > 0:
             omask = mt_expand_multi(fmask, planes=0, sw=mrad, sh=mrad)
@@ -639,25 +640,3 @@ def AntiRingLR2UD(
     
     
 ################################################################################################################################
-
-def AvsPrewitt(clip: vs.VideoNode, planes: Optional[Union[int, Sequence[int]]] = None) -> vs.VideoNode:
-    if not isinstance(clip, vs.VideoNode):
-        raise vs.Error('AvsPrewitt: this is not a clip')
-
-    plane_range = range(clip.format.num_planes)
-
-    if planes is None:
-        planes = list(plane_range)
-    elif isinstance(planes, int):
-        planes = [planes]
-    EXPR = core.akarin.Expr if hasattr(core, 'akarin') else core.cranexpr.Expr if hasattr(core, 'cranexpr') else core.std.Expr
-    return EXPR(
-        [
-            clip.std.Convolution(matrix=[1, 1, 0, 1, 0, -1, 0, -1, -1], planes=planes, saturate=False),
-            clip.std.Convolution(matrix=[1, 1, 1, 0, 0, 0, -1, -1, -1], planes=planes, saturate=False),
-            clip.std.Convolution(matrix=[1, 0, -1, 1, 0, -1, 1, 0, -1], planes=planes, saturate=False),
-            clip.std.Convolution(matrix=[0, -1, -1, 1, 0, -1, 1, 1, 0], planes=planes, saturate=False),
-        ],
-        expr=['x y max z max a max' if i in planes else '' for i in plane_range],
-    )
-

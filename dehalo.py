@@ -140,8 +140,9 @@ def EdgeCleaner(c: vs.VideoNode, strength: int = 10, rep: bool = True, rmode: in
       else:
         main = core.rgvs.Repair(main, c, mode=rmode)
     EXPR = core.akarin.Expr if hasattr(core, 'akarin') else core.cranexpr.Expr if hasattr(core, 'cranexpr') else core.std.Expr
+    PREWITT = core.edgemasks.ExPrewitt if hasattr(core,"edgemasks") else core.std.Prewitt
     mask = (
-        EXPR(AvsPrewitt(c), expr=f'x {scale_value(4, 8, bits)} < 0 x {scale_value(32, 8, bits)} > {peak} x ? ?')
+        EXPR(PREWITT(c), expr=f'x {scale_value(4, 8, bits)} < 0 x {scale_value(32, 8, bits)} > {peak} x ? ?')
         .std.InvertMask()
         .std.Convolution(matrix=[1, 1, 1, 1, 1, 1, 1, 1, 1])
     )
@@ -156,7 +157,7 @@ def EdgeCleaner(c: vs.VideoNode, strength: int = 10, rep: bool = True, rmode: in
         RG = core.zsmooth.RemoveGrain if hasattr(core,'zsmooth') else core.rgvs.RemoveGrain
         clean = RG(c, mode=17)
         diff = core.std.MakeDiff(c, clean)
-        mask = EXPR(AvsPrewitt(RG(diff.std.Levels(min_in=scale_value(40, 8, bits), max_in=scale_value(168, 8, bits), gamma=0.35), mode=7)),
+        mask = EXPR(PREWITT(RG(diff.std.Levels(min_in=scale_value(40, 8, bits), max_in=scale_value(168, 8, bits), gamma=0.35), mode=7)),
             expr=f'x {scale_value(4, 8, bits)} < 0 x {scale_value(16, 8, bits)} > {peak} x ? ?'
         )
         final = core.std.MaskedMerge(final, c, mask)
@@ -207,7 +208,7 @@ def FineDehalo(
 
         excl: Activates an additional step (exclusion zones) to make sure that the main edges are really excluded.
 
-        mask: Basic edge mask to apply the threshold instead of applying to the mask created by AvsPrewitt.
+        mask: Basic edge mask to apply the threshold instead of applying to the mask created by Prewitt.
     '''
     if not isinstance(src, vs.VideoNode):
         raise vs.Error('FineDehalo: this is not a clip')
@@ -248,7 +249,8 @@ def FineDehalo(
     # Main edges #
 
     # Basic edge detection, thresholding will be applied later
-    edges = mask if mask is not None else AvsPrewitt(src)
+    PREWITT = core.edgemasks.ExPrewitt if hasattr(core,"edgemasks") else core.std.Prewitt
+    edges = mask if mask is not None else PREWITT(src)
 
     vszip = hasattr(core,'vszip')
     # Keeps only the sharpest edges (line edges)
@@ -426,27 +428,6 @@ def YAHR(clp: vs.VideoNode, blur: int = 2, depth: int = 32) -> vs.VideoNode:
     if clp_orig is not None:
         last = core.std.ShufflePlanes([last, clp_orig], planes=[0, 1, 2], colorfamily=clp_orig.format.color_family)
     return last
-
-def AvsPrewitt(clip: vs.VideoNode, planes: Optional[Union[int, Sequence[int]]] = None) -> vs.VideoNode:
-    if not isinstance(clip, vs.VideoNode):
-        raise vs.Error('AvsPrewitt: this is not a clip')
-
-    plane_range = range(clip.format.num_planes)
-
-    if planes is None:
-        planes = list(plane_range)
-    elif isinstance(planes, int):
-        planes = [planes]
-    EXPR = core.akarin.Expr if hasattr(core, 'akarin') else core.cranexpr.Expr if hasattr(core, 'cranexpr') else core.std.Expr
-    return EXPR(
-        [
-            clip.std.Convolution(matrix=[1, 1, 0, 1, 0, -1, 0, -1, -1], planes=planes, saturate=False),
-            clip.std.Convolution(matrix=[1, 1, 1, 0, 0, 0, -1, -1, -1], planes=planes, saturate=False),
-            clip.std.Convolution(matrix=[1, 0, -1, 1, 0, -1, 1, 0, -1], planes=planes, saturate=False),
-            clip.std.Convolution(matrix=[0, -1, -1, 1, 0, -1, 1, 1, 0], planes=planes, saturate=False),
-        ],
-        expr=['x y max z max a max' if i in planes else '' for i in plane_range],
-    )
     
 # Try to remove 2nd order halos
 # Added presets to classic FineDehalo2

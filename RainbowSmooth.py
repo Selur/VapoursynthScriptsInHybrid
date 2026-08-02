@@ -12,15 +12,18 @@ def RainbowSmooth(clip, radius=3, lthresh=0, hthresh=220, mask="original"):
             EXPR = core.akarin.Expr if hasattr(core, "akarin") else core.cranexpr.Expr if hasattr(core, "cranexpr") else core.std.Expr
             mask = EXPR(clips=[clip.std.Maximum(planes=0), clip.std.Minimum(planes=0)], expr=["x y - 90 > 255 x y - 255 90 / * ?", "", ""])
         elif mask == "prewitt":
-            mask = core.std.Prewitt(clip, planes=0)
+            PREWITT = core.edgemasks.ExPrewitt if hasattr(core,"edgemasks") else core.std.Prewitt
+            mask = PREWITT(clip, planes=0)
         elif mask == "sobel":
-            mask = core.std.Sobel(clip, planes=0)
+            SOBEL = core.edgemasks.Sobel if hasattr(core,"edgemasks") else core.std.Sobel
+            mask = SOBEL(clip, planes=0)
         elif mask == "tcanny":
             mask = core.tcanny.TCanny(clip)
         elif mask == "fast_sobel":
             mask = masked.fast_sobel(clip)
         elif mask == "kirsch":
-            mask = masked.kirsch(clip)
+            KIRSCH = core.edgemasks.Kirsch if hasattr(core,"edgemasks") else core.std.kirsch
+            mask = KIRSCH(clip)
         elif mask == "retinex_edgemask":
             mask = Depth(masked.retinex_edgemask(clip), clip.format.bits_per_sample)
 

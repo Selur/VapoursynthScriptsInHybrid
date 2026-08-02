@@ -509,7 +509,8 @@ def MCTemporalDenoise(i, radius=None, pfMode=3, sigma=None, twopass=None, useTTm
 
     ### EDGECLEANING
     if edgeclean:
-        mP = AvsPrewitt(GetPlane(smP, 0))
+        PREWITT = core.edgemasks.ExPrewitt if hasattr(core,"edgemasks") else core.std.Prewitt
+        mP = PREWITT(GetPlane(smP, 0))
         mS = mt_expand_multi(mP, sw=ECrad, sh=ECrad).std.Inflate()
         mD = EXPR([mS, mP.std.Inflate()], expr=[f'x y - {ECthr} <= 0 x y - ?']).std.Inflate().std.Convolution(matrix=[1, 1, 1, 1, 1, 1, 1, 1, 1])
         if useDFTTest2:
@@ -519,7 +520,8 @@ def MCTemporalDenoise(i, radius=None, pfMode=3, sigma=None, twopass=None, useTTm
     ### STABILIZING
     if stabilize:
         # mM = core.std.Merge(GetPlane(SAD_f1m, 0), GetPlane(SAD_b1m, 0)).std.Lut(function=lambda x: min(cround(x ** 1.6), peak))
-        mE = AvsPrewitt(GetPlane(smP, 0)).std.Lut(function=lambda x: min(cround(x ** 1.8), peak))
+        PREWITT = core.edgemasks.ExPrewitt if hasattr(core,"edgemasks") else core.std.Prewitt
+        mE = PREWITT(GetPlane(smP, 0)).std.Lut(function=lambda x: min(cround(x ** 1.8), peak))
         has_zsmooth = hasattr(core,'zsmooth');
         mE = mE.zsmooth.Median() if has_zsmooth else mE.std.Median()
         mE = mE.std.Inflate()
@@ -815,28 +817,6 @@ def EZDenoise(
         
     
 ########################### HELPER FUNCTIONS ##########################
-    
-def AvsPrewitt(clip: vs.VideoNode, planes: Optional[Union[int, Sequence[int]]] = None) -> vs.VideoNode:
-    if not isinstance(clip, vs.VideoNode):
-        raise vs.Error('AvsPrewitt: this is not a clip')
-
-    plane_range = range(clip.format.num_planes)
-
-    if planes is None:
-        planes = list(plane_range)
-    elif isinstance(planes, int):
-        planes = [planes]
-    EXPR = core.akarin.Expr if hasattr(core, 'akarin') else core.cranexpr.Expr if hasattr(core, 'cranexpr') else core.std.Expr
-    return EXPR(
-        [
-            clip.std.Convolution(matrix=[1, 1, 0, 1, 0, -1, 0, -1, -1], planes=planes, saturate=False),
-            clip.std.Convolution(matrix=[1, 1, 1, 0, 0, 0, -1, -1, -1], planes=planes, saturate=False),
-            clip.std.Convolution(matrix=[1, 0, -1, 1, 0, -1, 1, 0, -1], planes=planes, saturate=False),
-            clip.std.Convolution(matrix=[0, -1, -1, 1, 0, -1, 1, 1, 0], planes=planes, saturate=False),
-        ],
-        expr=['x y max z max a max' if i in planes else '' for i in plane_range],
-    )
-
     
 def Blur(clip: vs.VideoNode, amountH: float = 1.0, amountV: Optional[float] = None,
          planes: Optional[Union[int, Sequence[int]]] = None
