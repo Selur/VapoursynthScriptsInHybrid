@@ -364,12 +364,15 @@ def VHSClean(clip: vs.VideoNode, ths: int=100, blur_sharp=True) -> vs.VideoNode:
   
   
   sx = MV.Super(clip=clip, pel=pel, sharp=1,blksize=16,overlap=8)  
-  
+
   #phase 1. Soft denoising
-  f1x = MV.Analyse(super_=sx,delta=1,isb=False,truemotion=tm,blksize=16,blksizev=8,overlap=8,overlapv=4,search=srch,searchparam=srhp,badsad=badsad,dct=1,chroma=chroma,lambda_=lambda_)
-  b1x = MV.Analyse(super_=sx,delta=1,isb=True,truemotion=tm,blksize=16,blksizev=8,overlap=8,overlapv=4,search=srch,searchparam=srhp,badsad=badsad,dct=1,chroma=chroma,lambda_=lambda_)
-  f2x = MV.Analyse(super_=sx,delta=2,isb=False,truemotion=tm,blksize=16,blksizev=8,overlap=8,overlapv=4,search=srch,searchparam=srhp,badsad=badsad,dct=1,chroma=chroma,lambda_=lambda_)
-  b2x = MV.Analyse(super_=sx,delta=2,isb=True,truemotion=tm,blksize=16,blksizev=8,overlap=8,overlapv=4,search=srch,searchparam=srhp,badsad=badsad,dct=1,chroma=chroma,lambda_=lambda_)
+  if hasattr(MV, "AnalyseMany"):
+      b1x, f1x, b2x, f2x = MV.AnalyseMany(sx, radius=2, delta=1, truemotion=tm, blksize=[16, 8], overlap=[8, 4], search=srch, searchparam=srhp, badsad=badsad, satd=True, chroma=chroma, mvlambda=lambda_)
+  else:
+      f1x = MV.Analyse(super_=sx, delta=1, isb=False, truemotion=tm, blksize=16, blksizev=8, overlap=8, overlapv=4, search=srch, searchparam=srhp, badsad=badsad, dct=1, chroma=chroma, lambda_=lambda_)
+      b1x = MV.Analyse(super_=sx, delta=1, isb=True,  truemotion=tm, blksize=16, blksizev=8, overlap=8, overlapv=4, search=srch, searchparam=srhp, badsad=badsad, dct=1, chroma=chroma, lambda_=lambda_)
+      f2x = MV.Analyse(super_=sx, delta=2, isb=False, truemotion=tm, blksize=16, blksizev=8, overlap=8, overlapv=4, search=srch, searchparam=srhp, badsad=badsad, dct=1, chroma=chroma, lambda_=lambda_)
+      b2x = MV.Analyse(super_=sx, delta=2, isb=True,  truemotion=tm, blksize=16, blksizev=8, overlap=8, overlapv=4, search=srch, searchparam=srhp, badsad=badsad, dct=1, chroma=chroma, lambda_=lambda_)
   x2 = MV.Degrain2(clip,sx,b1x,f1x,b2x,f2x,thsad=ths,thsadc=thsc)
 
   #phase 2. Reinject denoised over original (like a sharpening using blurred version)
@@ -388,18 +391,21 @@ def VHSClean(clip: vs.VideoNode, ths: int=100, blur_sharp=True) -> vs.VideoNode:
   sx0 = MV.Super(clip=x0,pel=pel,sharp=1,levels=1,blksize=8,overlap=0)   # Only 1 Level required for sharpened Super (not MAnalyse-ing)
   sx1 = MV.Super(clip=x1,pel=pel,sharp=1,blksize=64,overlap=32)
 
-  f1x1 = MV.Analyse(super_=sx1,delta=1,isb=False,truemotion=tm,blksize=64,blksizev=64,overlap=32,overlapv=32,search=srch,searchparam=srhp,badsad=badsad,dct=0,chroma=chroma,lambda_=lambda_)
-  b1x1 = MV.Analyse(super_=sx1,delta=1,isb=True,truemotion=tm,blksize=64,blksizev=64,overlap=32,overlapv=32,search=srch,searchparam=srhp,badsad=badsad,dct=0,chroma=chroma,lambda_=lambda_)
-  f2x1 = MV.Analyse(super_=sx1,delta=2,isb=False,truemotion=tm,blksize=64,blksizev=64,overlap=32,overlapv=32,search=srch,searchparam=srhp,badsad=badsad,dct=0,chroma=chroma,lambda_=lambda_)
-  b2x1 = MV.Analyse(super_=sx1,delta=2,isb=True,truemotion=tm,blksize=64,blksizev=64,overlap=32,overlapv=32,search=srch,searchparam=srhp,badsad=badsad,dct=0,chroma=chroma,lambda_=lambda_)
-  f3x1 = MV.Analyse(super_=sx1,delta=3,isb=False,truemotion=tm,blksize=64,blksizev=64,overlap=32,overlapv=32,search=srch,searchparam=srhp,badsad=badsad,dct=0,chroma=chroma,lambda_=lambda_)
-  b3x1 = MV.Analyse(super_=sx1,delta=3,isb=True,truemotion=tm,blksize=64,blksizev=64,overlap=32,overlapv=32,search=srch,searchparam=srhp,badsad=badsad,dct=0,chroma=chroma,lambda_=lambda_)
-  f4x1 = MV.Analyse(super_=sx1,delta=4,isb=False,truemotion=tm,blksize=64,blksizev=64,overlap=32,overlapv=32,search=srch,searchparam=srhp,badsad=badsad,dct=0,chroma=chroma,lambda_=lambda_)
-  b4x1 = MV.Analyse(super_=sx1,delta=4,isb=True,truemotion=tm,blksize=64,blksizev=64,overlap=32,overlapv=32,search=srch,searchparam=srhp,badsad=badsad,dct=0,chroma=chroma,lambda_=lambda_)
-  f5x1 = MV.Analyse(super_=sx1,delta=5,isb=False,truemotion=tm,blksize=64,blksizev=64,overlap=32,overlapv=32,search=srch,searchparam=srhp,badsad=badsad,dct=0,chroma=chroma,lambda_=lambda_)
-  b5x1 = MV.Analyse(super_=sx1,delta=5,isb=True,truemotion=tm,blksize=64,blksizev=64,overlap=32,overlapv=32,search=srch,searchparam=srhp,badsad=badsad,dct=0,chroma=chroma,lambda_=lambda_)
-  f6x1 = MV.Analyse(super_=sx1,delta=6,isb=False,truemotion=tm,blksize=64,blksizev=64,overlap=32,overlapv=32,search=srch,searchparam=srhp,badsad=badsad,dct=0,chroma=chroma,lambda_=lambda_)
-  b6x1 = MV.Analyse(super_=sx1,delta=6,isb=True,truemotion=tm,blksize=64,blksizev=64,overlap=32,overlapv=32,search=srch,searchparam=srhp,badsad=badsad,dct=0,chroma=chroma,lambda_=lambda_)
+  if hasattr(MV, "AnalyseMany"):
+      b1x1, f1x1, b2x1, f2x1, b3x1, f3x1, b4x1, f4x1, b5x1, f5x1, b6x1, f6x1 = MV.AnalyseMany(sx1, radius=6, delta=1, truemotion=tm, blksize=64, overlap=32, search=srch, searchparam=srhp, badsad=badsad, satd=False, chroma=chroma, mvlambda=lambda_)
+  else:
+      f1x1 = MV.Analyse(super_=sx1, delta=1, isb=False, truemotion=tm, blksize=64, blksizev=64, overlap=32, overlapv=32, search=srch, searchparam=srhp, badsad=badsad, dct=0, chroma=chroma, lambda_=lambda_)
+      b1x1 = MV.Analyse(super_=sx1, delta=1, isb=True,  truemotion=tm, blksize=64, blksizev=64, overlap=32, overlapv=32, search=srch, searchparam=srhp, badsad=badsad, dct=0, chroma=chroma, lambda_=lambda_)
+      f2x1 = MV.Analyse(super_=sx1, delta=2, isb=False, truemotion=tm, blksize=64, blksizev=64, overlap=32, overlapv=32, search=srch, searchparam=srhp, badsad=badsad, dct=0, chroma=chroma, lambda_=lambda_)
+      b2x1 = MV.Analyse(super_=sx1, delta=2, isb=True,  truemotion=tm, blksize=64, blksizev=64, overlap=32, overlapv=32, search=srch, searchparam=srhp, badsad=badsad, dct=0, chroma=chroma, lambda_=lambda_)
+      f3x1 = MV.Analyse(super_=sx1, delta=3, isb=False, truemotion=tm, blksize=64, blksizev=64, overlap=32, overlapv=32, search=srch, searchparam=srhp, badsad=badsad, dct=0, chroma=chroma, lambda_=lambda_)
+      b3x1 = MV.Analyse(super_=sx1, delta=3, isb=True,  truemotion=tm, blksize=64, blksizev=64, overlap=32, overlapv=32, search=srch, searchparam=srhp, badsad=badsad, dct=0, chroma=chroma, lambda_=lambda_)
+      f4x1 = MV.Analyse(super_=sx1, delta=4, isb=False, truemotion=tm, blksize=64, blksizev=64, overlap=32, overlapv=32, search=srch, searchparam=srhp, badsad=badsad, dct=0, chroma=chroma, lambda_=lambda_)
+      b4x1 = MV.Analyse(super_=sx1, delta=4, isb=True,  truemotion=tm, blksize=64, blksizev=64, overlap=32, overlapv=32, search=srch, searchparam=srhp, badsad=badsad, dct=0, chroma=chroma, lambda_=lambda_)
+      f5x1 = MV.Analyse(super_=sx1, delta=5, isb=False, truemotion=tm, blksize=64, blksizev=64, overlap=32, overlapv=32, search=srch, searchparam=srhp, badsad=badsad, dct=0, chroma=chroma, lambda_=lambda_)
+      b5x1 = MV.Analyse(super_=sx1, delta=5, isb=True,  truemotion=tm, blksize=64, blksizev=64, overlap=32, overlapv=32, search=srch, searchparam=srhp, badsad=badsad, dct=0, chroma=chroma, lambda_=lambda_)
+      f6x1 = MV.Analyse(super_=sx1, delta=6, isb=False, truemotion=tm, blksize=64, blksizev=64, overlap=32, overlapv=32, search=srch, searchparam=srhp, badsad=badsad, dct=0, chroma=chroma, lambda_=lambda_)
+      b6x1 = MV.Analyse(super_=sx1, delta=6, isb=True,  truemotion=tm, blksize=64, blksizev=64, overlap=32, overlapv=32, search=srch, searchparam=srhp, badsad=badsad, dct=0, chroma=chroma, lambda_=lambda_)
 
   mv123 = MV.Degrain3(x1, sx0, b1x1,f1x1,b2x1,f2x1,b3x1,f3x1,thsad=ths1,thsadc=thsc1)
   mv456 = MV.Degrain3(x1, sx0, b4x1,f4x1,b5x1,f5x1,b6x1,f6x1,thsad=ths1,thsadc=thsc1)
