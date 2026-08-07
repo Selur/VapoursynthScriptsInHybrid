@@ -756,7 +756,6 @@ def mcdegrainsharp(clip, frames=2, bblur=0.3, csharp=0.3, bsrch=True, thsad=400,
     http://forum.doom9.org/showthread.php?t=161594
     Also based on DiDee observations in this thread:
     http://forum.doom9.org/showthread.php?t=161580
-
     "Denoise with MDegrainX, do slight sharpening where motionmatch is good,
     do slight blurring where motionmatch is bad"
 
@@ -777,6 +776,7 @@ def mcdegrainsharp(clip, frames=2, bblur=0.3, csharp=0.3, bsrch=True, thsad=400,
         plane (int): Sets processed color plane:
             0 - luma, 1 - chroma U, 2 - chroma V, 3 - both chromas, 4 - all.
     """
+
     core = vs.core
 
     if bblur > 1.58 or bblur < 0.0:
@@ -794,12 +794,12 @@ def mcdegrainsharp(clip, frames=2, bblur=0.3, csharp=0.3, bsrch=True, thsad=400,
         planes = [0, 1, 2]
     else:
         planes = plane
-    
-    if hasattr(core,'tcanny'):
-      c2 = core.tcanny.TCanny(clip, sigma=bblur, mode=-1, planes=planes)
+
+    if hasattr(core, 'tcanny'):
+        c2 = core.tcanny.TCanny(clip, sigma=bblur, mode=-1, planes=planes)
     else:
-      radius = max(1, round(bblur * 1.5))
-      c2 = _boxblur_fn()(clip, planes=planes, hradius=radius, hpasses=3, vradius=radius, vpasses=3)
+        radius = max(1, round(bblur * 1.5))
+        c2 = _boxblur_fn()(clip, planes=planes, hradius=radius, hpasses=3, vradius=radius, vpasses=3)
 
     if bsrch is True:
         super_a = MV.Super(c2, pel=2, sharp=1, overlap=blksize//2, blksize=blksize)
@@ -808,33 +808,43 @@ def mcdegrainsharp(clip, frames=2, bblur=0.3, csharp=0.3, bsrch=True, thsad=400,
 
     super_rend = MV.Super(_sharpen(clip, csharp, planes=planes), pel=2, sharp=1, levels=1, overlap=blksize//2, blksize=blksize)
 
-    mvbw3 = MV.Analyse(super_a, isb=True, delta=3,
-                            overlap=blksize//2, blksize=blksize)
-    mvbw2 = MV.Analyse(super_a, isb=True, delta=2,
-                            overlap=blksize//2, blksize=blksize)
-    mvbw1 = MV.Analyse(super_a, isb=True, delta=1,
-                            overlap=blksize//2, blksize=blksize)
-    mvfw1 = MV.Analyse(super_a, isb=False, delta=1,
-                            overlap=blksize//2, blksize=blksize)
-    mvfw2 = MV.Analyse(super_a, isb=False, delta=2,
-                            overlap=blksize//2, blksize=blksize)
-    mvfw3 = MV.Analyse(super_a, isb=False, delta=3,
-                            overlap=blksize//2, blksize=blksize)
+    # Motion analysis
+    if hasattr(MV, "AnalyseMany"):
+
+        if frames == 1:
+            mvbw1, mvfw1 = MV.AnalyseMany(super_a, radius=1, delta=1, overlap=blksize//2, blksize=blksize)
+
+        elif frames == 2:
+            mvbw1, mvfw1, mvbw2, mvfw2 = MV.AnalyseMany(super_a, radius=2, delta=1, overlap=blksize//2, blksize=blksize)
+
+        elif frames == 3:
+            mvbw1, mvfw1, mvbw2, mvfw2, mvbw3, mvfw3 = MV.AnalyseMany(super_a, radius=3, delta=1, overlap=blksize//2, blksize=blksize)
+
+        else:
+            raise ValueError('"frames" must be 1, 2 or 3.')
+
+    else:
+        
+        mvbw1 = MV.Analyse(super_a, isb=True, delta=1, overlap=blksize//2, blksize=blksize)
+        mvfw1 = MV.Analyse(super_a, isb=False, delta=1, overlap=blksize//2, blksize=blksize)
+
+        if frames >= 2:
+            mvbw2 = MV.Analyse(super_a, isb=True, delta=2, overlap=blksize//2, blksize=blksize)
+            mvfw2 = MV.Analyse(super_a, isb=False, delta=2, overlap=blksize//2, blksize=blksize)
+
+        if frames == 3:
+            mvbw3 = MV.Analyse(super_a, isb=True, delta=3, overlap=blksize//2, blksize=blksize)
+            mvfw3 = MV.Analyse(super_a, isb=False, delta=3, overlap=blksize//2, blksize=blksize)
 
     if frames == 1:
-        last = MV.Degrain1(clip=c2, super=super_rend,
-                                mvbw=mvbw1, mvfw=mvfw1, thsad=thsad,
-                                plane=plane)
+        last = MV.Degrain1(clip=c2, super=super_rend, mvbw=mvbw1, mvfw=mvfw1, thsad=thsad, plane=plane)
+
     elif frames == 2:
-        last = MV.Degrain2(clip=c2, super=super_rend,
-                                mvbw=mvbw1, mvfw=mvfw1,
-                                mvbw2=mvbw2, mvfw2=mvfw2,
-                                thsad=thsad, plane=plane)
+        last = MV.Degrain2(clip=c2, super=super_rend, mvbw=mvbw1, mvfw=mvfw1, mvbw2=mvbw2, mvfw2=mvfw2, thsad=thsad, plane=plane)
+
     elif frames == 3:
-        last = MV.Degrain3(clip=c2, super=super_rend,
-                                mvbw=mvbw1, mvfw=mvfw1, mvbw2=mvbw2,
-                                mvfw2=mvfw2, mvbw3=mvbw3, mvfw3=mvfw3,
-                                thsad=thsad, plane=plane)
+        last = MV.Degrain3(clip=c2, super=super_rend, mvbw=mvbw1, mvfw=mvfw1, mvbw2=mvbw2, mvfw2=mvfw2, mvbw3=mvbw3, mvfw3=mvfw3, thsad=thsad, plane=plane)
+
     else:
         raise ValueError('"frames" must be 1, 2 or 3.')
 
