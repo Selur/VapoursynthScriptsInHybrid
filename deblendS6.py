@@ -104,6 +104,69 @@ denoise     str|None    Purely spatial pre-denoise applied to dclip before
                             luma-only after the thumbnail downscale).
                             Good for: heavy film grain, analog noise where
                             RemoveGrain is not strong enough.
+thresh      int         Detection threshold, as srestore's 'thresh'.
+                        Default 16 (the AviSynth default); internally used
+                        as abs(thresh) + 0.01, so the sign is irrelevant.
+
+                        LOWER  -> more sensitive, more frames treated as
+                                  blends/motion.
+                        HIGHER -> more conservative.
+
+                        Worth lowering for animation.  The threshold is
+                        compared against three metrics, and two of them
+                        (blend/clear from bclp, diff from dclp) are built
+                        from PlaneStatsMin/Max, so a small moving region
+                        still registers.  The motion metric is not: it is
+                        PlaneStatsDiff, a MEAN over the whole frame.  On
+                        cel animation most of the frame is a static flat
+                        area, which drags that mean down, so gates like
+                        'mb > thr' rarely fire even when the blending is
+                        obvious.  Live action with full-frame motion does
+                        not have this bias.
+
+                        Never derive this from the clip automatically:
+                        black or static frames at the start corrupt any
+                        such estimate and produce a threshold far below
+                        16, which flags nearly everything as a blend.
+bsize       int         Edge length of the square detection thumbnails
+                        that bclp and dclp are scaled down to.  Default
+                        32, matching AviSynth srestore.
+
+                        This is a CALIBRATION value, not a quality dial.
+                        It scales b_v, c_v and d_v (which are min/max
+                        over the thumbnail) but NOT the motion metric
+                        m_v, which is measured on the intermediate clip.
+                        Raising it therefore shifts the balance between
+                        the metrics, and since the decisions mix absolute
+                        comparisons against thresh with ratio terms
+                        between the metrics, the net effect is NOT
+                        monotonic.  Measured across several clips, blend
+                        detection rises with bsize on some segments,
+                        peaks at 48 on others, and falls on others.
+                        Higher is not "more sensitive".
+
+                        There IS a structural argument for touching it:
+                        the intermediate detection clip scales with the
+                        source resolution while this thumbnail does not,
+                        so a 1080p source averages roughly 5x more pixels
+                        into each thumbnail pixel than NTSC DVD does, and
+                        2160p about 19x, while thresh stays absolute.  At
+                        the metric level, 1080p with bsize=48 does line up
+                        with 480p at bsize=32.
+
+                        That does NOT translate into a usable rule of
+                        thumb.  Measured over 28 clips of mixed blended
+                        material, going 32 -> 48 -> 64 lowered the number
+                        of detected blends on 11 clips, raised it on 4,
+                        and was non-monotonic on 13 -- including the one
+                        1080p clip, which fell (32 -> 22 -> 19).  So do
+                        not raise this "because the source is HD".
+
+                        Treat it as an experimental knob: 32 is the
+                        srestore reference and the safe default, and 48
+                        or 64 are worth A/B-ing on your own material when
+                        32 gives an unsatisfying result.  There is no
+                        substitute for looking at the output.
 nlmeans_h   float       Strength (h) for NLMeans denoising. Default 7.0.
                         Increase for heavier grain (10-16), decrease for
                         light noise (3-5).  Only used when denoise="NLMeans".
@@ -156,9 +219,13 @@ import vapoursynth as vs
 
 core = vs.core
 
-# Fixed threshold matching AviSynth srestore default (thresh=16).
-# NOT auto-estimated: black/static frames at the start would corrupt any
-# bootstrap estimate and produce thr << 16, causing massive over-detection.
+# Default detection threshold, matching AviSynth srestore's thresh=16.
+# Overridable per call via the 'thresh' parameter, exactly as in srestore.
+#
+# It must NEVER be auto-estimated from the clip: black or static frames at
+# the start corrupt any bootstrap measurement and yield thr << 16, which
+# then flags almost everything as a blend.  A value the caller supplies is
+# a different thing entirely and carries none of that risk.
 _THR = 16.01
 
 _MAGIC_OFFSET = 1.0 / 64.0
@@ -568,6 +635,7 @@ class Engine:
         numr:        int,
         denm:        int,
         mode:        int,
+        thr:         float = _THR,
     ) -> None:
         self._bclp  = bclp_s
         self._dclp  = dclp_s
@@ -576,6 +644,7 @@ class Engine:
         self._numr  = numr
         self._denm  = denm
         self._mode  = mode
+        self._thr   = thr
 
         self._nb_max = bclp_s.num_frames  - 1
         self._nd_max = dclp_s.num_frames  - 1
@@ -594,7 +663,7 @@ class Engine:
 
     @property
     def thr(self) -> float:
-        return _THR
+        return self._thr
 
     def get(self, n: int) -> tuple[int, bool, bool]:
         # Fast path: already decided.  _done is only ever raised after
@@ -609,7 +678,7 @@ class Engine:
                 s = self._fetch(k)
                 self._decisions[k] = _compute_decision(
                     k, s, self._state,
-                    self._frfac, self._numr, self._denm, _THR, self._mode,
+                    self._frfac, self._numr, self._denm, self._thr, self._mode,
                 )
                 self._done = k + 1
 
@@ -761,6 +830,8 @@ def deblendS6(
     of_blksize:           int                    = 16,
     denoise:              Optional[str]           = None,
     nlmeans_h:            float                  = 7.0,
+    thresh:               int                    = 16,
+    bsize:                int                    = 32,
 ) -> vs.VideoNode:
     if clip.format is None or clip.format.color_family != vs.YUV:
         raise vs.Error("deblendS6: input must be a YUV clip with fixed format")
@@ -818,7 +889,10 @@ def deblendS6(
 
     # _build_detection_clips returns luma post-trim(2), matching AviSynth's
     # det after .trim(2,0); used for bclp / dclp / dc_motion.
-    bclp, dclp_clip, dclip_small = _build_detection_clips(dclip, mode=mode)
+    if bsize < 8 or bsize > 256:
+        raise vs.Error("deblendS6: 'bsize' must be between 8 and 256")
+
+    bclp, dclp_clip, dclip_small = _build_detection_clips(dclip, bsize=bsize, mode=mode)
 
     bclp_s = bclp.std.PlaneStats()
     dclp_s = dclp_clip.std.PlaneStats()
@@ -839,6 +913,9 @@ def deblendS6(
         numr        = numr,
         denm        = denm,
         mode        = mode,
+        # Same derivation as srestore: thr = abs(thresh) + 0.01.  The
+        # abs() makes the sign deliberately irrelevant.
+        thr         = abs(thresh) + 0.01,
     )
 
     if abs(mode) >= 2:
@@ -894,7 +971,7 @@ def deblendS6(
             fout.props["DeblendTarget"]  = target
             fout.props["DeblendUseMec"]  = int(use_mec)
             fout.props["DeblendIsBlend"] = int(is_blend)
-            fout.props["DeblendThr"]     = _THR
+            fout.props["DeblendThr"]     = engine.thr
             return fout
         output = output.std.ModifyFrame(output, _stamp)
 
@@ -907,7 +984,7 @@ def deblendS6(
                 f"target: {target}  (offset {target - n:+d})",
                 f"blend:  {'yes' if is_blend else 'no'}",
                 f"mec:    {'yes' if use_mec else 'no'}",
-                f"thr:    {_THR:.2f}",
+                f"thr:    {engine.thr:.2f}",
             ]
             text = "\n".join(lines)
             return core.text.Text(pre_overlay[n], text, alignment=7)
