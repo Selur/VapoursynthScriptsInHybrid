@@ -27,7 +27,7 @@ def Stab(clp, range=5, dxmax=8, dymax=8, mirror=5):
         mdata = core.mvu.DepanEstimate(inter, trust=0, dxmax=dxmax, dymax=dymax)
         return core.mvu.DepanCompensate(inter, data=mdata, offset=-1, mirror=mirror)[::2]
 
-    mdata = core.mv.DePanEstimate(inter, range=range, trust=0, dxmax=dxmax, dymax=dymax)
-    return core.mv.DePan(inter, data=mdata, offset=-1, mirror=mirror)[::2]
+    mdata = core.mv.DepanEstimate(inter, range=range, trust=0, dxmax=dxmax, dymax=dymax)
+    return core.mv.DepanCompensate(inter, data=mdata, offset=-1, mirror=mirror)[::2]
 
     
