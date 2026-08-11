@@ -18,7 +18,16 @@ def Stab(clp, range=5, dxmax=8, dymax=8, mirror=5):
         temp2 = misc.AverageFrames(clp, weights=[1] * 3)
         inter = core.std.Interleave([core.rgvs.Repair(temp, temp2, 1), clp])
 
-    mdata = core.depan.DePanEstimate(inter, range=range, trust=0, dxmax=dxmax, dymax=dymax)
-    return core.depan.DePan(inter, data=mdata, offset=-1, mirror=mirror)[::2]
+    # mvutensils (https://github.com/myrsloik/mvutensils) carries the Depan family over from
+    # mvtools largely unchanged: DePanEstimate -> DepanEstimate, DePan -> DepanCompensate, same
+    # parameter meanings. It has no `range`: in depan that only widened the neighbourhood of
+    # frames estimated (and cached) per call, while frame n's own dx/dy still came solely from
+    # the n-1 <-> n correlation, so dropping it does not change the estimate.
+    if hasattr(core, 'mvu'):
+        mdata = core.mvu.DepanEstimate(inter, trust=0, dxmax=dxmax, dymax=dymax)
+        return core.mvu.DepanCompensate(inter, data=mdata, offset=-1, mirror=mirror)[::2]
+
+    mdata = core.mv.DePanEstimate(inter, range=range, trust=0, dxmax=dxmax, dymax=dymax)
+    return core.mv.DePan(inter, data=mdata, offset=-1, mirror=mirror)[::2]
 
     
