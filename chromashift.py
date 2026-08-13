@@ -11,8 +11,8 @@ def ChromaShift(clip, shift_left=0, shift_right=0, shift_top=0, shift_bottom=0):
   chroma_u = core.std.CropRel(chroma_u, right=shift_right)
   chroma_u = core.std.AddBorders(chroma_u, left=shift_right)
   chroma_u = core.std.CropRel(chroma_u, top=shift_top)
-  chroma_u = core.std.AddBorders(chroma_u, top=shift_top)
-  chroma_u = core.std.CropRel(chroma_u, top=shift_bottom)
+  chroma_u = core.std.AddBorders(chroma_u, bottom=shift_top)
+  chroma_u = core.std.CropRel(chroma_u, bottom=shift_bottom)
   chroma_u = core.std.AddBorders(chroma_u, top=shift_bottom)
   
 
@@ -23,8 +23,8 @@ def ChromaShift(clip, shift_left=0, shift_right=0, shift_top=0, shift_bottom=0):
   chroma_v = core.std.CropRel(chroma_v, right=shift_right)
   chroma_v = core.std.AddBorders(chroma_v, left=shift_right)
   chroma_v = core.std.CropRel(chroma_v, top=shift_top)
-  chroma_v = core.std.AddBorders(chroma_v, top=shift_top)
-  chroma_v = core.std.CropRel(chroma_v, top=shift_bottom)
+  chroma_v = core.std.AddBorders(chroma_v, bottom=shift_top)
+  chroma_v = core.std.CropRel(chroma_v, bottom=shift_bottom)
   chroma_v = core.std.AddBorders(chroma_v, top=shift_bottom)
   
   
