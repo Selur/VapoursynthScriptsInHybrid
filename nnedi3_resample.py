@@ -5,7 +5,7 @@ import math
 import functools
 from typing import Union, Optional, Callable, Dict, Any, Sequence
 
-from helpers import Depth, BoxFilter
+from helpers import Depth, BoxFilter, NNEDI3
 
 # --- shim to preserve color.Depth's range/dither defaults on top of helpers.Depth ---
 def _range(full):
@@ -449,31 +449,12 @@ def nnedi3_dh(input, field=1, nsize=None, nns=None, qual=None, etype=None, pscrn
     nnedi3_args1 = dict(nsize=nsize, nns=nns, qual=qual, etype=etype, pscrn=pscrn)
     nnedi3_args2 = dict(opt=opt, int16_prescreener=int16_prescreener, int16_predictor=int16_predictor, exp=exp)
 
-    # check nnedi3 plugin installation
-    has_znedi3 = hasattr(core, 'znedi3')
-    has_nnedi3 = hasattr(core, 'nnedi3')
-    has_nnedi3cl = hasattr(core, 'nnedi3cl') or hasattr(core, 'sneedif')
-    if not (has_znedi3 or has_nnedi3 or has_nnedi3cl):
-        raise ValueError(f'nnedi3_dh: znedi3, nnedi3, nnedi3cl or sneedif installation not found.')
-
-    # select default plugin
-    if mode is None:
-        mode = 'znedi3' if has_znedi3 else 'nnedi3' if has_nnedi3 else 'nnedi3cl' if has_nnedi3cl else None
-
-    # nnedi3 interpolation to double height
-    if mode == 'znedi3':
-        res = core.znedi3.nnedi3(input, field=field, dh=True, **nnedi3_args1, **nnedi3_args2)
-    elif mode == 'nnedi3':
-        res = core.nnedi3.nnedi3(input, field=field, dh=True, **nnedi3_args1, **nnedi3_args2)
-    elif mode == 'nnedi3cl':
-        if hasattr(core, 'sneedif'):
-          res = core.sneedif.NNEDI3(input, field=field, dh=True, **nnedi3_args1, device=device)
-        elif hasattr(core, 'nnedi3vk'):
-          res = core.nnedi3vk.NNEDI3(input, field=field, dh=True, **nnedi3_args1, device_index=device)
-        else:
-          res = core.nnedi3cl.NNEDI3CL(input, field=field, dh=True, **nnedi3_args1, device=device)
-    else:
+    # mode only says whether a GPU implementation is wanted; NNEDI3() picks whatever is loaded.
+    if mode is not None and mode not in ('znedi3', 'nnedi3', 'nnedi3cl'):
         raise ValueError(f'nnedi3_dh: Unsupported mode={mode}, should be znedi3, nnedi3 or nnedi3cl.')
+    gpu = True if mode == 'nnedi3cl' else False if mode in ('znedi3', 'nnedi3') else None
+
+    res = NNEDI3(input, field=field, dh=True, gpu=gpu, device=device, **nnedi3_args1, **nnedi3_args2)
 
     return res
 

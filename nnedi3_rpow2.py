@@ -1,5 +1,7 @@
 import vapoursynth as vs
 
+from helpers import NNEDI3
+
 
 def nnedi3_rpow2(clip, rfactor=2, width=None, height=None, correct_shift=True,
                  kernel="spline36", nsize=0, nns=3, qual=None, etype=None, pscrn=None,
@@ -65,7 +67,7 @@ def nnedi3_rpow2(clip, rfactor=2, width=None, height=None, correct_shift=True,
 
     for i in range(times):
         field = 1 if i == 0 else 0
-        last = core.nnedi3.nnedi3(last, field=field, **pkdnnedi)
+        last = NNEDI3(last, field=field, **pkdnnedi)
         last = core.std.Transpose(last)
         if last.format.subsampling_w:
             # Apparently always using field=1 for the horizontal pass somehow
@@ -74,7 +76,7 @@ def nnedi3_rpow2(clip, rfactor=2, width=None, height=None, correct_shift=True,
             hshift = hshift*2 - 0.5
         else:
             hshift = -0.5
-        last = core.nnedi3.nnedi3(last, field=field, **pkdnnedi)
+        last = NNEDI3(last, field=field, **pkdnnedi)
         last = core.std.Transpose(last)
 
     # Correct vertical shift of the chroma.

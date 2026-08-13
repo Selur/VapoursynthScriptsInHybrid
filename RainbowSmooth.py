@@ -2,7 +2,7 @@ import vapoursynth as vs
 from vapoursynth import core
 from typing import List
 
-from helpers import GetPlane
+from helpers import GetPlane, NNEDI3
 import masked
 
 
@@ -59,12 +59,7 @@ def derainbow(clip: vs.VideoNode) -> vs.VideoNode:
 
     derainbow = RainbowSmooth(clip, mask=rainbowmask, radius=4, lthresh=0, hthresh=90)
 
-    if hasattr(core, "sneedif"):
-        nnedi3 = core.sneedif.NNEDI3(derainbow, 2, nsize=4, nns=0, planes=[1, 2])
-    elif hasattr(core, "nnedi3vk"):
-        nnedi3 = core.nnedi3vk.NNEDI3(derainbow, 2, nsize=4, nns=0, planes=[1, 2])
-    else:
-        nnedi3 = core.nnedi3cl.NNEDI3CL(derainbow, 2, nsize=4, nns=0, planes=[1, 2])
+    nnedi3 = NNEDI3(derainbow, field=2, nsize=4, nns=0, planes=[1, 2])
 
     nnedi3_c = core.artyfox.Mean([nnedi3[::2], nnedi3[1::2]]) if hasattr(core, "artyfox") else core.average.Mean([nnedi3[::2], nnedi3[1::2]])
 

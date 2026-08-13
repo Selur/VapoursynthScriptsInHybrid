@@ -6,6 +6,8 @@ import math
 import sys
 import json
 
+from helpers import NNEDI3 as _NNEDI3
+
 fmtc_args                      = dict(fulls=True, fulld=True)
 msuper_args                    = dict(hpad=0, vpad=0, sharp=2, levels=0)
 manalyze_args                  = dict(search=3, truemotion=False, trymany=True, levels=0, badrange=-24, divide=0, dct=0)
@@ -46,14 +48,7 @@ class get_core:
               self.KNLMeansCL = self.core.knlm.KNLMeansCL
 
           # --- NNEDI ---
-          if hasattr(core, 'sneedif'):
-              self.NNEDI = self.core.sneedif.NNEDI3
-          if hasattr(self.core, 'nnedi3cl'):
-              self.NNEDI = self.core.nnedi3cl.NNEDI3CL
-          elif hasattr(self.core, 'znedi3'):
-              self.NNEDI = self.core.znedi3.nnedi3
-          else:
-              self.NNEDI = self.core.nnedi3.nnedi3
+          self.NNEDI = _NNEDI3
               
           # --- SVPFlow plugins ---
           if hasattr(self.core, "svp1"):

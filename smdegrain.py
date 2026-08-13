@@ -6,7 +6,7 @@ from typing import Sequence, Union, Optional
 
 import math
 
-from helpers import scale, Padding, DitherLumaRebuild
+from helpers import scale, Padding, DitherLumaRebuild, DFTTest, GetPlane
 from misc import MV, MinBlur
 from sharpen import LSFmod, ContraSharpening
 from nnedi3_resample import nnedi3_resample
@@ -141,14 +141,9 @@ def SMDegrain(input, tr=2, thSAD=300, thSADC=None, RefineMotion=False, contrasha
             pref = inputP
         elif prefilter == 3:
             expr = 'x {i} < {peak} x {j} > 0 {peak} x {i} - {peak} {j} {i} - / * - ? ?'.format(i=scale(16, peak), j=scale(75, peak), peak=peak)
-            if hasattr(core,'dfttest2_nvrtc'):
-              import dfttest2
-              DFTTest = dfttest2.DFTTest
-              filtered = DFTTest(inputP, tbsize=1, slocation=[0.0,4.0, 0.2,9.0, 1.0,15.0], planes=planes, backend=dfttest2.Backend.NVRTC)
-            else:
-              DFTTest = core.dfttest.DFTTest
-              filtered = DFTTest(inputP, tbsize=1, slocation=[0.0,4.0, 0.2,9.0, 1.0,15.0], planes=planes)
-            pref = core.std.MaskedMerge(filtered, inputP, EXPR(GetPlane(inputP, 0), expr=[expr]), planes=planes)            
+            # Takes the first DFTTest implementation that is loaded, GPU ones first.
+            filtered = DFTTest(inputP, tbsize=1, slocation=[0.0,4.0, 0.2,9.0, 1.0,15.0], planes=planes)
+            pref = core.std.MaskedMerge(filtered, inputP, EXPR(GetPlane(inputP, 0), expr=[expr]), planes=planes)
         elif prefilter >= 4:
             pref = KNLMeansCL(inputP, d=1, a=1, h=7)
         else:

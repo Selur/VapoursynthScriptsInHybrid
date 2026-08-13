@@ -3,6 +3,7 @@ from functools import partial
 from typing import Optional, Union, Sequence
 
 from misc import MV, mt_clamp
+from helpers import NNEDI3
 
 core = vs.core
 
@@ -15,15 +16,8 @@ def CQTGMC(clip: vs.VideoNode, Sharpness: float=0.25, thSAD1: int=192, thSAD2: i
     
     # spatial deinterlace
     X = 3 if tff else 2
-    if openCL:
-        if hasattr(core, 'sneedif'):
-          spatial = core.sneedif.NNEDI3(clip=padded, field=X, qual=2)
-        elif hasattr(core, 'sneedif'):
-          spatial = core.nnedi3vk.NNEDI3(clip=padded, field=X, qual=2)
-        else:
-          spatial = core.nnedi3cl.NNEDI3CL(clip=padded, field=X, qual=2)
-    else:
-        spatial = core.znedi3.nnedi3(clip=padded, field=X, qual=2)
+    # openCL only reorders the search - NNEDI3 takes whichever implementation is loaded.
+    spatial = NNEDI3(clip=padded, field=X, qual=2, gpu=openCL)
 
     # temporal deint
     bobbed = core.bwdif.Bwdif(clip=padded, field=X, edeint=spatial)

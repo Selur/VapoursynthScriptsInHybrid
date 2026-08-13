@@ -6,7 +6,7 @@ import math
 from typing import Optional, Union, Sequence, TypeVar
 
 from misc import MinBlur, median_blur, mt_expand_multi, mt_inflate_multi
-from helpers import scale
+from helpers import scale, DFTTest
 from color import LimitFilter
 
 def _hysteresis_fn():
@@ -124,15 +124,9 @@ def HQDeringmod(
     # Kernel: Smoothing
     if smoothed is None:
         if nrmode <= 0:
-          useDFTTest2 = false
-          # NVRTC is faster than cuFFT but only supports `sbsize == 16`
-          if cuda and sbsize == 16:
-            useDFTTest2 = hasattr(core,'dfttest2_nvrtc')            
-          if useDFTTest2:
-              import dfttest2
-              smoothed = dfttest2.DFTTest(input, sbsize=sbsize, sosize=sosize, tbsize=1, slocation=[0.0, sigma2, 0.05, sigma, 0.5, sigma, 0.75, sigma2, 1.0, 0.0], planes=planes, backend=dfttest2.Backend.NVRTC)
-          else:                      
-            smoothed = input.dfttest.DFTTest(sbsize=sbsize, sosize=sosize, tbsize=1, slocation=[0.0, sigma2, 0.05, sigma, 0.5, sigma, 0.75, sigma2, 1.0, 0.0], planes=planes)
+          # The GPU implementations only cover sbsize == 16; DFTTest() falls back on its own.
+          smoothed = DFTTest(input, cuda=cuda, sbsize=sbsize, sosize=sosize, tbsize=1,
+                             slocation=[0.0, sigma2, 0.05, sigma, 0.5, sigma, 0.75, sigma2, 1.0, 0.0], planes=planes)
         else:
             smoothed = MinBlur(input, nrmode, planes)
 

@@ -7,7 +7,7 @@ from functools import partial
 from typing import Optional, Union, Sequence
 
 from misc import MinBlur, mt_clamp
-from helpers import GetPlane, cround, scale, clamp, Padding
+from helpers import GetPlane, cround, scale, clamp, Padding, DFTTest
 from color import LimitFilter
 
 ################################################################################################
@@ -304,6 +304,7 @@ from color import LimitFilter
 ################################################################################################
 def LSFmod(input, strength=None, Smode=None, Smethod=None, kernel=11, preblur=None, secure=None, source=None, Szrp=16, Spwr=None, SdmpLo=None, SdmpHi=None, Lmode=None, overshoot=None, undershoot=None,
            overshoot2=None, undershoot2=None, soft=None, soothe=None, keep=None, edgemode=0, edgemaskHQ=None, ss_x=None, ss_y=None, dest_x=None, dest_y=None, defaults='fast', cuda=False):
+    # cuda: True looks for a GPU DFTTest implementation (vszipcu, then dfttest2), False stays on CPU.
     if not isinstance(input, vs.VideoNode):
         raise vs.Error('LSFmod: this is not a clip')
 
@@ -415,14 +416,8 @@ def LSFmod(input, strength=None, Smode=None, Smethod=None, kernel=11, preblur=No
     elif preblur >= 3:
         expr = 'x {i} < {peak} x {j} > 0 {peak} x {i} - {peak} {j} {i} - / * - ? ?'.format(i=scale(16, peak), j=scale(75, peak), peak=peak)
         
-        if cuda:
-          if hasattr(core,'dfttest2_nvrtc'):
-            import dfttest2
-            pre = core.std.MaskedMerge(dfttest2.DFTTest(tmp, tbsize=1, slocation=[0.0,4.0, 0.2,9.0, 1.0,15.0], backend=dfttest2.Backend.NVRTC), tmp, EXPR(tmp, expr=[expr]))
-          else:
-            pre = core.std.MaskedMerge(tmp.dfttest.DFTTest(tbsize=1, slocation=[0.0,4.0, 0.2,9.0, 1.0,15.0]), tmp, EXPR(tmp, expr=[expr]))
-        else:
-          pre = core.std.MaskedMerge(tmp.dfttest.DFTTest(tbsize=1, slocation=[0.0,4.0, 0.2,9.0, 1.0,15.0]), tmp, EXPR(tmp, expr=[expr]))
+        smoothed = DFTTest(tmp, cuda=cuda, tbsize=1, slocation=[0.0,4.0, 0.2,9.0, 1.0,15.0])
+        pre = core.std.MaskedMerge(smoothed, tmp, EXPR(tmp, expr=[expr]))
     else:
         pre = MinBlur(tmp, r=preblur)
 
@@ -798,7 +793,8 @@ def spline(x, coordinates):
     return s
     
 def ContraSharpening(
-    denoised: vs.VideoNode, original: vs.VideoNode, radius: int = 1, rep: int = 1, planes: Optional[Union[int, Sequence[int]]] = None
+    denoised: vs.VideoNode, original: vs.VideoNode, radius: Optional[int] = None, rep: int = 1,
+    planes: Optional[Union[int, Sequence[int]]] = None
 ) -> vs.VideoNode:
     '''
     contra-sharpening: sharpen the denoised clip, but don't add more to any pixel than what was removed previously.
@@ -808,7 +804,8 @@ def ContraSharpening(
 
         original: Original clip before denoising.
 
-        radius: Spatial radius for contra-sharpening.
+        radius: Spatial radius for contra-sharpening. None means 1 -- degrain.TemporalDegrain2
+            passes None whenever extraSharp is off, which is the default.
 
         rep: Mode of repair to limit the difference.
 
@@ -820,6 +817,9 @@ def ContraSharpening(
 
     if denoised.format.id != original.format.id:
         raise vs.Error('ContraSharpening: clips must have the same format')
+
+    if radius is None:
+        radius = 1
 
     neutral = 1 << (denoised.format.bits_per_sample - 1)
 

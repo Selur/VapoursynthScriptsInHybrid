@@ -3,6 +3,8 @@ import math
 
 core = vs.core
 
+from helpers import NNEDI3
+
 
 def edi_rpow2(clip, rfactor, correct_shift="fmtconv", edi=None):
     """
@@ -82,21 +84,14 @@ def correct_edi_shift(clip, rfactor, plugin):
 def nnedi3_rpow2(clip, rfactor, correct_shift="fmtconv",
                  nsize=0, nns=3, qual=None, etype=None,
                  pscrn=None, opt=None,
-                 int16_prescreener=None, int16_predictor=None, exp=None):
+                 int16_prescreener=None, int16_predictor=None, exp=None, device=None):
     """
     Scales using nnedi3 or znedi3 if available.
     """
 
     def edi_func(c, field, dh):
-        if hasattr(core, "znedi3"):
-            return core.znedi3.nnedi3(
-                clip=c, field=field, dh=dh, nsize=nsize, nns=nns,
-                qual=qual, etype=etype, pscrn=pscrn, opt=opt,
-                int16_prescreener=int16_prescreener,
-                int16_predictor=int16_predictor, exp=exp
-            )
-        return core.nnedi3.nnedi3(
-            clip=c, field=field, dh=dh, nsize=nsize, nns=nns,
+        return NNEDI3(
+            c, field=field, dh=dh, gpu=False, device=device, nsize=nsize, nns=nns,
             qual=qual, etype=etype, pscrn=pscrn, opt=opt,
             int16_prescreener=int16_prescreener,
             int16_predictor=int16_predictor, exp=exp
@@ -106,26 +101,15 @@ def nnedi3_rpow2(clip, rfactor, correct_shift="fmtconv",
 
 
 def nnedi3cl_rpow2(clip, rfactor, correct_shift="fmtconv",
-                   nsize=0, nns=3, qual=None, etype=None, pscrn=None):
+                   nsize=0, nns=3, qual=None, etype=None, pscrn=None, device=None):
     """
-    Scales using NNEDI3CL or sneedif if installed.
+    Kept for callers that ask for the GPU variant by name. Which implementation actually runs is
+    decided by NNEDI3() from whatever is loaded; this only says that a GPU one is preferred.
     """
 
     def edi_func(c, field, dh):
-        if hasattr(core, "sneedif"):
-            return core.sneedif.NNEDI3(
-                clip=c, field=field, dh=dh,
-                nsize=nsize, nns=nns, qual=qual,
-                etype=etype, pscrn=pscrn
-            )
-        elif hasattr(core, "nnedi3vk"):
-            return core.nnedi3vk.NNEDI3(
-                clip=c, field=field, dh=dh,
-                nsize=nsize, nns=nns, qual=qual,
-                etype=etype, pscrn=pscrn
-            )    
-        return core.nnedi3cl.NNEDI3CL(
-            clip=c, field=field, dh=dh,
+        return NNEDI3(
+            c, field=field, dh=dh, gpu=True, device=device,
             nsize=nsize, nns=nns, qual=qual,
             etype=etype, pscrn=pscrn
         )

@@ -365,6 +365,197 @@ def BoxFilter(input: vs.VideoNode, radius: int = 16, radius_v: Optional[int] = N
                     input = core.std.Convolution(input, [1] * (radius_v * 2 - 1), planes=planes, mode='v')
                 return input
                 
+## NNEDI3 ----------------------------------------------------------------------------------------
+# (namespace, function, name of its device argument, parameters only it understands)
+_NNEDI3_IMPLS = (
+    ('sneedif',  'NNEDI3',     'device',       ('dw', 'transpose_first')),
+    ('nnedi3vk', 'NNEDI3',     'device_index', ('coopvec', 'num_streams')),
+    ('vszipcu',  'NNEDI3',     'device_id',    ('num_streams',)),
+    ('nnedi3cl', 'NNEDI3CL',   'device',       ('dw',)),
+    ('znedi3',   'nnedi3',     None,           ('opt', 'int16_prescreener', 'int16_predictor', 'exp', 'show_mask')),
+    ('nnedi3',   'nnedi3',     None,           ('opt', 'int16_prescreener', 'int16_predictor', 'exp')),
+)
+_NNEDI3_GPU = ('sneedif', 'nnedi3vk', 'vszipcu', 'nnedi3cl')
+_NNEDI3_CPU = ('znedi3', 'nnedi3')
+# Parameters every implementation understands; anything else is dropped unless it is listed as an
+# extra of the chosen one.
+_NNEDI3_COMMON = ('field', 'dh', 'planes', 'nsize', 'nns', 'qual', 'etype', 'pscrn')
+
+
+def _nnedi3CanRun(namespace: str, kwargs: Dict[str, Any]) -> bool:
+    if not hasattr(core, namespace):
+        return False
+    # sneedif is an OpenCL port whose prescreener only covers 1 and 2; anything else does not fail
+    # cleanly but blows up while building the kernel.
+    if namespace == 'sneedif' and kwargs.get('pscrn') not in (None, 1, 2):
+        return False
+    # Only sneedif (and nnedi3cl) can double the width in one call.
+    if kwargs.get('dw') and namespace not in ('sneedif', 'nnedi3cl'):
+        return False
+    return True
+
+
+def NNEDI3(clip: vs.VideoNode, gpu: Optional[bool] = None, device: Optional[int] = None,
+           **kwargs) -> vs.VideoNode:
+    '''Calls the NNEDI3 implementation that is loaded.
+
+    Looked for in this order, the first one that is loaded and can serve the call wins:
+      gpu true/None : sneedif, nnedi3vk, vszipcu, nnedi3cl, znedi3, nnedi3
+      gpu false     : znedi3, nnedi3, sneedif, nnedi3vk, vszipcu, nnedi3cl
+
+    It is a preference, not a restriction - with `gpu=False` and only a GPU port loaded that port
+    is still used. Which of them exist is decided by whoever loaded the plugins; in Hybrid that is
+    Filtering->Vapoursynth->Tools->NNEDI3.
+
+    Args:
+        gpu: The caller's own opencl/gpu switch. Only reorders the search.
+        device: Device number, passed on under whatever name the implementation uses.
+
+    `pscrn` above 2 and `dw` are not available everywhere - a call using them skips the
+    implementations that cannot serve it.
+    '''
+    order = (_NNEDI3_CPU + _NNEDI3_GPU) if gpu is False else (_NNEDI3_GPU + _NNEDI3_CPU)
+    known = {ns: (fn, dev, extra) for ns, fn, dev, extra in _NNEDI3_IMPLS}
+    for namespace in order:
+        if not _nnedi3CanRun(namespace, kwargs):
+            continue
+        function, deviceArg, extras = known[namespace]
+        args = {k: v for k, v in kwargs.items() if k in _NNEDI3_COMMON or k in extras}
+        # Callers use -1 for "let it choose"; nnedi3vk and vszipcu reject negative ids outright,
+        # so that is expressed by leaving the argument out.
+        if deviceArg is not None and device is not None and device >= 0:
+            args[deviceArg] = device
+        return getattr(getattr(core, namespace), function)(clip, **args)
+    raise vs.Error('NNEDI3: no usable implementation loaded '
+                   '(looked for %s)' % ', '.join(order))
+
+
+## EEDI3 -----------------------------------------------------------------------------------------
+# (namespace, function, name of its device argument, parameters beyond the common set)
+# Older plugins stay in the list even though Hybrid no longer offers them.
+_EEDI3_IMPLS = (
+    ('eedi3vk2', 'EEDI3',   'device_index', ('planes', 'mclip', 'list_device', 'num_streams')),
+    ('vszipcu',  'EEDI3',   'device_id',    ('num_streams',)),
+    ('vszipcl',  'EEDI3',   'device_id',    ('num_streams', 'tune')),
+    ('eedi3vk',  'EEDI3',   'device_index', ('planes', 'mclip')),
+    ('eedi3m',   'EEDI3CL', 'device',       ('planes', 'mclip')),
+    ('vszip',    'EEDI3',   None,           ('mclip',)),
+    ('eedi3m',   'EEDI3',   None,           ('planes', 'mclip', 'ucubic', 'cost3', 'opt')),
+)
+_EEDI3_GPU = (('eedi3vk2', 'EEDI3'), ('vszipcu', 'EEDI3'), ('vszipcl', 'EEDI3'),
+              ('eedi3vk', 'EEDI3'), ('eedi3m', 'EEDI3CL'))
+_EEDI3_CPU = (('vszip', 'EEDI3'), ('eedi3m', 'EEDI3'))
+_EEDI3_COMMON = ('field', 'dh', 'alpha', 'beta', 'gamma', 'nrad', 'mdis', 'hp',
+                 'vcheck', 'vthresh0', 'vthresh1', 'vthresh2', 'sclip')
+# What each implementation expects `mclip` to look like - and the two flavours are mutually
+# exclusive: eedi3m/eedi3vk want the clip's own format ("mclip's format and dimensions don't
+# match"), vszip wants Gray ("mclip must be Gray"). Switching implementations behind the caller's
+# back would therefore turn a valid mask into an invalid one.
+_EEDI3_MCLIP = {'vszip': 'gray', 'eedi3m': 'same', 'eedi3vk2': 'same', 'eedi3vk': 'same'}
+
+
+def _hasFunction(namespace: str, function: str) -> bool:
+    return hasattr(core, namespace) and hasattr(getattr(core, namespace), function)
+
+
+def EEDI3(clip: vs.VideoNode, gpu: Optional[bool] = None, device: Optional[int] = None,
+          **kwargs) -> vs.VideoNode:
+    '''Calls the EEDI3 implementation that is loaded.
+
+    Looked for in this order, the first one that is loaded and can serve the call wins:
+      gpu true/None : eedi3vk2, vszipcu, vszipcl, eedi3vk, eedi3m.EEDI3CL, vszip, eedi3m
+      gpu false     : vszip, eedi3m, then the GPU ones
+
+    It is a preference, not a restriction. Which of them exist is decided by whoever loaded the
+    plugins; in Hybrid that is Filtering->Vapoursynth->Tools->EEDI3.
+
+    Not every implementation takes every argument - vszip and its GPU siblings have no `planes`
+    (they always process every plane), and the CUDA/OpenCL ones no `mclip`. A call that uses one of
+    those skips the implementations that cannot serve it, so the picture stays the same. A `planes`
+    that names *all* planes is dropped instead: it asks for what those implementations do anyway.
+    '''
+    kwargs = {k: v for k, v in kwargs.items() if v is not None}
+    allPlanes = list(range(clip.format.num_planes))
+    order = (_EEDI3_CPU + _EEDI3_GPU) if gpu is False else (_EEDI3_GPU + _EEDI3_CPU)
+    known = {(ns, fn): (dev, extra) for ns, fn, dev, extra in _EEDI3_IMPLS}
+    for namespace, function in order:
+        if not _hasFunction(namespace, function):
+            continue
+        deviceArg, extras = known[(namespace, function)]
+        allowed = _EEDI3_COMMON + extras
+        args = dict(kwargs)
+        if 'planes' not in extras and 'planes' in args:
+            wanted = args['planes']
+            if isinstance(wanted, int): wanted = [wanted]
+            if sorted(wanted) != allPlanes:
+                continue          # a real restriction this implementation cannot express
+            del args['planes']    # asks for every plane, which is what it does anyway
+        if any(k not in allowed for k in args):
+            continue
+        if 'mclip' in args:
+            wantsGray = _EEDI3_MCLIP.get(namespace) == 'gray'
+            isGray = args['mclip'].format.color_family == vs.GRAY
+            if wantsGray != isGray:
+                continue      # this one would reject the mask the caller built
+        if deviceArg is not None and device is not None and device >= 0:
+            args[deviceArg] = device
+        return getattr(getattr(core, namespace), function)(clip, **args)
+    raise vs.Error('EEDI3: no usable implementation loaded for this call '
+                   '(looked for %s)' % ', '.join('%s.%s' % nf for nf in order))
+
+
+## DFTTest ---------------------------------------------------------------------------------------
+# Parameters core.dfttest.DFTTest knows but the GPU implementations do not.
+_DFTTEST_NOT_IN_VSZIPCU = ('smode', 'tmode', 'tosize', 'nlocation', 'alpha', 'opt')
+_DFTTEST_NOT_IN_DFTTEST2 = ('tmode', 'tosize', 'opt')
+# dfttest2 backends that are fixed to sbsize=16 and tbsize in (1, 3, 5, 7).
+_DFTTEST2_FIXED_BLOCK = ('dfttest2_nvrtc', 'dfttest2_hiprtc', 'dfttest2_cpu', 'dfttest2_gcc')
+# ... and the ones that take any block size.
+_DFTTEST2_ANY_BLOCK = ('dfttest2_cuda', 'dfttest2_hip')
+
+
+def _vszipcuCanRun(kwargs: Dict[str, Any]) -> bool:
+    if not hasattr(core, 'vszipcu'):
+        return False
+    # An NVRTC port: 16x16 spatial window only, and it rejects an even temporal window.
+    if kwargs.get('sbsize', 16) != 16 or kwargs.get('tbsize', 3) % 2 == 0:
+        return False
+    return not any(name in kwargs for name in _DFTTEST_NOT_IN_VSZIPCU)
+
+
+def _dfttest2CanRun(kwargs: Dict[str, Any]) -> bool:
+    if any(name in kwargs for name in _DFTTEST_NOT_IN_DFTTEST2):
+        return False
+    if kwargs.get('sbsize', 16) == 16 and kwargs.get('tbsize', 3) in (1, 3, 5, 7):
+        return any(hasattr(core, name) for name in _DFTTEST2_FIXED_BLOCK + _DFTTEST2_ANY_BLOCK)
+    return any(hasattr(core, name) for name in _DFTTEST2_ANY_BLOCK)
+
+
+def DFTTest(clip: vs.VideoNode, cuda: Optional[bool] = None, **kwargs) -> vs.VideoNode:
+    '''Calls the first DFTTest implementation that is loaded, GPU ones first.
+
+    Looked for in this order: core.vszipcu.DFTTest (CUDA), dfttest2.DFTTest (CUDA) and
+    core.dfttest.DFTTest (CPU). Which of them is available is decided by whoever loaded the
+    plugins - in Hybrid that is Filtering->Vapoursynth->Prefer->DFTTest.
+
+    Args:
+        cuda: False forces the CPU implementation, True and None look for a GPU one first.
+            Kept for the callers that have their own cuda/opencl/gpu switch.
+
+    An implementation is only used when it can actually handle the call: neither GPU one takes
+    every parameter, and most of their backends are fixed to a spatial block size of 16. Calls
+    they cannot serve use the CPU version, which then has to be loaded as well.
+    '''
+    if cuda is not False:
+        if _vszipcuCanRun(kwargs):
+            return core.vszipcu.DFTTest(clip, **kwargs)
+        if _dfttest2CanRun(kwargs):
+            import dfttest2
+            # Let dfttest2 pick its backend: NVRTC where it fits, cuFFT for everything else.
+            return dfttest2.DFTTest(clip, **kwargs)
+    return core.dfttest.DFTTest(clip, **kwargs)
+
+
 # Taken from havsfunc
 def KNLMeansCL(
     clip: vs.VideoNode,

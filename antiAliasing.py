@@ -5,7 +5,7 @@ import math
 
 from typing import TypeVar, Optional
 from functools import partial
-from helpers import GetPlane, m4, scale
+from helpers import GetPlane, m4, scale, NNEDI3 as _NNEDI3, EEDI3 as _EEDI3
 
 # Taken from old havsfunc
 def daa(
@@ -29,18 +29,9 @@ def daa(
     if not isinstance(c, vs.VideoNode):
         raise vs.Error('daa: this is not a clip')
 
-    if opencl:
-        if hasattr(core,'sneedif'):
-          nnedi3 = partial(core.sneedif.NNEDI3, nsize=nsize, nns=nns, qual=qual, pscrn=pscrn, device=device)
-        elif hasattr(core,'nnedi3vk'):
-          nnedi3 = partial(core.nnedi3vk.NNEDI3, nsize=nsize, nns=nns, qual=qual, pscrn=pscrn, device_index=device)
-        else:
-          nnedi3 = partial(core.nnedi3cl.NNEDI3CL, nsize=nsize, nns=nns, qual=qual, pscrn=pscrn, device=device)
-    else:
-        if hasattr(core,'znedi3'):
-          nnedi3 = partial(core.znedi3.nnedi3, nsize=nsize, nns=nns, qual=qual, pscrn=pscrn, int16_prescreener=int16_prescreener, int16_predictor=int16_predictor, exp=exp)
-        else:
-          nnedi3 = partial(core.nnedi3.nnedi3, nsize=nsize, nns=nns, qual=qual, pscrn=pscrn, int16_prescreener=int16_prescreener, int16_predictor=int16_predictor, exp=exp)
+    # opencl only reorders the search - _NNEDI3 takes whichever implementation is loaded.
+    nnedi3 = partial(_NNEDI3, gpu=opencl, device=device, nsize=nsize, nns=nns, qual=qual, pscrn=pscrn,
+                     int16_prescreener=int16_prescreener, int16_predictor=int16_predictor, exp=exp)
 
     nn = nnedi3(c, field=3)
     dbl = core.std.Merge(nn[::2], nn[1::2])
@@ -66,19 +57,8 @@ def daamod(c, nsize=None, nns=None, qual=None, pscrn=None, exp=None, opencl=Fals
       R = core.rgsf.Repair if isFLOAT else core.rgvs.Repair
       V = core.rgsf.VerticalCleaner if isFLOAT else core.rgvs.VerticalCleaner
 
-    if opencl:
-        if hasattr(core, 'nnedi3vk'):
-          NNEDI3 = core.nnedi3vk.NNEDI3
-          nnedi3_args = dict(nsize=nsize, nns=nns, qual=qual, pscrn=pscrn, device_index=device)
-        elif hasattr(core,'sneedif'):
-          NNEDI3 = core.sneedif.NNEDI3
-          nnedi3_args = dict(nsize=nsize, nns=nns, qual=qual, pscrn=pscrn, device=device)
-        else:
-          NNEDI3 = core.nnedi3cl.NNEDI3CL
-          nnedi3_args = dict(nsize=nsize, nns=nns, qual=qual, pscrn=pscrn, device=device)
-    else:
-        NNEDI3 = core.znedi3.nnedi3 if hasattr(core, 'znedi3') and not isFLOAT else core.nnedi3.nnedi3
-        nnedi3_args = dict(nsize=nsize, nns=nns, qual=qual, pscrn=pscrn, exp=exp)
+    NNEDI3 = _NNEDI3
+    nnedi3_args = dict(gpu=opencl, device=device, nsize=nsize, nns=nns, qual=qual, pscrn=pscrn, exp=exp)
 
     nn = NNEDI3(c, field=3, **nnedi3_args)
     dbl = core.std.Merge(nn[::2], nn[1::2])
@@ -150,23 +130,8 @@ def nnedi3aa(a: vs.VideoNode, opencl: bool=False, device: Optional[int] = None,)
     Read the document of Avisynth version for more details.
     """
 
-    if opencl:
-      if hasattr(core, 'sneedif'):
-        myNNEDI3 = vs.core.sneedif.NNEDI3
-        last = myNNEDI3(a, field=1, dh=True, device=device).std.Transpose()
-        last = myNNEDI3(last, field=1, dh=True, device=device).std.Transpose()
-      elif hasattr(core, 'nnedi3vk'):
-        myNNEDI3 = vs.core.nnedi3vk.NNEDI3
-        last = myNNEDI3(a, field=1, dh=True, device_index=device).std.Transpose()
-        last = myNNEDI3(last, field=1, dh=True, device_index=device).std.Transpose()
-      else:
-        myNNEDI3 = vs.core.nnedi3cl.NNEDI3CL
-        last = myNNEDI3(a, field=1, dh=True, device=device).std.Transpose()
-        last = myNNEDI3(last, field=1, dh=True, device=device).std.Transpose()
-    else:
-      myNNEDI3 = vs.core.znedi3.nnedi3 if hasattr(vs.core, 'znedi3') else vs.core.nnedi3.nnedi3
-      last = myNNEDI3(a, field=1, dh=True).std.Transpose()
-      last = myNNEDI3(last, field=1, dh=True).std.Transpose()
+    last = _NNEDI3(a, field=1, dh=True, gpu=opencl, device=device).std.Transpose()
+    last = _NNEDI3(last, field=1, dh=True, gpu=opencl, device=device).std.Transpose()
       
     last = vs.core.resize.Spline36(last, a.width, a.height, src_left=-0.5, src_top=-0.5)
     return last;
@@ -334,30 +299,13 @@ def santiag(
         return c.resize.Spline36(fw, fh, src_top=0 if halfres else 0.5)
 
     def santiag_stronger(c: vs.VideoNode, strength: int, type: str) -> vs.VideoNode:
-        if opencl:
-            if hasattr(core, 'nnedi3vk'):
-              nnedi3 = partial(core.nnedi3vk.NNEDI3, nsize=nsize, nns=nns, qual=qual, pscrn=pscrn, device_index=device)
-            elif hasattr(core, 'sneedif'):
-              nnedi3 = partial(core.sneedif.NNEDI3, nsize=nsize, nns=nns, qual=qual, pscrn=pscrn, device=device)
-            else:
-              nnedi3 = partial(core.nnedi3cl.NNEDI3CL, nsize=nsize, nns=nns, qual=qual, pscrn=pscrn, device=device)
-        else:
-            if hasattr(core, 'znedi3'):
-              nnedi3 = partial(core.znedi3.nnedi3, nsize=nsize, nns=nns, qual=qual, pscrn=pscrn, int16_prescreener=int16_prescreener, int16_predictor=int16_predictor, exp=exp)
-            else:
-              nnedi3 = partial(core.nnedi3.nnedi3, nsize=nsize, nns=nns, qual=qual, pscrn=pscrn, int16_prescreener=int16_prescreener, int16_predictor=int16_predictor, exp=exp)
+        nnedi3 = partial(_NNEDI3, gpu=opencl, device=device, nsize=nsize, nns=nns, qual=qual, pscrn=pscrn,
+                         int16_prescreener=int16_prescreener, int16_predictor=int16_predictor, exp=exp)
 
         def get_eedi3():
-            if hasattr(core, 'eedi3vk2'):
-                return partial(core.eedi3vk2.EEDI3, alpha=alpha, beta=beta, gamma=gamma, nrad=nrad, mdis=mdis, vcheck=vcheck, device_id=device)
-            if hasattr(core, 'eedi3vk'):
-                return partial(core.eedi3vk.EEDI3, alpha=alpha, beta=beta, gamma=gamma, nrad=nrad, mdis=mdis, vcheck=vcheck, device_id=device)
-            elif hasattr(core, 'eedi3m') and hasattr(core.eedi3m, 'EEDI3CL'):
-                return partial(core.eedi3m.EEDI3CL, alpha=alpha, beta=beta, gamma=gamma, nrad=nrad, mdis=mdis, vcheck=vcheck, device=device)
-            elif hasattr(core, 'eedi3m'):
-                return partial(core.eedi3m.EEDI3, alpha=alpha, beta=beta, gamma=gamma, nrad=nrad, mdis=mdis, vcheck=vcheck)
-            else:
-                raise vs.Error('santiag: no eedi3 plugin (eedi3vk or eedi3m) found')
+            # opencl only reorders the search; _EEDI3 also picks the right device argument name.
+            return partial(_EEDI3, gpu=opencl, device=device,
+                           alpha=alpha, beta=beta, gamma=gamma, nrad=nrad, mdis=mdis, vcheck=vcheck)
 
         strength = max(strength, 0)
         field = strength % 2
@@ -374,7 +322,12 @@ def santiag(
         elif type == 'eedi2':
             if not dh:
                 c = c.resize.Point(w, h // 2, src_top=1 - field)
-            return c.eedi2.EEDI2(field=field)
+            # Take whichever EEDI2 is loaded - with opencl Hybrid loads eedi2cuda, not eedi2.
+            if opencl and hasattr(core, 'eedi2cuda'):
+                return core.eedi2cuda.EEDI2(c, field=field)
+            if hasattr(core, 'eedi2'):
+                return core.eedi2.EEDI2(c, field=field)
+            return core.eedi2cuda.EEDI2(c, field=field)
         elif type == 'eedi3':
             sclip = nnedi3(c, field=field, dh=dh)
             return get_eedi3()(c, field=field, dh=dh, sclip=sclip)

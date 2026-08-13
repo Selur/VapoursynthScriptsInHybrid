@@ -5,7 +5,7 @@ from vapoursynth import core
 import math
 
 from typing import Sequence, Union, Optional
-from helpers import scale_value, cround, m4, DitherLumaRebuild, KNLMeansCL
+from helpers import scale_value, cround, m4, DitherLumaRebuild, KNLMeansCL, DFTTest
 from misc import MV, MinBlur
 from color import LimitFilter
 from sharpen import ContraSharpening
@@ -704,7 +704,8 @@ def TemporalDegrain2(clip, degrainTR=1, degrainPlane=4, grainLevel=2, grainLevel
         noiseWindow = NR2
     
     if postFFT == 3:
-        dnWindow = core.dfttest.DFTTest(noiseWindow, sigma=postSigma*4, tbsize=postTD, planes=fPlane, sbsize=postBlkSize, sosize=postBlkSize*9/12)
+        # The GPU implementations only cover sbsize == 16; DFTTest() falls back on its own.
+        dnWindow = DFTTest(noiseWindow, sigma=postSigma*4, tbsize=postTD, planes=fPlane, sbsize=postBlkSize, sosize=int(postBlkSize*9/12))
     elif postFFT == 4:
       if ChromaNoise:
         dnWindow = KNLMeansCL(noiseWindow, d=postTR, a=2, h=postSigma/2, device_id=knlDevId)

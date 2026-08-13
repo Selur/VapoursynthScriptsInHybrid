@@ -3,7 +3,7 @@ from vapoursynth import core
 
 from typing import Any, Dict, Sequence, Union, Optional
 
-from helpers import GetPlane, BoxFilter
+from helpers import GetPlane, BoxFilter, DFTTest
 from misc import mt_expand_multi, mt_inpand_multi
 from color import LimitFilter
 
@@ -143,8 +143,8 @@ def GradFun3(src, thr=None, radius=None, elast=None, mask=None, mode=None, ampo=
 
     def dfttest_mod(src, ref, radius, thr, elast, planes):
         hrad = max(radius * 3 // 4, 1)
-        last = core.dfttest.DFTTest(src, sigma=thr * 12, sbsize=hrad * 4,
-                                    sosize=hrad * 3, tbsize=1, planes=planes)
+        last = DFTTest(src, sigma=thr * 12, sbsize=hrad * 4,
+                       sosize=hrad * 3, tbsize=1, planes=planes)
         last = LimitFilter(last, ref, thr=thr, elast=elast, planes=planes)
         return last
 
@@ -560,8 +560,8 @@ def _GF3_dfttest(src: vs.VideoNode, ref: vs.VideoNode, radius: int,
                  thr: float, elast: float, planes: Optional[Union[int, Sequence[int]]]
                  ) -> vs.VideoNode:
     hrad = max(radius * 3 // 4, 1)
-    last = core.dfttest.DFTTest(src, sigma=hrad * thr * thr * 32, sbsize=hrad * 4,
-                                sosize=hrad * 3, tbsize=1, planes=planes)
+    last = DFTTest(src, sigma=hrad * thr * thr * 32, sbsize=hrad * 4,
+                   sosize=hrad * 3, tbsize=1, planes=planes)
     last = LimitFilter(last, ref, thr=thr, elast=elast, planes=planes)
 
     return last

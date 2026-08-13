@@ -6,7 +6,7 @@ import importlib
 from functools import partial
 from typing import Any, Mapping, Optional, Sequence, Union, TypeVar
 
-from helpers import Depth, scale_value, DitherLumaRebuild, KNLMeansCL
+from helpers import Depth, scale_value, DitherLumaRebuild, KNLMeansCL, DFTTest, NNEDI3 as _NNEDI3, EEDI3 as _EEDI3
 from misc import MV, mt_clamp
 
 
@@ -823,17 +823,8 @@ def QTGMC(
                 dnWindow = Depth(dnWindow, noiseWindow.format.bits_per_sample, 
                                 sample_type=noiseWindow.format.sample_type)
         elif Denoiser == 'dfttest':
-          if opencl:
-            if hasattr(core, 'dfttest2_nvrtc'):  
-              try:
-                 import dfttest2
-                 dnWindow = dfttest2.DFTTest(noiseWindow, sigma=Sigma * 4, tbsize=noiseTD, planes=CNplanes)
-              except ModuleNotFoundError:
-                 dnWindow = noiseWindow.dfttest.DFTTest(sigma=Sigma * 4, tbsize=noiseTD, planes=CNplanes)
-            else:
-              dnWindow = noiseWindow.dfttest.DFTTest(sigma=Sigma * 4, tbsize=noiseTD, planes=CNplanes)   
-          else:
-            dnWindow = noiseWindow.dfttest.DFTTest(sigma=Sigma * 4, tbsize=noiseTD, planes=CNplanes)
+          # Takes the first DFTTest implementation that is loaded, GPU ones first.
+          dnWindow = DFTTest(noiseWindow, sigma=Sigma * 4, tbsize=noiseTD, planes=CNplanes)
         elif Denoiser in ['knlm', 'knlmeanscl', 'nlm_cuda', 'nlm_ispc']:
             if ChromaNoise and not is_gray:
                 dnWindow = KNLMeansCL(noiseWindow, d=NoiseTR, h=Sigma)
@@ -1230,33 +1221,12 @@ def QTGMC_Interpolate(
     field = 3 if TFF else 2
 
     
-    if opencl:
-        if hasattr(core, 'sneedif'):
-            nnedi3 = partial(core.sneedif.NNEDI3, field=field, device=device, **nnedi3_args)
-        elif hasattr(core, 'nnedi3vk'):
-            nnedi3 = partial(core.nnedi3vk.NNEDI3, field=field, device_index=device, **nnedi3_args)
-        else:
-            nnedi3 = partial(core.nnedi3cl.NNEDI3CL, field=field, device=device, **nnedi3_args)
-        
-        if hasattr(core, 'eedi3vk2'):
-            eedi3 = partial(core.eedi3vk2.EEDI3, field=field, planes=planes, mdis=EdiMaxD, device_id=device, **eedi3_args)
-        elif hasattr(core, 'eedi3vk'):
-            eedi3 = partial(core.eedi3vk.EEDI3, field=field, planes=planes, mdis=EdiMaxD, device_id=device, **eedi3_args)
-        elif hasattr(core, 'eedi3m') and hasattr(core.eedi3m, 'EEDI3CL'):
-            eedi3 = partial(core.eedi3m.EEDI3CL, field=field, planes=planes, mdis=EdiMaxD, device=device, **eedi3_args)
-        else:
-            eedi3 = partial(core.eedi3m.EEDI3, field=field, planes=planes, mdis=EdiMaxD, **eedi3_args)
-    else:
-        if hasattr(core, 'znedi3'):
-            nnedi3 = partial(core.znedi3.nnedi3, field=field, **nnedi3_args)
-        else:
-            nnedi3 = partial(core.nnedi3.nnedi3, field=field, **nnedi3_args)
-        
-        if hasattr(core, 'vszip'):
-            eedi3 = partial(core.vszip.EEDI3, field=field, planes=planes, mdis=EdiMaxD, **eedi3_args)
-        else:
-            eedi3 = partial(core.eedi3m.EEDI3, field=field, planes=planes, mdis=EdiMaxD, **eedi3_args)
-            
+    nnedi3 = partial(_NNEDI3, field=field, gpu=opencl, device=device, **nnedi3_args)
+
+    # opencl only reorders the search - _EEDI3 takes whichever implementation is loaded and can
+    # serve the call. It also gets the device argument right, which differs per plugin.
+    eedi3 = partial(_EEDI3, field=field, planes=planes, mdis=EdiMaxD, gpu=opencl, device=device, **eedi3_args)
+
     if InputType == 1:
         return Input
     elif EdiMode == 'nnedi3':

@@ -5,7 +5,7 @@ import math
 
 from typing import Optional, Union, Sequence
 
-from helpers import GetPlane, scale_value, scale, cround, DitherLumaRebuild, KNLMeansCL
+from helpers import GetPlane, scale_value, scale, cround, DitherLumaRebuild, KNLMeansCL, DFTTest
 
 from misc import MV, MinBlur, SCDetect, mt_expand_multi
         
@@ -201,6 +201,7 @@ def MCTemporalDenoise(i, radius=None, pfMode=3, sigma=None, twopass=None, useTTm
                       quant2=None, edgeclean=False, ECrad=None, ECthr=None, stabilize=None, maxr=None, TTstr=None, bwbh=None, owoh=None, blksize=None, overlap=None, bt=None, ncpu=1, thSAD=None,
                       thSADC=None, thSAD2=None, thSADC2=None, thSCD1=None, thSCD2=None, truemotion=False, MVglobal=True, pel=None, pelsearch=None, search=4, searchparam=2, MVsharp=None, DCT=0, p=None,
                       settings='low', cuda=False):
+    # cuda: True looks for a GPU DFTTest implementation (vszipcu, then dfttest2), False stays on CPU.
     if not isinstance(i, vs.VideoNode):
         raise vs.Error('MCTemporalDenoise: this is not a clip')
 
@@ -298,8 +299,6 @@ def MCTemporalDenoise(i, radius=None, pfMode=3, sigma=None, twopass=None, useTTm
     pointresize_args = dict(width=xn, height=yn, src_left=-xf / 2, src_top=-yf / 2, src_width=xn, src_height=yn)
     i = i.resize.Point(**pointresize_args)
 
-    useDFTTest2 = cuda and hasattr(core, 'dfttest2_nvrtc')
-    
     ### PREFILTERING
     fft3d_args = dict(planes=planes, bw=bwbh, bh=bwbh, bt=bt, ow=owoh, oh=owoh, ncpu=ncpu)
     if p is not None:
@@ -312,11 +311,8 @@ def MCTemporalDenoise(i, radius=None, pfMode=3, sigma=None, twopass=None, useTTm
         else:                              
             p = i.fft3dfilter.FFT3DFilter(sigma=sigma * 0.8, sigma2=sigma * 0.6, sigma3=sigma * 0.4, sigma4=sigma * 0.2, **fft3d_args)
     elif pfMode >= 3:
-        if useDFTTest2:
-          import dfttest2
-          p = dfttest2.DFTTest(i, tbsize=1, slocation=[0.0,4.0, 0.2,9.0, 1.0,15.0], planes=planes, backend=dfttest2.Backend.NVRTC)
-        else:
-          p = i.dfttest.DFTTest(tbsize=1, slocation=[0.0,4.0, 0.2,9.0, 1.0,15.0], planes=planes)
+        p = DFTTest(i, cuda=cuda, tbsize=1,
+                    slocation=[0.0,4.0, 0.2,9.0, 1.0,15.0], planes=planes)
     else:
         p = MinBlur(i, r=pfMode, planes=planes)
 
@@ -513,10 +509,8 @@ def MCTemporalDenoise(i, radius=None, pfMode=3, sigma=None, twopass=None, useTTm
         mP = PREWITT(GetPlane(smP, 0))
         mS = mt_expand_multi(mP, sw=ECrad, sh=ECrad).std.Inflate()
         mD = EXPR([mS, mP.std.Inflate()], expr=[f'x y - {ECthr} <= 0 x y - ?']).std.Inflate().std.Convolution(matrix=[1, 1, 1, 1, 1, 1, 1, 1, 1])
-        if useDFTTest2:
-          smP = core.std.MaskedMerge(smP, DeHalo_alpha(dfttest2.DFTTest(smP, tbsize=1, planes=planes), darkstr=0), mD, planes=planes, backend=dfttest2.Backend.NVRTC)
-        else:
-          smP = core.std.MaskedMerge(smP, DeHalo_alpha(smP.dfttest.DFTTest(tbsize=1, planes=planes), darkstr=0), mD, planes=planes)
+        smoothed = DFTTest(smP, cuda=cuda, tbsize=1, planes=planes)
+        smP = core.std.MaskedMerge(smP, DeHalo_alpha(smoothed, darkstr=0), mD, planes=planes)
     ### STABILIZING
     if stabilize:
         # mM = core.std.Merge(GetPlane(SAD_f1m, 0), GetPlane(SAD_b1m, 0)).std.Lut(function=lambda x: min(cround(x ** 1.6), peak))

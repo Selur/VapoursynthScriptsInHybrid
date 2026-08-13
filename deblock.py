@@ -5,6 +5,8 @@ from typing import Optional, List
 import math
 from functools import partial
 
+from helpers import DFTTest
+
 def Deblock_QED(
     clp: vs.VideoNode, quant1: int = 24, quant2: int = 26, aOff1: int = 1, bOff1: int = 2, aOff2: int = 1, bOff2: int = 2, uv: int = 3
 ) -> vs.VideoNode:
@@ -212,12 +214,6 @@ def AutoDeblock(src: vs.VideoNode, edgevalue: int = 24, db1: int = 1, db2: int =
 
     unfiltered = src
     predeblock = Deblock_QED(src_d)
-
-    if hasattr(core, 'dfttest2_nvrtc'):
-        import dfttest2
-        backend = dfttest2.Backend.NVRTC
-        DFTTest = partial(dfttest2.DFTTest, backend=backend)
-    else: DFTTest = core.dfttest.DFTTest
 
     fast = DFTTest(predeblock, tbsize=1)
     weakdeblock = DFTTest(predeblock, sigma=db1, tbsize=1, planes=planes)

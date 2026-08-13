@@ -1,6 +1,8 @@
 import vapoursynth as vs
 core = vs.core
 
+from helpers import NNEDI3
+
 # port of AviSynth TFMBobN(..) by jagabo, see: https://forum.videohelp.com/threads/409273-QTGMC-shimmer-when-deinterlacing-a-duplicate-frame#post2687062
 
 def TFMBobN(clip: vs.VideoNode,
@@ -10,17 +12,8 @@ def TFMBobN(clip: vs.VideoNode,
             chroma: bool=False,
             openCL: bool = False):
   field = clip.get_frame(0).props['_FieldBased']
-  if openCL:
-    if hasattr(core, 'sneedif'):
-      n = core.sneedif.NNEDI3(clip = clip, field=field+1,nns=4)
-    elif hasattr(core, 'nnedi3vk'):
-      n = core.nnedi3vk.NNEDI3(clip = clip, field=field+1,nns=4)
-    else:
-      n = core.nnedi3cl.NNEDI3CL(clip = clip, field=field+1,nns=4)
-  elif hasattr(core, 'znedi3'):
-    n = core.znedi3.nnedi3(clip=clip, field=field+1, nns=4)
-  else:
-    n = core.nnedi3.nnedi3(clip=clip, field=field+1, nns=4)
+  # openCL only reorders the search - NNEDI3 takes whichever implementation is loaded.
+  n = NNEDI3(clip, field=field + 1, nns=4, gpu=openCL)
   if field == 1:
     field = 0
   else:
