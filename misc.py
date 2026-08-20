@@ -531,13 +531,13 @@ def MinBlur(clp: vs.VideoNode, r: int = 1, planes: Optional[Union[int, Sequence[
     matrix1 = [1, 2, 1, 2, 4, 2, 1, 2, 1]
     matrix2 = [1, 1, 1, 1, 1, 1, 1, 1, 1]
 
-    # --- Helfer: Median mit Fallback statt hartem ctmf-Aufruf ---
+    # --- Helper: median with a fallback instead of a hard ctmf call ---
     def _median(clip, radius, planes):
         if hasattr(core, 'ctmf'):
             return core.ctmf.CTMF(clip, radius=radius, planes=planes)
         if hasattr(core, 'zsmooth'):
             return core.zsmooth.Median(clip, radius=radius, planes=planes)
-        raise RuntimeError("MinBlur: Weder ctmf noch zsmooth verfügbar")
+        raise RuntimeError("MinBlur: neither ctmf nor zsmooth available")
 
     if r <= 0:
         RG11 = sbr(clp, planes=planes)
@@ -550,9 +550,9 @@ def MinBlur(clp: vs.VideoNode, r: int = 1, planes: Optional[Union[int, Sequence[
         RG4 = _median(clp, radius=2, planes=planes)
     else:
         RG11 = clp.std.Convolution(matrix=matrix1, planes=planes).std.Convolution(matrix=matrix2, planes=planes).std.Convolution(matrix=matrix2, planes=planes)
-        # Hinweis: zsmooth.Median unterstützt max. radius=3
+        # Note: zsmooth.Median supports radius=3 at most
         if clp.format.bits_per_sample == 16 and hasattr(core, 'ctmf'):
-            # Original-LimitFilter-Logik nur bei verfügbarem CTMF beibehalten
+            # Keep the original LimitFilter logic only when CTMF is available
             from mvsfunc import LimitFilter
             s16 = clp
             RG4 = depth(clp, 12, dither_type=Dither.NONE).ctmf.CTMF(radius=3, planes=planes)

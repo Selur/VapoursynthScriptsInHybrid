@@ -213,7 +213,7 @@ def FinegrainMask(clip: vs.VideoNode, mode: str="RemoveGrain") -> vs.VideoNode:
           original_format = clip.format
           is_rgb = original_format.color_family == vs.RGB
 
-          # Bitdepth und Sample-Typ ermitteln
+          # Work out bit depth and sample type
           bits = original_format.bits_per_sample
           sample_type = original_format.sample_type
 
@@ -239,19 +239,19 @@ def FinegrainMask(clip: vs.VideoNode, mode: str="RemoveGrain") -> vs.VideoNode:
               (vs.FLOAT, 32): vs.YUV444PS,
           }
 
-          # Ziel-GRAY und YUV-Format bestimmen
+          # Determine the target GRAY and YUV format
           target_gray_format = gray_format_map.get((sample_type, bits))
           target_yuv444_format = yuv444_format_map.get((sample_type, bits))
           if target_gray_format is None or target_yuv444_format is None:
               raise ValueError(f"Unsupported format: sample_type={sample_type}, bits={bits}")
 
-          # Matrix wählen für RGB → YUV
+          # Pick the matrix for RGB -> YUV
           matrix = 1 if clip.width < 1280 else 2
 
           if is_rgb:
               clip = core.resize.Bicubic(clip, format=target_yuv444_format, matrix_s=matrix)
           else:
-              # Nur konvertieren, wenn Format nicht schon YUV444 mit korrekter Bitdepth
+              # Only convert when the format is not already YUV444 with the right bit depth
               if not (clip.format.color_family == vs.YUV and clip.format.subsampling_w == 0 and clip.format.subsampling_h == 0 and
                       clip.format.bits_per_sample == bits and clip.format.sample_type == sample_type):
                   clip = core.resize.Bicubic(clip, format=target_yuv444_format)
