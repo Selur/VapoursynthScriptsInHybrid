@@ -8,11 +8,18 @@ except ImportError:
     GaussBlur = None
 
 from misc import MV
+from color import LimitFilter
 
 def _boxblur_fn():
     """Pick the best available BoxBlur."""
     if hasattr(core, 'vszip'): return core.vszip.BoxBlur
     return core.std.BoxBlur
+
+def _nlmeans_gray(clip: vs.VideoNode, d: int, a: int, s: int, h: float) -> vs.VideoNode:
+    """NLMeans on a GRAY clip, using whichever NLMeans plugin is available."""
+    if hasattr(core, 'nlm_ispc'): return core.nlm_ispc.NLMeans(clip, d=d, a=a, s=s, h=h)
+    if hasattr(core, 'nlm_cuda'): return core.nlm_cuda.NLMeans(clip, d=d, a=a, s=s, h=h)
+    return core.knlm.KNLMeansCL(clip, d=d, a=a, s=s, h=h)
 
 # DeStripe works on YUVXXXPY
 # "low frequency" stripes/bands removal filter
@@ -488,8 +495,8 @@ def HaloBuster(input: vs.VideoNode, a: int = 32, h: float = 6.4, thr: float = 1.
     # Add borders for padding
     gray = core.std.AddBorders(gray, left=a, top=a, right=a, bottom=a)
 
-    # Apply KNLMeansCL denoising
-    clean = core.knlm.KNLMeansCL(gray, d=0, a=a, s=0, h=h)
+    # Apply NLMeans denoising
+    clean = _nlmeans_gray(gray, d=0, a=a, s=0, h=h)
     
     # Apply TCanny for edge detection
     if hasattr(core, 'tcanny'):
@@ -510,11 +517,9 @@ def HaloBuster(input: vs.VideoNode, a: int = 32, h: float = 6.4, thr: float = 1.
     # Merge the clean image back using the mask
     merge = core.std.MaskedMerge(gray, clean, mask)
     
-    # Limit the merge differences
-    if hasattr(core,'zsmooth'):
-      limit = core.zsmooth.RemoveGrain(merge, mode=[20])
-    else:
-      limit = core.rgvs.RemoveGrain(merge, mode=[20])
+    # Limit the difference against the unfiltered clip, like slimit_dif in the
+    # AviSynth original; this is what thr and elast steer
+    limit = LimitFilter(merge, gray, thr=thr, elast=elast)
     
     # Crop the added borders
     crop = core.std.CropRel(limit, left=a, top=a, right=a, bottom=a)
@@ -523,4 +528,3 @@ def HaloBuster(input: vs.VideoNode, a: int = 32, h: float = 6.4, thr: float = 1.
     final = core.std.ShufflePlanes([crop, input], planes=[0, 1, 2], colorfamily=vs.YUV)
 
     return final
-

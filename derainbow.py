@@ -816,3 +816,82 @@ def SRFComb2(
     final = core.std.MaskedMerge(fields, mc_merged, full_comb_mask)
 
     return final if progressive else _weave_fields(final)
+    
+    
+# requires:
+#   BiFrost: https://github.com/dubhatervapoursynth/vapoursynth-bifrost
+#   CNR2 (used as fallback when zsmooth is not installed):
+#            https://github.com/dubhatervapoursynth/vapoursynth-cnr2
+#   TemporalSoften (used as fallback when zsmooth is not installed):
+#            https://github.com/dubhatervapoursynth/vapoursynth-temporalsoften
+# optional, used automatically when present:
+#   akarin:  https://github.com/AkarinVS/vapoursynth-plugin      (faster Expr; falls back to std.Expr)
+#   zsmooth: https://github.com/adworacz/zsmooth                 (Cnr4 + faster TemporalSoften)
+#   scenechange: https://github.com/Tatsh/scenechange            (feeds the scene-change props
+#            that Cnr4 and TemporalSoften consume; without it misc.SCDetect steps in, which
+#            needs no plugin at all)
+def ChubbyRain2(c, th=10, radius=10, show=False, sft=10, interlaced=False):
+    if interlaced:
+        c = core.std.SeparateFields(c)
+
+    bits = c.format.bits_per_sample
+    is_float = c.format.sample_type == vs.FLOAT
+    # th/sft are tuned on an 8bit (0-255) scale; scale to the clip's actual range
+    peak = 1.0 if is_float else (1 << bits) - 1
+    th_scaled = th / 255 if is_float else th * peak // 255
+
+    u = core.std.ShufflePlanes(c, 1, vs.GRAY)
+    v = core.std.ShufflePlanes(c, 2, vs.GRAY)
+
+    uc = core.std.Convolution(u, matrix=[1, -2, 1], mode="v")
+    vc = core.std.Convolution(v, matrix=[1, -2, 1], mode="v")
+
+    cc = core.std.Convolution(c, matrix=[1, 2, 1], mode="v", divisor=4, planes=[0, 1, 2])
+    cc = core.bifrost.Bifrost(cc, interlaced=False)
+
+    if hasattr(core, 'zsmooth'):
+        # Cnr4 and the TemporalSoften below both consume _SceneChangePrev/Next; Cnr2 did
+        # the detection internally via scdthr=10.0, so reproduce that ~10% threshold here.
+        if hasattr(core, 'scd') and not is_float:
+            # scd.Detect's thresh is an absolute 0-254 (x2^(bits-8)) luma-diff value, not a
+            # percentage, so scale the 10% onto that range.
+            thresh = max(1, round(0.10 * 254 * (1 << max(bits - 8, 0))))
+            cc = core.scd.Detect(clip=cc, thresh=thresh)
+        else:
+            import misc
+            cc = misc.SCDetect(clip=cc, threshold=0.10)
+
+        # mode/tmode/radius/sense/str below reproduce Cnr2's defaults
+        # (mode="oxx", scdthr=10.0, ln/un/vn=35/47/47, lm/um/vm=192/255/255)
+        cc = core.zsmooth.Cnr4(cc, mode="oxx", tmode=2, radius=2, sense=[35, 47, 47], str=[192, 255, 255], scenechange=True)
+    else:
+        cc = core.cnr2.Cnr2(cc)  # defaults: mode="oxx", scdthr=10.0, ln=35, lm=192, un=47, um=255, vn=47, vm=255
+
+    if hasattr(core, 'zsmooth'):
+        # zsmooth takes one threshold per plane and scales it itself (scalep=True)
+        # scenechange=-1 consumes the props set above; any positive value makes zsmooth
+        # demand the miscfilters plugin so it can detect scene changes itself
+        cc = core.zsmooth.TemporalSoften(cc, radius=radius, threshold=[0, sft, sft], scenechange=-1, scalep=True)
+    else:
+        # dubhater's focus.TemporalSoften; effectively 8bit-only, so no manual scaling here
+        cc = core.focus.TemporalSoften(cc, radius=radius, luma_threshold=0, chroma_threshold=sft, scenechange=2, mode=2)
+
+    expr = f"x y + {th_scaled} > {peak} 0 ?"
+    rainbow = core.akarin.Expr([uc, vc], expr) if hasattr(core, 'akarin') else core.std.Expr([uc, vc], expr)
+    rainbow = core.resize.Point(rainbow, width=c.width, height=c.height)
+
+    for _ in range(3):
+        rainbow = core.std.Maximum(rainbow)
+
+    output = core.std.MaskedMerge(c, cc, rainbow)
+
+    if show:
+        # hand the mask back in the source format, so the caller's chain keeps its
+        # colour family and the interlaced case still weaves
+        output = core.resize.Point(rainbow, format=c.format.id)
+
+    if interlaced:
+        output = core.std.DoubleWeave(output)
+        output = core.std.SelectEvery(output, cycle=2, offsets=0)
+
+    return output
