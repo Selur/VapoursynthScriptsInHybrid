@@ -742,9 +742,9 @@ class Engine:
     VapourSynth workers waited for it in the FrameEval callback.  That
     is a genuine circular wait: fetching the detection frames needs a
     VapourSynth worker, and every worker may be parked in the callback.
-    With core.num_threads=1 -- which Hybrid emits for HAVC-ExModel and
-    which the vsThreadCount option allows directly -- it deadlocked
-    reproducibly and produced no output at all.
+    With core.num_threads=1 -- which callers do set, and which some
+    filters require -- it deadlocked reproducibly and produced no
+    output at all.
 
     Computing inline removes the cycle: the thread that needs the
     decision is the thread that fetches it.  A synchronous get_frame

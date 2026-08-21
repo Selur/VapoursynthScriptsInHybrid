@@ -322,7 +322,7 @@ def santiag(
         elif type == 'eedi2':
             if not dh:
                 c = c.resize.Point(w, h // 2, src_top=1 - field)
-            # Take whichever EEDI2 is loaded - with opencl Hybrid loads eedi2cuda, not eedi2.
+            # Take whichever EEDI2 is loaded - with opencl that is usually eedi2cuda, not eedi2.
             if opencl and hasattr(core, 'eedi2cuda'):
                 return core.eedi2cuda.EEDI2(c, field=field)
             if hasattr(core, 'eedi2'):

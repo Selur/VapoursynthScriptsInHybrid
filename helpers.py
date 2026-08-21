@@ -404,8 +404,7 @@ def NNEDI3(clip: vs.VideoNode, gpu: Optional[bool] = None, device: Optional[int]
       gpu false     : znedi3, nnedi3, sneedif, nnedi3vk, vszipcu, nnedi3cl
 
     It is a preference, not a restriction - with `gpu=False` and only a GPU port loaded that port
-    is still used. Which of them exist is decided by whoever loaded the plugins; in Hybrid that is
-    Filtering->Vapoursynth->Tools->NNEDI3.
+    is still used. Which of them exist is decided by whoever loaded the plugins.
 
     Args:
         gpu: The caller's own opencl/gpu switch. Only reorders the search.
@@ -432,7 +431,7 @@ def NNEDI3(clip: vs.VideoNode, gpu: Optional[bool] = None, device: Optional[int]
 
 ## EEDI3 -----------------------------------------------------------------------------------------
 # (namespace, function, name of its device argument, parameters beyond the common set)
-# Older plugins stay in the list even though Hybrid no longer offers them.
+# Older plugins stay in the list for compatibility, even where they are rarely offered.
 _EEDI3_IMPLS = (
     ('eedi3vk2', 'EEDI3',   'device_index', ('planes', 'mclip', 'list_device', 'num_streams')),
     ('vszipcu',  'EEDI3',   'device_id',    ('num_streams',)),
@@ -467,7 +466,7 @@ def EEDI3(clip: vs.VideoNode, gpu: Optional[bool] = None, device: Optional[int] 
       gpu false     : vszip, eedi3m, then the GPU ones
 
     It is a preference, not a restriction. Which of them exist is decided by whoever loaded the
-    plugins; in Hybrid that is Filtering->Vapoursynth->Tools->EEDI3.
+    plugins.
 
     Not every implementation takes every argument - vszip and its GPU siblings have no `planes`
     (they always process every plane), and the CUDA/OpenCL ones no `mclip`. A call that uses one of
@@ -536,7 +535,7 @@ def DFTTest(clip: vs.VideoNode, cuda: Optional[bool] = None, **kwargs) -> vs.Vid
 
     Looked for in this order: core.vszipcu.DFTTest (CUDA), dfttest2.DFTTest (CUDA) and
     core.dfttest.DFTTest (CPU). Which of them is available is decided by whoever loaded the
-    plugins - in Hybrid that is Filtering->Vapoursynth->Prefer->DFTTest.
+    plugins.
 
     Args:
         cuda: False forces the CPU implementation, True and None look for a GPU one first.

@@ -146,9 +146,9 @@ def SMDegrain(input, tr=2, thSAD=300, thSADC=None, RefineMotion=False, contrasha
             pref = core.std.MaskedMerge(filtered, inputP, EXPR(GetPlane(inputP, 0), expr=[expr]), planes=planes)
         elif prefilter >= 4:
             # Takes the first NLMeans implementation that is loaded: nlm_ispc (CPU),
-            # nlm_cuda (CUDA), knlm (KNLMeansCL, OpenCL). Hybrid loads exactly one of
-            # them for this filter - nlm_ispc when 'opencl' is off, otherwise the one
-            # picked under Filtering->Vapoursynth->Misc->Tools->Tools->KNLMeansCL.
+            # nlm_cuda (CUDA), knlm (KNLMeansCL, OpenCL). Usually exactly one of
+            # them is loaded for this filter - nlm_ispc when 'opencl' is off,
+            # otherwise whichever GPU port was chosen.
             # device_type/device_id only reach knlm and nlm_cuda; 'device' is -1 or None
             # when no device was pinned, and neither plugin takes that as an index.
             pref = KNLMeansCL(inputP, d=1, a=1, h=7, device_type='gpu' if opencl else None,
