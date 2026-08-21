@@ -6,7 +6,7 @@ from typing import Sequence, Union, Optional
 
 import math
 
-from helpers import scale, Padding, DitherLumaRebuild, DFTTest, GetPlane
+from helpers import scale, Padding, DitherLumaRebuild, DFTTest, GetPlane, KNLMeansCL
 from misc import MV, MinBlur
 from sharpen import LSFmod, ContraSharpening
 from nnedi3_resample import nnedi3_resample
@@ -145,7 +145,14 @@ def SMDegrain(input, tr=2, thSAD=300, thSADC=None, RefineMotion=False, contrasha
             filtered = DFTTest(inputP, tbsize=1, slocation=[0.0,4.0, 0.2,9.0, 1.0,15.0], planes=planes)
             pref = core.std.MaskedMerge(filtered, inputP, EXPR(GetPlane(inputP, 0), expr=[expr]), planes=planes)
         elif prefilter >= 4:
-            pref = KNLMeansCL(inputP, d=1, a=1, h=7)
+            # Takes the first NLMeans implementation that is loaded: nlm_ispc (CPU),
+            # nlm_cuda (CUDA), knlm (KNLMeansCL, OpenCL). Hybrid loads exactly one of
+            # them for this filter - nlm_ispc when 'opencl' is off, otherwise the one
+            # picked under Filtering->Vapoursynth->Misc->Tools->Tools->KNLMeansCL.
+            # device_type/device_id only reach knlm and nlm_cuda; 'device' is -1 or None
+            # when no device was pinned, and neither plugin takes that as an index.
+            pref = KNLMeansCL(inputP, d=1, a=1, h=7, device_type='gpu' if opencl else None,
+                              device_id=device if isinstance(device, int) and device >= 0 else None)
         else:
             pref = MinBlur(inputP, r=prefilter, planes=planes)
     else:

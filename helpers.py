@@ -571,11 +571,21 @@ def KNLMeansCL(
     if not isinstance(clip, vs.VideoNode):
         raise vs.Error('KNLMeansCL: this is not a clip')
 
-    if clip.format.color_family != vs.YUV:
-        raise vs.Error('KNLMeansCL: this wrapper is intended to be used only for YUV format')
+    if clip.format.color_family not in (vs.YUV, vs.GRAY):
+        raise vs.Error('KNLMeansCL: this wrapper is intended to be used only for YUV and GRAY format')
 
     use_cuda = hasattr(core, 'nlm_cuda')
     use_ispc = hasattr(core, 'nlm_ispc')
+    # GRAY has no chroma to walk over, and all three plugins only accept channels='Y'
+    # there - 'YUV' wants 4:4:4 and 'UV' wants a YUV clip.
+    if clip.format.color_family == vs.GRAY:
+        if use_ispc:
+            return clip.nlm_ispc.NLMeans(d=d, a=a, s=s, h=h, channels='Y', wmode=wmode, wref=wref)
+        if use_cuda:
+            return clip.nlm_cuda.NLMeans(d=d, a=a, s=s, h=h, channels='Y', wmode=wmode, wref=wref, device_id=device_id)
+        return clip.knlm.KNLMeansCL(d=d, a=a, s=s, h=h, channels='Y', wmode=wmode, wref=wref, device_type=device_type,
+                                    device_id=device_id)
+
     subsampled = clip.format.subsampling_w > 0 or clip.format.subsampling_h > 0
     if use_ispc:
         nlmeans = clip.nlm_ispc.NLMeans
