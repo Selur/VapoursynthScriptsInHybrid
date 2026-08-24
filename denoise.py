@@ -680,7 +680,18 @@ def mClean(clip, thSAD=400, chroma=True, sharp=10, rn=14, deband=0, depth=0, str
     filt = core.std.ShufflePlanes([clean, uv], [0, 1, 2], vs.YUV)
 
     if deband:
-        filt = filt.f3kdb.Deband(range=16, preset="high" if chroma else "luma", grainy=defH/15, grainc=defH/16 if chroma else 0, output_depth=outbits)
+        grainy = defH/15
+        grainc = defH/16 if chroma else 0
+        if hasattr(core, 'vszip'):
+            # vszip.Deband is f3kdb on a 255 scale, f3kdb itself uses a 14 bit one. The preset
+            # "high" puts every plane at 64, "luma" leaves chroma at 0. See
+            # https://github.com/dnjulek/vapoursynth-zip/wiki/Deband#how-to-convert-args-from-neo_f3kdb-to-vszip
+            f3k = 255.0 / ((1 << 14) - 1)
+            thrc = 64 * f3k if chroma else 0
+            filt = core.vszip.Deband(filt, range=16, thr=[64 * f3k, thrc, thrc], grain=[grainy * f3k, grainc * f3k])
+        else:
+            deband_func = core.neo_f3kdb.Deband if hasattr(core, 'neo_f3kdb') else core.f3kdb.Deband
+            filt = deband_func(filt, range=16, preset="high" if chroma else "luma", grainy=grainy, grainc=grainc, output_depth=outbits)
         clean = core.std.ShufflePlanes(filt, [0], vs.GRAY)
         filt = core.vcm.Veed(filt) if deband == 2 else filt
 
