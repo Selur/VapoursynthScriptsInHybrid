@@ -6,7 +6,7 @@ import importlib
 from functools import partial
 from typing import Any, Mapping, Optional, Sequence, Union, TypeVar
 
-from helpers import Depth, scale_value, DitherLumaRebuild, KNLMeansCL, DFTTest, NNEDI3 as _NNEDI3, EEDI3 as _EEDI3
+from helpers import Depth, scale_value, DitherLumaRebuild, KNLMeansCL, NLMeans, DFTTest, NNEDI3 as _NNEDI3, EEDI3 as _EEDI3
 from misc import MV, mt_clamp
 
 
@@ -829,13 +829,7 @@ def QTGMC(
             if ChromaNoise and not is_gray:
                 dnWindow = KNLMeansCL(noiseWindow, d=NoiseTR, h=Sigma)
             else:
-                if hasattr(core, 'nlm_ispc'):  
-                  nlmeans_func = noiseWindow.nlm_ispc.NLMeans
-                elif hasattr(core, 'nlm_cuda'):
-                  nlmeans_func = noiseWindow.nlm_cuda.NLMeans
-                else:
-                  nlmeans_func = noiseWindow.knlm.KNLMeansCL
-                dnWindow = nlmeans_func(d=NoiseTR, h=Sigma)
+                dnWindow = NLMeans(noiseWindow, d=NoiseTR, h=Sigma)
         else:
             fft3d_func = noiseWindow.neo_fft3d.FFT3D if hasattr(core, 'neo_fft3d') else noiseWindow.fft3dfilter.FFT3DFilter
             dnWindow = fft3d_func(sigma=Sigma, planes=CNplanes, bt=noiseTD, ncpu=FftThreads)

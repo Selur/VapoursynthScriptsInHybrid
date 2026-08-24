@@ -555,6 +555,46 @@ def DFTTest(clip: vs.VideoNode, cuda: Optional[bool] = None, **kwargs) -> vs.Vid
     return core.dfttest.DFTTest(clip, **kwargs)
 
 
+# The NLMeans implementations, in the order they are preferred when more than one is loaded.
+# The name of the call differs only for KNLMeansCL.
+_NLMEANS_IMPLEMENTATIONS = (('nlm_ispc', 'NLMeans'), ('nlm_cuda', 'NLMeans'), ('vszipcu', 'NLMeans'),
+                            ('vszipcl', 'NLMeans'), ('knlm', 'KNLMeansCL'))
+
+
+def NLMeans(
+    clip: vs.VideoNode,
+    d: Optional[int] = None,
+    a: Optional[int] = None,
+    s: Optional[int] = None,
+    h: Optional[float] = None,
+    channels: Optional[str] = None,
+    wmode: Optional[int] = None,
+    wref: Optional[float] = None,
+    rclip: Optional[vs.VideoNode] = None,
+    device_type: Optional[str] = None,
+    device_id: Optional[int] = None,
+) -> vs.VideoNode:
+    """Calls the NLMeans implementation that is loaded, with the arguments it understands.
+
+    d, a, s, h, channels, wmode, wref and rclip mean the same everywhere. device_type exists in
+    knlm alone, device_id in everything but nlm_ispc; a negative device_id means "the plugin
+    picks" and is left out.
+    """
+    for namespace, name in _NLMEANS_IMPLEMENTATIONS:
+        if not hasattr(core, namespace):
+            continue
+        kwargs = {'d': d, 'a': a, 's': s, 'h': h, 'channels': channels, 'wmode': wmode,
+                  'wref': wref, 'rclip': rclip}
+        kwargs = {key: value for key, value in kwargs.items() if value is not None}
+        if device_id is not None and device_id >= 0 and namespace != 'nlm_ispc':
+            kwargs['device_id'] = device_id
+        if device_type is not None and namespace == 'knlm':
+            kwargs['device_type'] = device_type
+        return getattr(getattr(core, namespace), name)(clip, **kwargs)
+    raise vs.Error('NLMeans: none of %s is loaded'
+                   % ', '.join(namespace for namespace, _ in _NLMEANS_IMPLEMENTATIONS))
+
+
 # Taken from havsfunc
 def KNLMeansCL(
     clip: vs.VideoNode,
@@ -567,44 +607,21 @@ def KNLMeansCL(
     device_type: Optional[str] = None,
     device_id: Optional[int] = None,
 ) -> vs.VideoNode:
+    """Runs NLMeans over every plane, in the one or two passes the clip's sampling calls for."""
     if not isinstance(clip, vs.VideoNode):
         raise vs.Error('KNLMeansCL: this is not a clip')
 
     if clip.format.color_family not in (vs.YUV, vs.GRAY):
         raise vs.Error('KNLMeansCL: this wrapper is intended to be used only for YUV and GRAY format')
 
-    use_cuda = hasattr(core, 'nlm_cuda')
-    use_ispc = hasattr(core, 'nlm_ispc')
-    # GRAY has no chroma to walk over, and all three plugins only accept channels='Y'
+    args = dict(d=d, a=a, s=s, h=h, wmode=wmode, wref=wref, device_type=device_type, device_id=device_id)
+    # GRAY has no chroma to walk over, and every implementation only accepts channels='Y'
     # there - 'YUV' wants 4:4:4 and 'UV' wants a YUV clip.
     if clip.format.color_family == vs.GRAY:
-        if use_ispc:
-            return clip.nlm_ispc.NLMeans(d=d, a=a, s=s, h=h, channels='Y', wmode=wmode, wref=wref)
-        if use_cuda:
-            return clip.nlm_cuda.NLMeans(d=d, a=a, s=s, h=h, channels='Y', wmode=wmode, wref=wref, device_id=device_id)
-        return clip.knlm.KNLMeansCL(d=d, a=a, s=s, h=h, channels='Y', wmode=wmode, wref=wref, device_type=device_type,
-                                    device_id=device_id)
+        return NLMeans(clip, channels='Y', **args)
 
-    subsampled = clip.format.subsampling_w > 0 or clip.format.subsampling_h > 0
-    if use_ispc:
-        nlmeans = clip.nlm_ispc.NLMeans
-        if subsampled:
-          clip = nlmeans(d=d, a=a, s=s, h=h, channels='Y', wmode=wmode, wref=wref)
-          return nlmeans(d=d, a=a, s=s, h=h, channels='UV', wmode=wmode, wref=wref)
-        else:
-          return nlmeans(d=d, a=a, s=s, h=h, channels='YUV', wmode=wmode, wref=wref)
-    if use_cuda:
-        nlmeans = clip.nlm_cuda.NLMeans
-        if subsampled:
-          clip = nlmeans(d=d, a=a, s=s, h=h, channels='Y', wmode=wmode, wref=wref, device_id=device_id)
-          return nlmeans(d=d, a=a, s=s, h=h, channels='UV', wmode=wmode, wref=wref, device_id=device_id)
-        else:
-          return nlmeans(d=d, a=a, s=s, h=h, channels='YUV', wmode=wmode, wref=wref, device_id=device_id)
-    else:
-      nlmeans = clip.knlm.KNLMeansCL
-      if subsampled:
-          clip = nlmeans(d=d, a=a, s=s, h=h, channels='Y', wmode=wmode, wref=wref, device_type=device_type, device_id=device_id)
-          return nlmeans(d=d, a=a, s=s, h=h, channels='UV', wmode=wmode, wref=wref, device_type=device_type, device_id=device_id)
-      else:
-          return nlmeans(d=d, a=a, s=s, h=h, channels='YUV', wmode=wmode, wref=wref, device_type=device_type, device_id=device_id)
-          
+    # 'YUV' measures the patch distance over all three planes at once and therefore needs one
+    # chroma pixel per luma pixel; subsampled clips get luma and chroma in two passes instead.
+    if clip.format.subsampling_w > 0 or clip.format.subsampling_h > 0:
+        return NLMeans(NLMeans(clip, channels='Y', **args), channels='UV', **args)
+    return NLMeans(clip, channels='YUV', **args)

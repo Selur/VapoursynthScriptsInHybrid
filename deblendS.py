@@ -139,7 +139,7 @@ denoise     str|None    Purely spatial pre-denoise applied to dclip before
                             moderate grain, ringing artefacts.
                         "NLMeans" — Non-local means spatial denoise
                             (d=0, purely single-frame, no temporal radius).
-                            Requires the nlm_cuda or nlm_ispc plugin.
+                            Requires an NLMeans plugin, see helpers.NLMeans.
                             h=7 on luma, chroma untouched (detection is
                             luma-only after the thumbnail downscale).
                             Good for: heavy film grain, analog noise where
@@ -253,7 +253,7 @@ import threading
 from dataclasses import dataclass
 from typing import Optional, Union
 
-from helpers import GetPlane, cround, scale_value
+from helpers import GetPlane, NLMeans, cround, scale_value
 
 import vapoursynth as vs
 
@@ -981,11 +981,8 @@ def _apply_dclip_denoise(
         dclip = _rg(dclip, mode=[12, _c2, _c2])
 
     elif method == "nlmeans":
-        # Plugin priority: nlm_ispc > nlm_cuda > knlm.KNLMeansCL
-        # nlm_ispc is preferred because it is consistently faster on CPU
-        # than knlm and does not require a specific OpenCL device.
-        # nlm_cuda is second choice (GPU, fastest when available).
-        # KNLMeansCL (knlm) is the fallback — widely installed, slower.
+        # helpers.NLMeans takes whichever implementation is loaded and passes on the
+        # arguments that one understands.
         #
         # d=0  — purely spatial, NO temporal radius.  Critical: d>0 would
         #        pull information from neighbouring frames and corrupt the
@@ -1010,30 +1007,11 @@ def _apply_dclip_denoise(
         else:
             passes = ['YUV' if do_chroma else 'Y']
 
-        # Common kwargs shared across all backends / passes.
+        # Common kwargs shared across all passes.
         kw = dict(d=0, a=2, s=3, h=nlmeans_h, wmode=0, wref=1.0)
 
-        if hasattr(core, 'nlm_ispc'):
-            for ch in passes:
-                dclip = dclip.nlm_ispc.NLMeans(**kw, channels=ch)
-
-        elif hasattr(core, 'nlm_cuda'):
-            for ch in passes:
-                dclip = dclip.nlm_cuda.NLMeans(**kw, channels=ch)
-
-        elif hasattr(core, 'knlm'):
-            # KNLMeansCL has no wmode/wref and only supports 4:4:4 or
-            # per-plane calls for subsampled input.
-            for ch in passes:
-                dclip = dclip.knlm.KNLMeansCL(d=0, a=2, s=3, h=nlmeans_h,
-                                              channels=ch)
-
-        else:
-            raise vs.Error(
-                "deblendS: denoise='NLMeans' requires one of the following "
-                "plugins to be installed: nlm_ispc, nlm_cuda, or knlm "
-                "(KNLMeansCL)."
-            )
+        for ch in passes:
+            dclip = NLMeans(dclip, channels=ch, **kw)
 
     else:
         raise vs.Error(

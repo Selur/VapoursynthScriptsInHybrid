@@ -6,7 +6,7 @@ import math
 import sys
 import json
 
-from helpers import NNEDI3 as _NNEDI3
+from helpers import NLMeans as _NLMeans, NNEDI3 as _NNEDI3
 
 fmtc_args                      = dict(fulls=True, fulld=True)
 msuper_args                    = dict(hpad=0, vpad=0, sharp=2, levels=0)
@@ -41,11 +41,8 @@ class get_core:
           # --- DFTTest selection ---
           self.DFTTest = self.core.dfttest.DFTTest
 
-          # --- KNLMeansCL ---
-          if hasattr(self.core, 'nlm_cuda'):
-              self.KNLMeansCL = self.core.nlm_cuda.NLMeans
-          else:
-              self.KNLMeansCL = self.core.knlm.KNLMeansCL
+          # --- NLMeans ---
+          self.KNLMeansCL = _NLMeans
 
           # --- NNEDI ---
           self.NNEDI = _NNEDI3

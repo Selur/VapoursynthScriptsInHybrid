@@ -9,6 +9,7 @@ except ImportError:
 
 from misc import MV
 from color import LimitFilter
+from helpers import NLMeans
 
 def _boxblur_fn():
     """Pick the best available BoxBlur."""
@@ -17,9 +18,7 @@ def _boxblur_fn():
 
 def _nlmeans_gray(clip: vs.VideoNode, d: int, a: int, s: int, h: float) -> vs.VideoNode:
     """NLMeans on a GRAY clip, using whichever NLMeans plugin is available."""
-    if hasattr(core, 'nlm_ispc'): return core.nlm_ispc.NLMeans(clip, d=d, a=a, s=s, h=h)
-    if hasattr(core, 'nlm_cuda'): return core.nlm_cuda.NLMeans(clip, d=d, a=a, s=s, h=h)
-    return core.knlm.KNLMeansCL(clip, d=d, a=a, s=s, h=h)
+    return NLMeans(clip, d=d, a=a, s=s, h=h)
 
 # DeStripe works on YUVXXXPY
 # "low frequency" stripes/bands removal filter

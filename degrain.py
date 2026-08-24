@@ -5,7 +5,7 @@ from vapoursynth import core
 import math
 
 from typing import Sequence, Union, Optional
-from helpers import scale_value, cround, m4, DitherLumaRebuild, KNLMeansCL, DFTTest
+from helpers import scale_value, cround, m4, DitherLumaRebuild, KNLMeansCL, NLMeans, DFTTest
 from misc import MV, MinBlur
 from color import LimitFilter
 from sharpen import ContraSharpening
@@ -710,12 +710,7 @@ def TemporalDegrain2(clip, degrainTR=1, degrainPlane=4, grainLevel=2, grainLevel
       if ChromaNoise:
         dnWindow = KNLMeansCL(noiseWindow, d=postTR, a=2, h=postSigma/2, device_id=knlDevId)
       else:
-        use_cuda = hasattr(core, 'nlm_cuda')
-        if use_cuda:
-          nlmeans = clip.nlm_cuda.NLMeans
-        else:
-          nlmeans = clip.knlm.KNLMeansCL
-        dnWindow = nlmeans(noiseWindow, d=postTR, a=2, h=postSigma/2, device_id=knlDevId)
+        dnWindow = NLMeans(noiseWindow, d=postTR, a=2, h=postSigma/2, device_id=knlDevId)
     elif postFFT > 0:
         if postFFT == 1 and hasattr(core, 'neo_fft3d'):
           dnWindow = core.neo_fft3d.FFT3D(noiseWindow, sigma=postSigma, planes=fPlane, bt=postTD, ncpu=fftThreads, bw=postBlkSize, bh=postBlkSize)
