@@ -336,9 +336,178 @@ def _expr2(clips: vs.VideoNode | list[vs.VideoNode], expr: str | list[str]) -> v
             "none found. Install akarin or cranexpr into your VS plugins folder."
     )
 
+# --- Hans' Ringing Remover ----------------------------------------------------
+#
+# Ports of the AviSynth+ functions AntiRingLR, AntiRingLR2, AntiRingL2R2 and
+# AntiRing22LR. Each of them is a single Expr made of two to four blocks. A
+# block measures the local edge strength, subtracts the radius-2 and radius-3
+# protection terms from it, turns what is left into a sigmoid gate and
+# multiplies that gate with a pixel delta taken at offsetL/offsetR. The block
+# results are combined and finally added to the source pixel.
+#
+# The AviSynth originals call Expr with scale_inputs="allf", which evaluates the
+# expression in the 0..255 range and scales the result back afterwards. Here the
+# working clip is float 0..1, so every absolute constant of the original has to
+# be divided by 255 -- including the two constants of the sigmoid gate, which is
+# what gate_scale does. The "256.0 /" the original applies to the pixel delta is
+# folded into the weight as 255/256.
+#
+# Tap notation: (a, b, coeff) stands for  x[a,0] x[b,0] - dup * coeff *
+
+_AR_S128 = 128.0 / 255.0
+_AR_S64 = 64.0 / 255.0
+_AR_S127 = 127.0 / 255.0
+
+# edge measure windows
+_AR_W0 = ((2, 1, 0.75), (1, 0, 1.0), (0, -1, 1.0), (-1, -2, 0.75))
+_AR_WL2 = ((3, 2, 0.75), (2, 1, 1.0), (1, 0, 1.0), (0, -1, 0.75))
+_AR_WR2 = ((1, 0, 0.75), (0, -1, 1.0), (-1, -2, 1.0), (-2, -3, 0.75))
+
+# One entry per block: (edge window, pr2 taps, pr3 taps, (near, far) of the
+# corrected pixel delta, side the weight and offset come from, weight factor,
+# operator that combines this block with the ones before it).
+# The tap tables are transcribed one by one and are deliberately not symmetric:
+# AntiRing22LR reuses the radius-3 taps of AntiRingLR under the edge window of
+# AntiRingLR2, and the last block of AntiRingL2R2/AntiRing22LR uses 0.55 where
+# AntiRingLR2 uses 0.6.
+_AR_MODES = {
+    "LR": (
+        (_AR_W0,
+         ((3, 1, 0.66), (2, 0, 1.0), (1, -1, 1.0), (0, -2, 0.66)),
+         ((3, 0, 0.5), (2, -1, 1.0), (1, -2, 1.0), (0, -3, 0.66)),
+         (0, 2), "L", 1.0, ""),
+        (_AR_W0,
+         ((-3, -1, 0.66), (-2, 0, 1.0), (-1, 1, 1.0), (0, 2, 0.66)),
+         ((-3, 0, 0.5), (-2, 1, 1.0), (-1, 2, 1.0), (0, 3, 0.66)),
+         (0, 2), "R", 1.0, "+"),
+    ),
+    "LR2": (
+        (_AR_W0,
+         ((3, 1, 0.66), (2, 0, 1.0), (1, -1, 1.0), (0, -2, 0.66)),
+         ((3, 0, 0.5), (2, -1, 1.0), (1, -2, 1.0), (0, -3, 0.66)),
+         (0, 2), "L", 1.0, ""),
+        (_AR_W0,
+         ((-3, -1, 0.66), (-2, 0, 1.0), (-1, 1, 1.0), (0, 2, 0.66)),
+         ((-3, 0, 0.5), (-2, 1, 1.0), (-1, 2, 1.0), (0, 3, 0.66)),
+         (0, 2), "R", 1.0, "+"),
+        (_AR_WR2,
+         ((-4, -2, 0.66), (-3, -1, 1.0), (-2, 0, 1.0), (-1, 1, 0.66)),
+         ((-4, -1, 0.5), (-3, 0, 1.0), (-2, 1, 1.0), (-1, 2, 0.66)),
+         (1, 3), "R", 0.6, "-"),
+    ),
+    "L2R2": (
+        (_AR_W0,
+         ((3, 1, 0.45), (2, 0, 0.77), (1, -1, 1.0), (0, -2, 0.77), (-1, -3, 0.45)),
+         ((3, 0, 0.5), (2, -1, 1.0), (1, -2, 1.0), (0, -3, 0.5)),
+         (0, 2), "L", 1.0, ""),
+        (_AR_WL2,
+         ((4, 2, 0.66), (3, 1, 1.0), (2, 0, 1.0), (1, -1, 0.66)),
+         ((4, 1, 0.66), (3, 0, 1.0), (2, -1, 1.0), (1, -2, 0.5)),
+         (1, 3), "L", 0.6, "+"),
+        (_AR_W0,
+         ((-3, -1, 0.45), (-2, 0, 0.77), (-1, 1, 1.0), (0, 2, 0.77), (1, 3, 0.45)),
+         ((-3, 0, 0.5), (-2, 1, 1.0), (-1, 2, 1.0), (0, 3, 0.5)),
+         (0, 2), "R", 1.0, "+"),
+        (_AR_WR2,
+         ((-4, -2, 0.66), (-3, -1, 1.0), (-2, 0, 1.0), (-1, 1, 0.66)),
+         ((-4, -1, 0.5), (-3, 0, 1.0), (-2, 1, 1.0), (-1, 2, 0.66)),
+         (1, 3), "R", 0.55, "-"),
+    ),
+    "22LR": (
+        (_AR_W0,
+         ((2, 0, 0.45), (1, -1, 0.77), (0, -2, 1.0), (-1, -3, 0.77), (-2, -4, 0.45)),
+         ((2, -1, 0.5), (1, -2, 1.0), (0, -3, 1.0), (-1, -4, 0.5)),
+         (0, 2), "L", 1.0, ""),
+        (_AR_WL2,
+         ((3, 1, 0.66), (2, 0, 1.0), (1, -1, 1.0), (0, -2, 0.66)),
+         ((3, 0, 0.66), (2, -1, 1.0), (1, -2, 1.0), (0, -3, 0.5)),
+         (1, 3), "L", 0.6, "+"),
+        (_AR_W0,
+         ((-2, 0, 0.45), (-1, 1, 0.77), (0, 2, 1.0), (1, 3, 0.77), (2, 4, 0.45)),
+         ((-2, 1, 0.5), (-1, 2, 1.0), (0, 3, 1.0), (1, 4, 0.5)),
+         (0, 2), "R", 1.0, "+"),
+        (_AR_WR2,
+         ((-3, -1, 0.66), (-2, 0, 1.0), (-1, 1, 1.0), (0, 2, 0.66)),
+         ((-3, 0, 0.5), (-2, 1, 1.0), (-1, 2, 1.0), (0, 3, 0.66)),
+         (1, 3), "R", 0.55, "-"),
+    ),
+}
+
+
+def _ar_terms(taps) -> str:
+    """RPN for sqrt(sum of weighted squared neighbour differences)."""
+    parts = []
+    for index, (a, b, coeff) in enumerate(taps):
+        term = f"x[{a},0] x[{b},0] - dup * "
+        if coeff != 1.0:
+            term += f"{coeff} * "
+        parts.append(term if index == 0 else term + "+ ")
+    return "".join(parts) + "sqrt "
+
+
+def _ar_block(spec, weightL: float, offsetL: int, weightR: float, offsetR: int,
+              pr2_coeff: float, pr3_coeff: float, gate_scale: float, gate_bias: float) -> str:
+    window, pr2_taps, pr3_taps, (near, far), side, factor, combine = spec
+    if side == "L":
+        weight, p, q = weightL * factor, offsetL + near, offsetL + far
+    else:
+        weight, p, q = weightR * factor, -(offsetR + near), -(offsetR + far)
+    weight *= 255.0 / 256.0  # the original divides the delta by 256, the float clip carries 255
+    return (
+        _ar_terms(window)
+        + _ar_terms(pr2_taps) + f"{pr2_coeff} * - "
+        + _ar_terms(pr3_taps) + f"{pr3_coeff} * - "
+        + f"{gate_scale} / {gate_bias} - 0.0 max "
+        + f"dup 1.0 - swap 1.0 + / 1.0 + {_AR_S128} * 1.0 min "
+        + f"x[{p},0] x[{q},0] - * {weight} * -{_AR_S64} max {_AR_S127} min "
+        + (f"{combine} " if combine else "")
+    )
+
+
+def _ar_expr(mode: str, weightL: float, offsetL: int, weightR: float, offsetR: int,
+             knee: float, pr2: float, pr3: float) -> str:
+    pr2_coeff = pr2 * 0.36
+    pr3_coeff = pr3 * 0.3
+    # 10.0/knee and 0.5*knee are 8 bit constants; the working clip is float
+    # 0..1, so the edge measure is lifted into the 0..255 range first
+    gate_scale = 10.0 / (knee * 255.0)
+    gate_bias = 0.5 * knee
+    blocks = (_ar_block(spec, weightL, offsetL, weightR, offsetR, pr2_coeff, pr3_coeff, gate_scale, gate_bias)
+              for spec in _AR_MODES[mode])
+    return "".join(blocks) + "x + "
+
+
+def _ar_apply(cl: vs.VideoNode, planes: str, expr: str) -> vs.VideoNode:
+    """Run expr on the requested planes; the output format matches the input."""
+    fmt_in = cl.format
+    is_gray = fmt_in.color_family == vs.GRAY
+    work_fmt = vs.GRAYS if is_gray else vs.YUV444PS
+
+    # Full scale in both directions, like the scale_inputs="allf" of the
+    # original: an integer step of one is 1/255 in the working clip, for luma
+    # and chroma alike, whatever the range of the source. With the default
+    # (limited) handling the factor would be 1/219 for luma and 1/224 for
+    # chroma, and the gate constants below would fit neither.
+    #
+    # range_in_s alone does not do it: a _Range/_ColorRange frame property
+    # takes precedence over the argument (measured), and a clip coming out of
+    # a player or a script generator carries one. Without dropping it first the
+    # clip is read as limited and written as full, which stretches the levels.
+    # CopyFrameProps puts the original properties back at the end.
+    tagless = core.std.RemoveFrameProps(cl, props=["_Range", "_ColorRange"])
+    cl_f = core.resize.Bicubic(tagless, format=work_fmt, range_in_s="full", range_s="full")
+
+    expr_y = expr if planes in ("luma", "all") else "x"
+    expr_c = expr if planes in ("chroma", "all") else "x"
+    expr_list = [expr_y] if is_gray else [expr_y, expr_c, expr_c]
+
+    result = core.resize.Bicubic(_expr2(cl_f, expr_list), format=fmt_in, range_in_s="full", range_s="full")
+    return core.std.CopyFrameProps(result, cl)
+
+
 def AntiRingLR(
     cl: vs.VideoNode,
-    planes: str = "all",
+    planes: str = "luma",
     weightL: float = 0.25,
     offsetL: int = 1,
     weightR: float = 0.25,
@@ -349,13 +518,14 @@ def AntiRingLR(
 ) -> vs.VideoNode:
     """
     Hans' Ringing Remover — VapourSynth port.
-    Output format always matches input format.
+    One correction lobe per side. Output format always matches input format.
 
     Parameters
     ----------
     cl      : Input clip.
     planes  : "luma", "chroma", or "all".
-    weightL : Left-side correction intensity  (0.15 – 0.7; 0.0 = inactive).
+    weightL : Left-side correction intensity  (0.15 – 0.7; 0.0 = inactive,
+              negative reverses the polarity of the correction).
     offsetL : Left-side distance from edge    (1 – 3).
     weightR : Right-side correction intensity.
     offsetR : Right-side distance from edge   (1 – 3).
@@ -363,82 +533,10 @@ def AntiRingLR(
     pr2     : Protection for radius-2 signal components (0.0 – 1.5).
     pr3     : Protection for radius-3 signal components (0.0 – 1.5).
     """
+    return _ar_apply(cl, planes, _ar_expr("LR", weightL, offsetL, weightR, offsetR, knee, pr2, pr3))
 
- 
 
-    fmt_in   = cl.format
-    is_gray  = fmt_in.color_family == vs.GRAY
-    work_fmt = vs.GRAYS if is_gray else vs.YUV444PS
 
-    cl_f = core.resize.Bicubic(cl, format=work_fmt)
-
-    pr2_coeff = pr2 * 0.36
-    pr3_coeff = pr3 * 0.3
-    scale     = 10.0 / knee
-    bias      = 0.5  * knee
-
-    s128 = 128.0 / 255.0
-    s64  =  64.0 / 255.0
-    s127 = 127.0 / 255.0
-
-    luma_L = (
-        "x[2,0] x[1,0] - dup * 0.75 * "
-        "x[1,0] x - dup * + "
-        "x x[-1,0] - dup * + "
-        "x[-1,0] x[-2,0] - dup * 0.75 * + sqrt "
-    )
-
-    prot_L = (
-        f"x[3,0] x[1,0] - dup * 0.66 * x[2,0] x[0,0] - dup * + "
-        f"x[1,0] x[-1,0] - dup * + x[0,0] x[-2,0] - dup * 0.66 * + sqrt {pr2_coeff} * - "
-        f"x[3,0] x[0,0] - dup * 0.5 * x[2,0] x[-1,0] - dup * + "
-        f"x[1,0] x[-2,0] - dup * + x[0,0] x[-3,0] - dup * 0.66 * + sqrt {pr3_coeff} * - "
-    )
-
-    sigmoid_correct_L = (
-        f"{scale} / {bias} - 0.0 max "
-        f"dup 1.0 - swap 1.0 + / 1.0 + {s128} * 1.0 min "
-        f"x[{offsetL},0] x[{2 + offsetL},0] - * {weightL} * -{s64} max {s127} min "
-    )
-
-    luma_R = (
-        "x[2,0] x[1,0] - dup * 0.75 * "
-        "x[1,0] x - dup * + "
-        "x x[-1,0] - dup * + "
-        "x[-1,0] x[-2,0] - dup * 0.75 * + sqrt "
-    )
-
-    prot_R = (
-        f"x[-3,0] x[-1,0] - dup * 0.66 * x[-2,0] x[0,0] - dup * + "
-        f"x[-1,0] x[1,0] - dup * + x[0,0] x[2,0] - dup * 0.66 * + sqrt {pr2_coeff} * - "
-        f"x[-3,0] x[0,0] - dup * 0.5 * x[-2,0] x[1,0] - dup * + "
-        f"x[-1,0] x[2,0] - dup * + x[0,0] x[3,0] - dup * 0.66 * + sqrt {pr3_coeff} * - "
-    )
-
-    sigmoid_correct_R = (
-        f"{scale} / {bias} - 0.0 max "
-        f"dup 1.0 - swap 1.0 + / 1.0 + {s128} * 1.0 min "
-        f"x[{-offsetR},0] x[{-2 - offsetR},0] - * {weightR} * -{s64} max {s127} min + x + "
-    )
-
-    expr = (
-        luma_L + prot_L + sigmoid_correct_L
-        + luma_R + prot_R + sigmoid_correct_R
-    )
-
-    do_luma   = planes in ("luma",   "all")
-    do_chroma = planes in ("chroma", "all")
-
-    expr_y = expr if do_luma   else "x"
-    expr_u = expr if do_chroma else "x"
-    expr_v = expr if do_chroma else "x"
-    expr_list = [expr_y] if is_gray else [expr_y, expr_u, expr_v]
-
-    result = _expr2(cl_f, expr_list)
-
-    return core.resize.Bicubic(result, format=fmt_in)
-    
-    
 def AntiRingLRUD(
     cl: vs.VideoNode,
     planes: str = "all",
@@ -494,7 +592,8 @@ def AntiRingLR2(
     ----------
     cl      : Input clip.
     planes  : "luma", "chroma", or "all".
-    weightL : Left-side correction intensity  (0.15 – 0.7; 0.0 = inactive).
+    weightL : Left-side correction intensity  (0.15 – 0.7; 0.0 = inactive,
+              negative reverses the polarity of the correction).
     offsetL : Left-side distance from edge    (1 – 3).
     weightR : Right-side correction intensity.
     offsetR : Right-side distance from edge   (1 – 3).
@@ -502,102 +601,78 @@ def AntiRingLR2(
     pr2     : Protection for radius-2 signal components (0.0 – 1.5).
     pr3     : Protection for radius-3 signal components (0.0 – 1.5).
     """
+    return _ar_apply(cl, planes, _ar_expr("LR2", weightL, offsetL, weightR, offsetR, knee, pr2, pr3))
 
-    fmt_in   = cl.format
-    is_gray  = fmt_in.color_family == vs.GRAY
-    work_fmt = vs.GRAYS if is_gray else vs.YUV444PS
 
-    cl_f = core.resize.Bicubic(cl, format=work_fmt)
+def AntiRingL2R2(
+    cl: vs.VideoNode,
+    planes: str = "luma",
+    weightL: float = 0.25,
+    offsetL: int = 1,
+    weightR: float = 0.25,
+    offsetR: int = 1,
+    knee: float = 0.7,
+    pr2: float = 0.5,
+    pr3: float = 0.5,
+) -> vs.VideoNode:
+    """
+    Hans' Ringing Remover — two correction lobes on each side.
+    The secondary lobes sit one pixel further out and are weaker
+    (weightL * 0.6 on the left, weightR * 0.55 on the right); the primary
+    protection terms cover five taps instead of four.
 
-    pr2_coeff  = pr2 * 0.36
-    pr3_coeff  = pr3 * 0.3
-    scale      = 10.0 / knee
-    bias       = 0.5  * knee
-    weightR2   = weightR * 0.6
+    Parameters
+    ----------
+    cl      : Input clip.
+    planes  : "luma", "chroma", or "all".
+    weightL : Left-side correction intensity  (0.15 – 0.7; 0.0 = inactive,
+              negative reverses the polarity of the correction).
+    offsetL : Left-side distance from edge    (1 – 6; higher values suit
+              upsampled material).
+    weightR : Right-side correction intensity.
+    offsetR : Right-side distance from edge   (1 – 6).
+    knee    : Softness of the on/off curve    (0.2 – 1.5).
+    pr2     : Protection for radius-2 signal components (0.0 – 1.5).
+    pr3     : Protection for radius-3 signal components (0.0 – 1.5).
+    """
+    return _ar_apply(cl, planes, _ar_expr("L2R2", weightL, offsetL, weightR, offsetR, knee, pr2, pr3))
 
-    s128 = 128.0 / 255.0
-    s64  =  64.0 / 255.0
-    s127 = 127.0 / 255.0
 
-    # --- Left-side block ---
-    luma_L = (
-        "x[2,0] x[1,0] - dup * 0.75 * "
-        "x[1,0] x - dup * + "
-        "x x[-1,0] - dup * + "
-        "x[-1,0] x[-2,0] - dup * 0.75 * + sqrt "
-    )
-    prot_L = (
-        f"x[3,0] x[1,0] - dup * 0.66 * x[2,0] x[0,0] - dup * + "
-        f"x[1,0] x[-1,0] - dup * + x[0,0] x[-2,0] - dup * 0.66 * + sqrt {pr2_coeff} * - "
-        f"x[3,0] x[0,0] - dup * 0.5 * x[2,0] x[-1,0] - dup * + "
-        f"x[1,0] x[-2,0] - dup * + x[0,0] x[-3,0] - dup * 0.66 * + sqrt {pr3_coeff} * - "
-    )
-    sigmoid_correct_L = (
-        f"{scale} / {bias} - 0.0 max "
-        f"dup 1.0 - swap 1.0 + / 1.0 + {s128} * 1.0 min "
-        f"x[{offsetL},0] x[{2 + offsetL},0] - * {weightL} * -{s64} max {s127} min "
-    )
+def AntiRing22LR(
+    cl: vs.VideoNode,
+    planes: str = "luma",
+    weightL: float = 0.25,
+    offsetL: int = 1,
+    weightR: float = 0.25,
+    offsetR: int = 1,
+    knee: float = 0.7,
+    pr2: float = 0.5,
+    pr3: float = 0.5,
+) -> vs.VideoNode:
+    """
+    Hans' Ringing Remover — two correction lobes on each side, with the
+    protection windows of the primary lobes shifted outwards. Tuned for NTSC
+    DVD signal structure; the correction fades once the target moves out of
+    the sampling window, which limits how far the source can be upsampled.
 
-    # --- Right-side primary block ---
-    luma_R = (
-        "x[2,0] x[1,0] - dup * 0.75 * "
-        "x[1,0] x - dup * + "
-        "x x[-1,0] - dup * + "
-        "x[-1,0] x[-2,0] - dup * 0.75 * + sqrt "
-    )
-    prot_R = (
-        f"x[-3,0] x[-1,0] - dup * 0.66 * x[-2,0] x[0,0] - dup * + "
-        f"x[-1,0] x[1,0] - dup * + x[0,0] x[2,0] - dup * 0.66 * + sqrt {pr2_coeff} * - "
-        f"x[-3,0] x[0,0] - dup * 0.5 * x[-2,0] x[1,0] - dup * + "
-        f"x[-1,0] x[2,0] - dup * + x[0,0] x[3,0] - dup * 0.66 * + sqrt {pr3_coeff} * - "
-    )
-    sigmoid_correct_R = (
-        f"{scale} / {bias} - 0.0 max "
-        f"dup 1.0 - swap 1.0 + / 1.0 + {s128} * 1.0 min "
-        f"x[{-offsetR},0] x[{-2 - offsetR},0] - * {weightR} * -{s64} max {s127} min + "
-    )
+    Parameters
+    ----------
+    cl      : Input clip.
+    planes  : "luma", "chroma", or "all".
+    weightL : Left-side correction intensity  (0.15 – 1.5; 0.0 = inactive,
+              negative reverses the polarity of the correction; higher offsets
+              usually need higher weights).
+    offsetL : Left-side distance from edge    (1 – 7).
+    weightR : Right-side correction intensity.
+    offsetR : Right-side distance from edge   (1 – 7).
+    knee    : Softness of the on/off curve    (0.2 – 1.5).
+    pr2     : Protection for radius-2 signal components (0.0 – 1.5).
+    pr3     : Protection for radius-3 signal components (0.0 – 1.5).
+    """
+    return _ar_apply(cl, planes, _ar_expr("22LR", weightL, offsetL, weightR, offsetR, knee, pr2, pr3))
 
-    # --- Right-side secondary block (offset+1, weight*0.6, subtracted) ---
-    # Targets the second ringing lobe one pixel further right.
-    # AviSynth original uses a shifted luma window: x[1,0]..x[-3,0]
-    luma_R2 = (
-        "x[1,0] x[0,0] - dup * 0.75 * "
-        "x[0,0] x[-1,0] - dup * + "
-        "x[-1,0] x[-2,0] - dup * + "
-        "x[-2,0] x[-3,0] - dup * 0.75 * + sqrt "
-    )
-    prot_R2 = (
-        f"x[-4,0] x[-2,0] - dup * 0.66 * x[-3,0] x[-1,0] - dup * + "
-        f"x[-2,0] x[0,0] - dup * + x[-1,0] x[1,0] - dup * 0.66 * + sqrt {pr2_coeff} * - "
-        f"x[-4,0] x[-1,0] - dup * 0.5 * x[-3,0] x[0,0] - dup * + "
-        f"x[-2,0] x[1,0] - dup * + x[-1,0] x[2,0] - dup * 0.66 * + sqrt {pr3_coeff} * - "
-    )
-    sigmoid_correct_R2 = (
-        f"{scale} / {bias} - 0.0 max "
-        f"dup 1.0 - swap 1.0 + / 1.0 + {s128} * 1.0 min "
-        f"x[{-1 - offsetR},0] x[{-3 - offsetR},0] - * {weightR2} * -{s64} max {s127} min - "
-    )
 
-    expr = (
-        luma_L + prot_L + sigmoid_correct_L
-        + luma_R + prot_R + sigmoid_correct_R
-        + luma_R2 + prot_R2 + sigmoid_correct_R2
-        + "x + "
-    )
 
-    do_luma   = planes in ("luma",   "all")
-    do_chroma = planes in ("chroma", "all")
-
-    expr_y = expr if do_luma   else "x"
-    expr_u = expr if do_chroma else "x"
-    expr_v = expr if do_chroma else "x"
-    expr_list = [expr_y] if is_gray else [expr_y, expr_u, expr_v]
-
-    result = _expr2(cl_f, expr_list)
-
-    return core.resize.Bicubic(result, format=fmt_in)
-    
-    
 def AntiRingLR2UD(
     cl: vs.VideoNode,
     planes: list[int] | None = None,
