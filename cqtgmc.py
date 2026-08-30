@@ -3,7 +3,7 @@ from functools import partial
 from typing import Optional, Union, Sequence
 
 from misc import MV, mt_clamp
-from helpers import NNEDI3
+from helpers import NNEDI3, get_expr, get_rg
 
 core = vs.core
 
@@ -22,7 +22,7 @@ def CQTGMC(clip: vs.VideoNode, Sharpness: float=0.25, thSAD1: int=192, thSAD2: i
     # temporal deint
     bobbed = core.bwdif.Bwdif(clip=padded, field=X, edeint=spatial)
 
-    RG = core.zsmooth.RemoveGrain if hasattr(core,'zsmooth') else core.rgvs.RemoveGrain
+    RG = get_rg()
     # denoise
     denoised = RG(clip=bobbed, mode=12)
     if boxed:
@@ -83,7 +83,7 @@ def CQTGMC(clip: vs.VideoNode, Sharpness: float=0.25, thSAD1: int=192, thSAD2: i
     
     bComp1 = MV.Compensate(clip=weaved, super=csuper, vectors=bVec1, thsad=thSAD4)
     fComp1 = MV.Compensate(clip=weaved, super=csuper, vectors=fVec1, thsad=thSAD4)
-    EXPR = core.akarin.Expr if hasattr(core, 'akarin') else core.cranexpr.Expr if hasattr(core, 'cranexpr') else core.std.Expr
+    EXPR = get_expr()
     tMax = EXPR(clips=[weaved, bComp1], expr=['x y max'])
     tMax = EXPR(clips=[tMax, fComp1], expr=['x y max'])
     tMin = EXPR(clips=[weaved, bComp1], expr=['x y min'])

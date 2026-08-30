@@ -3,7 +3,7 @@ from math import sqrt
 
 from typing import Union
 import misc
-from helpers import GetPlane, Depth, BoxFilter
+from helpers import GetPlane, Depth, BoxFilter, get_expr, get_rg
 
 core = vs.core
 
@@ -19,7 +19,7 @@ def retinex_edgemask(src: vs.VideoNode, sigma: int = 1, draft: bool = False) -> 
     """
 
     luma = GetPlane(src, 0)
-    EXPR = core.akarin.Expr if hasattr(core, 'akarin') else core.cranexpr.Expr if hasattr(core, 'cranexpr') else core.std.Expr
+    EXPR = get_expr()
     max_value = 1.0 if src.format.sample_type == vs.FLOAT else (1 << src.format.bits_per_sample) - 1
     if draft:
         ret = EXPR(luma, 'x 65535 / sqrt 65535 *')
@@ -38,7 +38,7 @@ def kirsch(src: vs.VideoNode) -> vs.VideoNode:
     w = [5]*3 + [-3]*5
     weights = [w[-i:] + w[:-i] for i in range(4)]
     c = [src.std.Convolution((w[:4]+[0]+w[4:]), saturate=False) for w in weights]
-    EXPR = core.akarin.Expr if hasattr(core, 'akarin') else core.cranexpr.Expr if hasattr(core, 'cranexpr') else core.std.Expr
+    EXPR = get_expr()
     return EXPR(c, 'x y max z max a max')
 
 
@@ -48,7 +48,7 @@ def kirsch(src: vs.VideoNode) -> vs.VideoNode:
 def fast_sobel(src: vs.VideoNode) -> vs.VideoNode:
     sx = src.std.Convolution([-1, -2, -1, 0, 0, 0, 1, 2, 1], saturate=False)
     sy = src.std.Convolution([-1, 0, 1, -2, 0, 2, -1, 0, 1], saturate=False)
-    EXPR = core.akarin.Expr if hasattr(core, 'akarin') else core.cranexpr.Expr if hasattr(core, 'cranexpr') else core.std.Expr
+    EXPR = get_expr()
     return EXPR([sx, sy], 'x y max')
 
 
@@ -72,7 +72,7 @@ def kirsch2(clip_y: vs.VideoNode) -> vs.VideoNode:
     se = core.std.Convolution(clip_y, [-3, -3, -3, -3, 0, 5, -3, 5, 5], divisor=3, saturate=False)
     e = core.std.Convolution(clip_y, [-3, -3, 5, -3, 0, 5, -3, -3, 5], divisor=3, saturate=False)
     ne = core.std.Convolution(clip_y, [-3, 5, 5, -3, 0, 5, -3, -3, -3], divisor=3, saturate=False)
-    EXPR = core.akarin.Expr if hasattr(core, 'akarin') else core.cranexpr.Expr if hasattr(core, 'cranexpr') else core.std.Expr
+    EXPR = get_expr()
     return EXPR(
         [n, nw, w, sw, s, se, e, ne],
         ["x y max z max a max b max c max d max e max"],
@@ -90,7 +90,7 @@ def CartoonEdges(clip, low=0, high=255):
     low = scale8(low, maxvalue)
     high = scale8(high, maxvalue)
     edges = core.std.Convolution(clip, matrix=[0,-2,1,0,1,0,0,0,0], saturate=True)
-    EXPR = core.akarin.Expr if hasattr(core, 'akarin') else core.cranexpr.Expr if hasattr(core, 'cranexpr') else core.std.Expr
+    EXPR = get_expr()
     return EXPR(edges, ['x {high} >= {maxvalue} x {low} <= 0 x ? ?'
                                  .format(low=low, high=high, maxvalue=maxvalue), ''])
 
@@ -102,7 +102,7 @@ def RobertsEdges(clip, low=0, high=255):
     low = scale8(low, maxvalue)
     high = scale8(high, maxvalue)
     edges = core.std.Convolution(clip, matrix=[0,0,0,0,2,-1,0,-1,0], divisor=2, saturate=False)
-    EXPR = core.akarin.Expr if hasattr(core, 'akarin') else core.cranexpr.Expr if hasattr(core, 'cranexpr') else core.std.Expr
+    EXPR = get_expr()
     return EXPR(edges, ['x {high} >= {maxvalue} x {low} <= 0 x ? ?'
                                  .format(low=low, high=high, maxvalue=maxvalue), ''])
 
@@ -114,7 +114,7 @@ def dehalo_mask(src: vs.VideoNode, expand: float = 0.5, iterations: int = 2, brz
     src8 = Depth(src, 8)
     luma = GetPlane(src8, 0)
 
-    EXPR = core.akarin.Expr if hasattr(core, 'akarin') else core.cranexpr.Expr if hasattr(core, 'cranexpr') else core.std.Expr
+    EXPR = get_expr()
     edge = EXPR([luma, luma.std.Maximum().std.Maximum()], [f"y x - {shift} - 128 *"])
 
     if hasattr(core, "tcanny"):
@@ -161,7 +161,7 @@ def hue_mask(clip: vs.VideoNode, min_hue: Union[float, int], max_hue: Union[floa
     hsl_clip = core.resize.Bicubic(clip, format=vs.YUV444P8, matrix_in_s="709")
     hue = core.std.ShufflePlanes(hsl_clip, planes=0, colorfamily=vs.GRAY)
     
-    EXPR = core.akarin.Expr if hasattr(core, 'akarin') else core.cranexpr.Expr if hasattr(core, 'cranexpr') else core.std.Expr
+    EXPR = get_expr()
     # Build the mask
     mask = EXPR(
         [hue],
@@ -197,12 +197,7 @@ def FinegrainMask(clip: vs.VideoNode, mode: str="RemoveGrain") -> vs.VideoNode:
     if mode == "RemoveGrain":
       rgMode = 22
       # Smooth with RemoveGrain
-      if hasattr(core, 'zsmooth'):
-        smoothed = core.zsmooth.RemoveGrain(clip=luma, mode=rgMode)
-      elif hasattr(core, 'rgsf') and isFLOAT:  
-        smoothed =  core.rgsf.RemoveGrain(clip=luma, mode=rgMode)
-      else:
-        smoothed =  core.rgvs.RemoveGrain(clip=luma, mode=rgMode)
+      smoothed = get_rg(is_float=isFLOAT)(clip=luma, mode=rgMode)
     elif mode == "Bilinear":
       scale = 0.1
       smoothed = bilinear_denoise(clip=luma, scale=scale, rg=True)
@@ -281,7 +276,7 @@ def FinegrainMask(clip: vs.VideoNode, mode: str="RemoveGrain") -> vs.VideoNode:
 
     # Use Expr to compute absolute diff from mid-gray
     expr = f"x {peak/2} - abs" if isinstance(peak, float) else f"x {int(peak)//2} - abs"
-    EXPR = core.akarin.Expr if hasattr(core, 'akarin') else core.cranexpr.Expr if hasattr(core, 'cranexpr') else core.std.Expr
+    EXPR = get_expr()
     mask = EXPR([diff], expr=expr)
     
     return mask
@@ -305,7 +300,7 @@ def make_color_mask(clip: vs.VideoNode,
     tol = tolerance
 
     # Compute squared color distance in float (but scaled as if in 8-bit space)
-    EXPR = core.akarin.Expr if hasattr(core, 'akarin') else core.cranexpr.Expr if hasattr(core, 'cranexpr') else core.std.Expr
+    EXPR = get_expr()
     dr = EXPR([r], f"x {target_f[0]} - 255 * dup *")  # scale diff to 8-bit range
     dg = EXPR([g], f"x {target_f[1]} - 255 * dup *")
     db = EXPR([b], f"x {target_f[2]} - 255 * dup *")
@@ -356,7 +351,7 @@ def MotionMask(clip: vs.VideoNode, planes=None, th1=None, th2=None, tht=10, sc_v
 
     prev = clip[0] + clip[:-1]
 
-    EXPR = core.akarin.Expr if hasattr(core, 'akarin') else core.cranexpr.Expr if hasattr(core, 'cranexpr') else core.std.Expr
+    EXPR = get_expr()
 
     out_planes = []
     for p in range(num_planes):
@@ -431,12 +426,7 @@ def bilinear_denoise(clip: vs.VideoNode, scale: float = 0.5, rg: bool=False) -> 
     
     if rg:
       rgMode = 17
-      if hasattr(core, 'zsmooth'):
-        smoothed = core.zsmooth.RemoveGrain(clip=up, mode=rgMode)
-      elif hasattr(core, 'rgsf') and isFLOAT:  
-        smoothed = core.rgsf.RemoveGrain(clip=up, mode=rgMode)
-      else:
-        smoothed = core.rgvs.RemoveGrain(clip=up, mode=rgMode)
+      smoothed = get_rg(is_float=isFLOAT)(clip=up, mode=rgMode)
       
 
     return up

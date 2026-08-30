@@ -7,7 +7,7 @@ from typing import Any, Mapping, Optional, Sequence, Union
 
 import vapoursynth as vs
 
-from helpers import Depth, GetPlane, scale_value, cround
+from helpers import Depth, GetPlane, scale_value, cround, get_expr
 from ChangeFPS import ChangeFPS
 
 core = vs.core
@@ -89,7 +89,7 @@ def sRestoreMUVs(
         dclip.height if srad == 4 else int(dclip.height / 2 / srad + 4) * 4
     )
     dclip = dclip.std.Trim(first=2)
-    EXPR = core.akarin.Expr if hasattr(core, 'akarin') else core.cranexpr.Expr if hasattr(core, 'cranexpr') else core.std.Expr
+    EXPR = get_expr()
     if mode < 0:
         dclip = core.std.StackVertical([
             core.std.StackHorizontal([GetPlane(dclip, 1), GetPlane(dclip, 2)]),

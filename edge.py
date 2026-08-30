@@ -3,7 +3,7 @@ from vapoursynth import core
 
 import math
 from functools import partial
-from helpers import scale
+from helpers import scale, get_expr
 
 # Taken from old havsfunc
 # a.k.a. BalanceBordersMod
@@ -35,7 +35,7 @@ def bbmod(c, cTop, cBottom, cLeft, cRight, thresh=128, blur=999):
 
         last = c2.std.CropAbs(width=cWidth * 2, height=2, top=cTop * 2)
         last = last.resize.Point(cWidth * 2, cTop * 2)
-        EXPR = core.akarin.Expr if hasattr(core, 'akarin') else core.cranexpr.Expr if hasattr(core, 'cranexpr') else core.std.Expr
+        EXPR = get_expr()
         referenceBlurChroma = BicubicResize(BicubicResize(EXPR(last, expr=[f'x {neutral} - abs 2 *', '']), blurWidth * 2, cTop * 2), cWidth * 2, cTop * 2)
         referenceBlur = BicubicResize(BicubicResize(last, blurWidth * 2, cTop * 2), cWidth * 2, cTop * 2)
 

@@ -6,7 +6,7 @@ import math
 from typing import Optional, Union, Sequence, TypeVar
 
 from misc import MinBlur, median_blur, mt_expand_multi, mt_inflate_multi
-from helpers import scale, DFTTest
+from helpers import scale, DFTTest, get_expr
 from color import LimitFilter
 
 def _hysteresis_fn():
@@ -134,7 +134,7 @@ def HQDeringmod(
     matrix1 = [1, 2, 1, 2, 4, 2, 1, 2, 1]
     matrix2 = [1, 1, 1, 1, 1, 1, 1, 1, 1]
     has_zsmooth = hasattr(core,'zsmooth')
-    EXPR = core.akarin.Expr if hasattr(core, 'akarin') else core.cranexpr.Expr if hasattr(core, 'cranexpr') else core.std.Expr
+    EXPR = get_expr()
     if sharp <= 0:
         sclp = smoothed
     else:
@@ -172,7 +172,7 @@ def HQDeringmod(
         limitclp = repclp
     else:
         limitclp = LimitFilter(repclp, input, thr=thr, elast=elast, brighten_thr=darkthr, planes=planes)
-    EXPR = core.akarin.Expr if hasattr(core, 'akarin') else core.cranexpr.Expr if hasattr(core, 'cranexpr') else core.std.Expr
+    EXPR = get_expr()
     # Post-Process: Ringing Mask Generating
     if ringmask is None:
         expr = f'x {scale(mthr, bits)} < 0 x ?'
@@ -241,7 +241,7 @@ def mdering(clip: vs.VideoNode, thr: float = 2) -> vs.VideoNode:
         rg4_2 = core.fmtc.bitdepth(clip, bits=12, dmode=1)
         rg4_2 = median_blur(rg4_2, radius=2).fmtc.bitdepth(bits=bits)
         rg4_2 = LimitFilter(clip, rg4_2, thr=0.0625, elast=2)
-    EXPR = core.akarin.Expr if hasattr(core, 'akarin') else core.cranexpr.Expr if hasattr(core, 'cranexpr') else core.std.Expr
+    EXPR = get_expr()
     minblur_1 = EXPR([clip, rg11_1, rg4_1], ['x y - x z - xor x x y - abs x z - abs < y z ? ?'])
     minblur_2 = EXPR([clip, rg11_2, rg4_2], ['x y - x z - xor x x y - abs x z - abs < y z ? ?'])
     dering = EXPR([clip, minblur_1, minblur_2], ['y z - abs {thr} <= y x <= and y x ?'.format(thr=thr)])

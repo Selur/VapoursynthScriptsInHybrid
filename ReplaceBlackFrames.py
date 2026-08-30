@@ -1,5 +1,6 @@
 import vapoursynth as vs
 from vapoursynth import core
+from misc import SCDetect
 
 '''
 call using:
@@ -40,11 +41,7 @@ class ReplaceBlackFrames:
       if (method == 'interpolateRIFE') and clip.format.id != vs.RGBS:
         raise ValueError(f'ReplaceBlackFrames: "clip" color format need to be RGBS when RIFE is used!\n{clip.format}')
       if (method == 'interpolateRIFE') and rifeSC != 0:
-        if hasattr(core,'scd'):
-          self.clip = core.scd.Detect(clip=clip,thresh=rifeSC)
-        else:
-          import misc
-          self.clip = misc.SCDetect(clip=clip,threshold=rifeSC)
+        self.clip = SCDetect(clip=clip, threshold=rifeSC)
       self.clip = core.std.PlaneStats(clip)
 
   def previous(self, n, f):

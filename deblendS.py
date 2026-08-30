@@ -253,7 +253,7 @@ import threading
 from dataclasses import dataclass
 from typing import Optional, Union
 
-from helpers import GetPlane, NLMeans, cround, scale_value
+from helpers import GetPlane, NLMeans, cround, scale_value, get_expr, get_rg
 
 import vapoursynth as vs
 
@@ -330,7 +330,7 @@ def _build_detection_clips(
     else:
         det = GetPlane(small, 0)
 
-    EXPR =  core.akarin.Expr if hasattr(core, 'akarin') else core.cranexpr.Expr if hasattr(core, 'cranexpr') else core.std.Expr
+    EXPR = get_expr()
 
     # AviSynth srestore: bom ? det.mt_lut("x 2 / 64 +") : det
     # Halves the contrast before the differences are taken, because the
@@ -866,7 +866,7 @@ def _build_pp_clip(source: vs.VideoNode, omode: str) -> vs.VideoNode:
     else:
         neutral, peak = 1 << (bits - 1), (1 << bits) - 1
 
-    EXPR = core.akarin.Expr if hasattr(core, 'akarin') else core.cranexpr.Expr if hasattr(core, 'cranexpr') else core.std.Expr
+    EXPR = get_expr()
 
     sourceDuplicate = source.std.DuplicateFrames(frames=[0])
     sourceTrim1     = source.std.Trim(first=1)
@@ -974,7 +974,7 @@ def _apply_dclip_denoise(
         # neighbourhood-clipping modes; 0 is the copy mode.
         # zsmooth is preferred over rgvs: supports higher bit depths natively
         # and is generally faster.
-        _rg = core.zsmooth.RemoveGrain if hasattr(core, 'zsmooth') else core.rgvs.RemoveGrain
+        _rg = get_rg()
         _c1 = 2  if do_chroma else 0
         _c2 = 12 if do_chroma else 0
         dclip = _rg(dclip, mode=[2,  _c1, _c1])

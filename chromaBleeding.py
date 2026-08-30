@@ -3,7 +3,7 @@ from vapoursynth import core
 
 from typing import Sequence
 
-from helpers import GetPlane
+from helpers import GetPlane, get_expr
 
 # taken from old havsfunc
 def FixChromaBleedingMod(input: vs.VideoNode, cx: int = 4, cy: int = 4, thr: float = 4.0, strength: float = 0.8, blur: bool = False) -> vs.VideoNode:
@@ -24,7 +24,7 @@ def FixChromaBleedingMod(input: vs.VideoNode, cx: int = 4, cy: int = 4, thr: flo
     else:
         mask_area = v_tweaked
 
-    EXPR = core.akarin.Expr if hasattr(core, 'akarin') else core.cranexpr.Expr if hasattr(core, 'cranexpr') else core.std.Expr
+    EXPR = get_expr()
     # Apply basic mask processing (ensure dynamic level scaling)
     mask = EXPR(mask_area, ['x 128 - abs 2 *'])
     mask = mask.std.Inflate()

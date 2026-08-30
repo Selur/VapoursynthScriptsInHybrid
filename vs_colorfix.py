@@ -6,6 +6,7 @@
 
 import vapoursynth as vs
 import warnings
+from helpers import get_expr
 
 core = vs.core
 

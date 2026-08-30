@@ -76,6 +76,7 @@
 
 
 import vapoursynth as vs
+from helpers import get_expr
 
 
 def Hysteria(clip, strength=1.0, usemask=True, lowthresh=6, highthresh=20, luma_cap=191, maxchg=255, minchg=0,
@@ -104,7 +105,7 @@ def Hysteria(clip, strength=1.0, usemask=True, lowthresh=6, highthresh=20, luma_
 
     # imitate mt_edge(mode=cartoon) (stolen from Frechdachs)
     noisymask = core.std.Convolution(clip, matrix=[0, -2, 1, 0, 1, 0, 0, 0, 0], planes=planes, saturate=True)
-    EXPR = core.akarin.Expr if hasattr(core, 'akarin') else core.cranexpr.Expr if hasattr(core, 'cranexpr') else core.std.Expr
+    EXPR = get_expr()
     noisymask = EXPR(noisymask, ['x {high} >= {maxvalue} x {low} <= 0 x ? ?'
                               .format(low=lowthresh, high=lowthresh, maxvalue=max_bitval)])
 

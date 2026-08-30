@@ -5,7 +5,8 @@ import math
 from functools import partial
 from typing import Optional, Union, Sequence, Any, Dict
 
-from helpers import GetPlane, BoxFilter, scale
+from helpers import GetPlane, BoxFilter, scale, get_expr, get_rg
+from misc import SCDetect
 
 # taken from adjust
 def Tweak(clip, hue=None, sat=None, bright=None, cont=None, coring=True):
@@ -14,7 +15,7 @@ def Tweak(clip, hue=None, sat=None, bright=None, cont=None, coring=True):
 
     if clip.format.color_family == vs.RGB:
         raise vs.Error("Tweak: RGB clips are not accepted.")
-    EXPR = core.akarin.Expr if hasattr(core, 'akarin') else core.cranexpr.Expr if hasattr(core, 'cranexpr') else core.std.Expr
+    EXPR = get_expr()
         
     if (hue is not None or sat is not None) and clip.format.color_family != vs.GRAY:
         hue = 0.0 if hue is None else hue
@@ -214,7 +215,7 @@ def SmoothLevels(
         raise vs.Error('SmoothLevels: RGB format is not supported')
 
     core = vs.core
-    EXPR = core.akarin.Expr if hasattr(core, 'akarin') else core.cranexpr.Expr if hasattr(core, 'cranexpr') else core.std.Expr
+    EXPR = get_expr()
     
     # Precompute format-dependent values
     bits = input.format.bits_per_sample
@@ -254,7 +255,7 @@ def SmoothLevels(
     
     RemoveGrain = RG_MAP.get(RGmode)
     if RemoveGrain is None:
-        RG = core.zsmooth.RemoveGrain if hasattr(core, 'zsmooth') else core.rgvs.RemoveGrain
+        RG = get_rg()
         RemoveGrain = partial(RG, mode=[RGmode])
 
     # Build expressions
@@ -471,7 +472,7 @@ def RGBAdjust(rgb: vs.VideoNode, r: float=1.0, g: float=1.0, b: float=1.0, a: fl
       maxVal = 255.0
   rb,gb,bb = map(lambda b: b if size==maxVal else size/maxVal*b if type==vs.INTEGER else b/maxVal, [rb,gb,bb])
 
-  EXPR = core.akarin.Expr if hasattr(core, 'akarin') else core.cranexpr.Expr if hasattr(core, 'cranexpr') else core.std.Expr
+  EXPR = get_expr()
   #x*r + rb , x*g + gb , x*b + bb
   rgb_adjusted = EXPR(rgb, [f"x {r} * {rb} +", f"x {g} * {gb} +", f"x {b} * {bb} +"])
 
@@ -533,11 +534,7 @@ def AutoGain(
 
     # Plane statistics + scene detection
     stats = core.std.PlaneStats(Y)
-    if hasattr(core,'scd'):
-      sc    = core.scd.Detect(Y, thresh=sc_threshold)
-    else:
-      import misc
-      sc    = misc.SCDetect(Y, threshold=sc_threshold)
+    sc = SCDetect(Y, threshold=sc_threshold)
     prop_src = core.std.CopyFrameProps(sc, stats)
 
     # Determine peak value
@@ -592,7 +589,7 @@ def AutoGain(
         expr = f"x {o:.8f} + {s:.8f} * {w:.8f} * x {1.0-w:.8f} * +"
 
         # Use Akarin / Expr depending on availability
-        EXPR = core.akarin.Expr if hasattr(core, 'akarin') else core.cranexpr.Expr if hasattr(core, 'cranexpr') else core.std.Expr
+        EXPR = get_expr()
         return EXPR([Y], expr=[expr])
 
     Y_adj = core.std.FrameEval(Y, eval=apply_gain, prop_src=prop_src)
@@ -635,11 +632,7 @@ def AutoGainZ(
     )
 
     # Scene detection
-    if hasattr(core,'scd'):
-      sc    = core.scd.Detect(Y, thresh=sc_threshold)
-    else:
-      import misc
-      sc = misc.SCDetect(Y, threshold=sc_threshold)
+    sc = SCDetect(Y, threshold=sc_threshold)
 
     # Combine stats + scene detection properties
     prop_src = core.std.CopyFrameProps(sc, stats)
@@ -695,7 +688,7 @@ def AutoGainZ(
         expr = f"x {o:.8f} + {s:.8f} * {w:.8f} * x {1.0-w:.8f} * +"
 
         # Use Akarin / Expr depending on availability
-        EXPR = core.akarin.Expr if hasattr(core, 'akarin') else core.cranexpr.Expr if hasattr(core, 'cranexpr') else core.std.Expr
+        EXPR = get_expr()
 
         return EXPR(Y, expr=[expr])
 
@@ -735,7 +728,7 @@ def AutoWhiteAdjust(n, f, clip, core):
     b_gain = blue_corr / norm
 
     # Use Akarin / Expr depending on availability
-    EXPR = core.akarin.Expr if hasattr(core, 'akarin') else core.std.Expr
+    EXPR = get_expr()
 
     return EXPR(clip, expr=[f"x {r_gain} *", f"x {g_gain} *", f"x {b_gain} *"])
 
@@ -758,7 +751,7 @@ def AutoWhiteAdjustZ(clip, r, g, b, core):
     b_gain = blue_corr / norm
 
     # Select the fastest available expression filter
-    EXPR = core.akarin.Expr if hasattr(core, 'akarin') else core.std.Expr
+    EXPR = get_expr()
 
     return EXPR(clip, expr=[f"x {r_gain} *", f"x {g_gain} *", f"x {b_gain} *"])
 
@@ -825,7 +818,7 @@ def tm(clip="",source_peak="",desat=50,lin=True,show_satmask=False,show_clipped=
     w=((exposure_bias*(0.15*exposure_bias+0.10*0.50)+0.20*0.02)/(exposure_bias*(0.15*exposure_bias+0.50)+0.20*0.30))-0.02/0.30
     tm_ldr_value=tm * (1 / w)#value of 100 nits after the tone mapping
     ldr_value_mult=tm_ldr_value/(1/exposure_bias)#0.1 (100nits) * ldr_value_mult=tm_ldr_value
-    EXPR = core.akarin.Expr if hasattr(core, 'akarin') else core.cranexpr.Expr if hasattr(core, 'cranexpr') else core.std.Expr
+    EXPR = get_expr()
     tm = EXPR(c, expr="x  {exposure_bias} * 0.15 x  {exposure_bias} * * 0.05 + * 0.004 + x  {exposure_bias} * 0.15 x  {exposure_bias} * * 0.50 + * 0.06 + / 0.02 0.30 / -  ".format(exposure_bias=exposure_bias),format=vs.RGBS)
     w=((exposure_bias*(0.15*exposure_bias+0.10*0.50)+0.20*0.02)/(exposure_bias*(0.15*exposure_bias+0.50)+0.20*0.30))-0.02/0.30
     tm = EXPR(clips=[tm,c], expr="x  1 {w}  / * ".format(exposure_bias=exposure_bias,w=w),format=vs.RGBS)
@@ -907,7 +900,7 @@ def tm_simple(clip="",source_peak="" ) :
     #tm=((x*exposure_bias*(0.15*x*exposure_bias+0.10*0.50)+0.20*0.02) / (x*exposure_bias*(0.15*x*exposure_bias+0.50)+0.20*0.30)) - 0.02/0.30
     #w=((exposure_bias*(0.15*exposure_bias+0.10*0.50)+0.20*0.02)/(exposure_bias*(0.15*exposure_bias+0.50)+0.20*0.30))-0.02/0.30
     #tm=tm * (1 / w)
-    EXPR = core.akarin.Expr if hasattr(core, 'akarin') else core.cranexpr.Expr if hasattr(core, 'cranexpr') else core.std.Expr
+    EXPR = get_expr()
     tm = EXPR(c, expr="x  {exposure_bias} * 0.15 x  {exposure_bias} * * 0.05 + * 0.004 + x  {exposure_bias} * 0.15 x  {exposure_bias} * * 0.50 + * 0.06 + / 0.02 0.30 / -  ".format(exposure_bias=exposure_bias),format=vs.RGBS)
     w=((exposure_bias*(0.15*exposure_bias+0.10*0.50)+0.20*0.02)/(exposure_bias*(0.15*exposure_bias+0.50)+0.20*0.30))-0.02/0.30
     tm = EXPR(clips=[tm,c], expr="x  1 {w}  / * ".format(exposure_bias=exposure_bias,w=w),format=vs.RGBS)
@@ -1024,7 +1017,7 @@ def ClipRGB(clip: vs.VideoNode, min8: int = 16, max8: int = 235) -> vs.VideoNode
     lo = int(round(min8 * peak / 255))
     hi = int(round(max8 * peak / 255))
 
-    EXPR = core.akarin.Expr if hasattr(core, 'akarin') else core.cranexpr.Expr if hasattr(core, 'cranexpr') else core.std.Expr
+    EXPR = get_expr()
     expr = f'x {lo} max {hi} min'
     return EXPR(clip, [expr] * 3)
 
@@ -1205,7 +1198,7 @@ def LimitFilter(flt, src, ref=None, thr=None, elast=None, brighten_thr=None, thr
                     expr.append(limitExprY)
             else:
                 expr.append("")
-        EXPR = core.akarin.Expr if hasattr(core, 'akarin') else core.cranexpr.Expr if hasattr(core, 'cranexpr') else core.std.Expr
+        EXPR = get_expr()
         if ref is None:
             clip = EXPR([flt, src], expr)
         else:

@@ -232,8 +232,24 @@ def DitherLumaRebuild(src: vs.VideoNode, s0: float = 2.0, c: float = 0.0625, chr
     k = (s0 - 1) * c
     t = f'x {scale_value(16, 8, bits)} - {scale_value(219, 8, bits)} / 0 max 1 min' if is_integer else 'x 0 max 1 min'
     e = f'{k} {1 + c} {(1 + c) * c} {t} {c} + / - * {t} 1 {k} - * + ' + (f'{scale_value(256, 8, bits)} *' if is_integer else '')
-    EXPR = core.akarin.Expr if hasattr(core, 'akarin') else core.cranexpr.Expr if hasattr(core, 'cranexpr') else core.std.Expr
+    EXPR = get_expr()
     return EXPR(src, expr=e if is_gray else [e, f'x {neutral} - 128 * 112 / {neutral} +' if chroma and is_integer else ''])
+
+def get_expr():
+    '''Return the best Expr backend available, in order of preference: akarin, cranexpr, std.'''
+    if hasattr(core, 'akarin'):
+        return core.akarin.Expr
+    if hasattr(core, 'cranexpr'):
+        return core.cranexpr.Expr
+    return core.std.Expr
+
+def get_rg(is_float: bool = False):
+    '''Return the best RemoveGrain implementation available, in order of preference: zsmooth, rgsf (float only), rgvs.'''
+    if hasattr(core, 'zsmooth'):
+        return core.zsmooth.RemoveGrain
+    if is_float and hasattr(core, 'rgsf'):
+        return core.rgsf.RemoveGrain
+    return core.rgvs.RemoveGrain
 
 def BoxFilter(input: vs.VideoNode, radius: int = 16, radius_v: Optional[int] = None, planes: Optional[Union[int, Sequence[int]]] = None,
               fmtc_conv: int = 0, radius_thr: Optional[int] = None,

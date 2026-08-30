@@ -5,7 +5,7 @@ from typing import Optional, List
 import math
 from functools import partial
 
-from helpers import DFTTest
+from helpers import DFTTest, get_expr, get_rg
 
 def Deblock_QED(
     clp: vs.VideoNode, quant1: int = 24, quant2: int = 26, aOff1: int = 1, bOff1: int = 2, aOff2: int = 1, bOff2: int = 2, uv: int = 3
@@ -76,7 +76,7 @@ def Deblock_QED(
 
     # separate border values of the difference maps, and set the interiours to '128'
     expr = f'y {peak} = x {neutral} ?'
-    EXPR = core.akarin.Expr if hasattr(core, 'akarin') else core.cranexpr.Expr if hasattr(core, 'cranexpr') else core.std.Expr
+    EXPR = get_expr()
     normalD2 = EXPR([normalD, block], expr=expr if uv > 2 or is_gray else [expr, ''])
     strongD2 = EXPR([strongD, block], expr=expr if uv > 2 or is_gray else [expr, ''])
 
@@ -201,11 +201,11 @@ def AutoDeblock(src: vs.VideoNode, edgevalue: int = 24, db1: int = 1, db2: int =
 
     PREWITT = core.edgemasks.ExPrewitt if hasattr(core,"edgemasks") else core.std.Prewitt
     orig = PREWITT(src)
-    EXPR = core.akarin.Expr if hasattr(core, 'akarin') else core.cranexpr.Expr if hasattr(core, 'cranexpr') else core.std.Expr
+    EXPR = get_expr()
     orig = EXPR(orig, f"x {edgevalue} >= {maxvalue} x ?")
 
     isFLOAT = src.format.sample_type == vs.FLOAT
-    RG = core.zsmooth.RemoveGrain if hasattr(core, 'zsmooth') else core.rgsf.RemoveGrain if hasattr(core, 'rgsf') and isFLOAT else core.rgvs.RemoveGrain
+    RG = get_rg(is_float=isFLOAT)
 
     orig_d = RG(orig, 4)
     orig_d = RG(orig_d, 4)

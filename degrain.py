@@ -5,7 +5,7 @@ from vapoursynth import core
 import math
 
 from typing import Sequence, Union, Optional
-from helpers import scale_value, cround, m4, DitherLumaRebuild, KNLMeansCL, NLMeans, DFTTest
+from helpers import scale_value, cround, m4, DitherLumaRebuild, KNLMeansCL, NLMeans, DFTTest, get_expr, get_rg
 from misc import MV, MinBlur
 from color import LimitFilter
 from sharpen import ContraSharpening
@@ -93,9 +93,9 @@ def STPresso(
         elif RGmode == 20:
             bzz = clp.std.Convolution(matrix=[1, 1, 1, 1, 1, 1, 1, 1, 1], planes=planes)
         else:
-            RG = core.zsmooth.RemoveGrain if hasattr(core,'zsmooth') else core.rgvs.RemoveGrain
+            RG = get_rg(is_float=isFLOAT)
             bzz = RG(clp, mode=RGmode)
-    EXPR = core.akarin.Expr if hasattr(core, 'akarin') else core.cranexpr.Expr if hasattr(core, 'cranexpr') else core.std.Expr
+    EXPR = get_expr()
     last = EXPR([clp, bzz], expr=[expr if i in planes else '' for i in plane_range])
 
     if tthr > 0:
@@ -279,7 +279,7 @@ def TemporalDegrain(          \
     nr1Diff = core.std.MakeDiff(inpClip, nr1)
 
     # Limit NR1 to not do more than what "spat" would do.
-    EXPR = core.akarin.Expr if hasattr(core, 'akarin') else core.cranexpr.Expr if hasattr(core, 'cranexpr') else core.std.Expr
+    EXPR = get_expr()
     dd = EXPR([spatD, nr1Diff], expr=[f'x {neutral} - abs y {neutral} - abs < x y ?'])
     nr1X = core.std.MakeDiff(inpClip, dd, planes=0)
 
@@ -384,7 +384,7 @@ def MLD_helper(clip, srch, tr, thSAD, rec, chroma, soft):
         else:
             RG = MinBlur(clip, 1, planes)
         RG = core.std.Merge(clip, RG, [soft] if chroma or isGRAY else [soft, 0]) if soft < 1 else RG
-        EXPR = core.akarin.Expr if hasattr(core, 'akarin') else core.cranexpr.Expr if hasattr(core, 'cranexpr') else core.std.Expr
+        EXPR = get_expr()
         sup2 = S(EXPR([clip, RG], ['x dup y - +'] if chroma or isGRAY else ['x dup y - +', '']), hpad=bs, vpad=bs, pel=pel, levels=1, rfilter=1, blksize=bs, overlap=bs//2)
     else:
         RG = clip
@@ -505,12 +505,7 @@ def TemporalDegrain2(clip, degrainTR=1, degrainPlane=4, grainLevel=2, grainLevel
     S = MV.Super
     C = MV.Compensate
     
-    if hasattr(core, 'zsmooth'):
-      RG = core.zsmooth.RemoveGrain
-    elif hasattr(core, 'rgsf') and isFLOAT:  
-      RG = core.rgsf.RemoveGrain
-    else:
-      RG = core.rgvs.RemoveGrain
+    RG = get_rg(is_float=isFLOAT)
 
     if meAlgPar is None:
         # radius/range parameter for the motion estimation algorithms
@@ -615,7 +610,7 @@ def TemporalDegrain2(clip, degrainTR=1, degrainPlane=4, grainLevel=2, grainLevel
     if maxTR > 3 and not isFLOAT:
         raise ValueError("TemporalDegrain2: maxTR > 3 requires input of float sample type")
     
-    EXPR = core.akarin.Expr if hasattr(core, 'akarin') else core.cranexpr.Expr if hasattr(core, 'cranexpr') else core.std.Expr
+    EXPR = get_expr()
     
     if SrchClipPP == 1:
         spatialBlur = core.resize.Bilinear(clip, m4(w/2), m4(h/2)).std.Convolution(matrix=mat, planes=CMplanes).resize.Bilinear(w, h)
@@ -743,7 +738,7 @@ def _sharpen(clip, strength, planes):
     else:
       radius = max(1, round(strength * 1.5))
       blur = _boxblur_fn()(clip, planes=planes, hradius=radius, hpasses=3, vradius=radius, vpasses=3)
-    EXPR = core.akarin.Expr if hasattr(core, 'akarin') else core.cranexpr.Expr if hasattr(core, 'cranexpr') else core.std.Expr
+    EXPR = get_expr()
     return EXPR([clip, blur], "x x + y -")
 
 

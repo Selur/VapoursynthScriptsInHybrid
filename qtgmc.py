@@ -6,7 +6,7 @@ import importlib
 from functools import partial
 from typing import Any, Mapping, Optional, Sequence, Union, TypeVar
 
-from helpers import Depth, scale_value, DitherLumaRebuild, KNLMeansCL, NLMeans, DFTTest, NNEDI3 as _NNEDI3, EEDI3 as _EEDI3
+from helpers import Depth, scale_value, DitherLumaRebuild, KNLMeansCL, NLMeans, DFTTest, NNEDI3 as _NNEDI3, EEDI3 as _EEDI3, get_expr, get_rg
 from misc import MV, mt_clamp
 
 
@@ -666,7 +666,7 @@ def QTGMC(
         repair0 = QTGMC_KeepOnlyBobShimmerFixes(binomial0, bobbed, Rep0, RepChroma and ChromaMotion)
 
     matrix = [1, 2, 1, 2, 4, 2, 1, 2, 1]
-    EXPR = core.akarin.Expr if hasattr(core, 'akarin') else core.std.Expr
+    EXPR = get_expr()
     # Blur image and soften edges to assist in motion matching of edge blocks. Blocks are matched by SAD (sum of absolute differences between blocks), but even
     # a slight change in an edge from frame to frame will give a high SAD due to the higher contrast of edges
     if not isinstance(srchClip, vs.VideoNode):
@@ -906,7 +906,7 @@ def QTGMC(
     # Get the max/min value for each pixel over neighboring motion-compensated frames - used for temporal sharpness limiting
     if TR1 > 0 or temporalSL:
         ediSuper = MV.Super(edi, sharp=SubPelInterp, levels=1, **super_args)
-    EXPR = core.akarin.Expr if hasattr(core, 'akarin') else core.std.Expr
+    EXPR = get_expr()
     if temporalSL:
         bComp1 = MV.Compensate(edi, ediSuper, bVec1, thscd1=ThSCD1, thscd2=ThSCD2)
         fComp1 = MV.Compensate(edi, ediSuper, fVec1, thscd1=ThSCD1, thscd2=ThSCD2)
@@ -1318,7 +1318,7 @@ def QTGMC_KeepOnlyBobShimmerFixes(Input: vs.VideoNode, Ref: vs.VideoNode, Rep: i
     # Combine above areas to find those areas of difference to restore
     expr1 = f'x {scale_value(129, 8, bits)} < x y {neutral} < {neutral} y ? ?'
     expr2 = f'x {scale_value(127, 8, bits)} > x y {neutral} > {neutral} y ? ?'
-    EXPR = core.akarin.Expr if hasattr(core, 'akarin') else core.std.Expr
+    EXPR = get_expr()
     restore = EXPR(
         [EXPR([diff, choke1], expr=expr1 if Chroma or is_gray else [expr1, '']), choke2], expr=expr2 if Chroma or is_gray else [expr2, '']
     )
@@ -1350,7 +1350,7 @@ def QTGMC_Generate2ndFieldNoise(Input: vs.VideoNode, InterleavedClip: vs.VideoNo
         uvar=1800 if ChromaNoise else 0
     )
     expr = f'x {neutral} - y * {scale_value(256, 8, bits)} / {neutral} +'
-    EXPR = core.akarin.Expr if hasattr(core, 'akarin') else core.std.Expr
+    EXPR = get_expr()
     varRandom = EXPR([core.std.MakeDiff(noiseMax, noiseMin, planes=planes), random], expr=expr if ChromaNoise or is_gray else [expr, ''])
     newNoise = core.std.MergeDiff(noiseMin, varRandom, planes=planes)
     return Weave(core.std.Interleave([origNoise, newNoise]), tff=TFF)
@@ -1379,7 +1379,7 @@ def QTGMC_MakeLossless(Input: vs.VideoNode, Source: vs.VideoNode, InputType: int
     vertMedian = processed.zsmooth.VerticalCleaner(mode=1) if zsmooth else processed.rgvs.VerticalCleaner(mode=1)
     vertMedDiff = core.std.MakeDiff(processed, vertMedian)
     vmNewDiff1 = vertMedDiff.std.SeparateFields(tff=TFF).std.SelectEvery(cycle=4, offsets=[1, 2])
-    EXPR = core.akarin.Expr if hasattr(core, 'akarin') else core.std.Expr
+    EXPR = get_expr()
     if zsmooth:
       vmNewDiff2 = EXPR(
         [vmNewDiff1.zsmooth.VerticalCleaner(mode=1), vmNewDiff1], expr=f'x {neutral} - y {neutral} - * 0 < {neutral} x {neutral} - abs y {neutral} - abs < x y ? ?'
@@ -1388,7 +1388,7 @@ def QTGMC_MakeLossless(Input: vs.VideoNode, Source: vs.VideoNode, InputType: int
       vmNewDiff2 = EXPR(
         [vmNewDiff1.rgvs.VerticalCleaner(mode=1), vmNewDiff1], expr=f'x {neutral} - y {neutral} - * 0 < {neutral} x {neutral} - abs y {neutral} - abs < x y ? ?'
       )
-    RG = core.zsmooth.RemoveGrain if zsmooth else core.rgvs.RemoveGrain
+    RG = get_rg()
     vmNewDiff3 = core.zsmooth.Repair(vmNewDiff2, RG(vmNewDiff2, mode=2), mode=1) if zsmooth else core.rgvs.Repair(vmNewDiff2, RG(vmNewDiff2, mode=2), mode=1)
 
     # Reweave final result
@@ -1445,7 +1445,7 @@ def QTGMC_ApplySourceMatch(
     # S will make the result sharper, sensible range is about -0.25 to 1.0. Empirically, S=0.5 is effective [will do deeper analysis later]
     errorTemporalSimilarity = 0.5  # S in formula described above
     errorAdjust1 = [1.0, 2.0 / (1.0 + errorTemporalSimilarity), 8.0 / (3.0 + 5.0 * errorTemporalSimilarity)][MatchTR1]
-    EXPR = core.akarin.Expr if hasattr(core, 'akarin') else core.std.Expr
+    EXPR = get_expr()
     if SourceMatch < 1 or InputType == 1:
         match1Clip = Deinterlace
     else:

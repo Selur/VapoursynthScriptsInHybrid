@@ -5,7 +5,7 @@ import math
 from typing import Union, Optional, Sequence
 
 from misc import MinBlur, median_blur, mt_expand_multi, mt_inpand_multi
-from helpers import GetPlane, m4, scale_value, cround, Padding
+from helpers import GetPlane, m4, scale_value, cround, Padding, get_expr, get_rg
 
 def DeHalo_alpha(
     clp: vs.VideoNode,
@@ -51,7 +51,7 @@ def DeHalo_alpha(
 
     ox = clp.width
     oy = clp.height
-    EXPR = core.akarin.Expr if hasattr(core, 'akarin') else core.cranexpr.Expr if hasattr(core, 'cranexpr') else core.std.Expr
+    EXPR = get_expr()
     halos = clp.resize.Bicubic(m4(ox / rx), m4(oy / ry), filter_param_a=1 / 3, filter_param_b=1 / 3).resize.Bicubic(ox, oy, filter_param_a=1, filter_param_b=0)
     are = EXPR([clp.std.Maximum(), clp.std.Minimum()], expr='x y -')
     ugly = EXPR([halos.std.Maximum(), halos.std.Minimum()], expr='x y -')
@@ -139,7 +139,7 @@ def EdgeCleaner(c: vs.VideoNode, strength: int = 10, rep: bool = True, rmode: in
         main = core.zsmooth.Repair(main, c, mode=rmode)
       else:
         main = core.rgvs.Repair(main, c, mode=rmode)
-    EXPR = core.akarin.Expr if hasattr(core, 'akarin') else core.cranexpr.Expr if hasattr(core, 'cranexpr') else core.std.Expr
+    EXPR = get_expr()
     PREWITT = core.edgemasks.ExPrewitt if hasattr(core,"edgemasks") else core.std.Prewitt
     mask = (
         EXPR(PREWITT(c), expr=f'x {scale_value(4, 8, bits)} < 0 x {scale_value(32, 8, bits)} > {peak} x ? ?')
@@ -154,7 +154,7 @@ def EdgeCleaner(c: vs.VideoNode, strength: int = 10, rep: bool = True, rmode: in
       else:
         final = core.rgvs.Repair(final, c, mode=2)
     if smode > 0:
-        RG = core.zsmooth.RemoveGrain if hasattr(core,'zsmooth') else core.rgvs.RemoveGrain
+        RG = get_rg()
         clean = RG(c, mode=17)
         diff = core.std.MakeDiff(c, clean)
         mask = EXPR(PREWITT(RG(diff.std.Levels(min_in=scale_value(40, 8, bits), max_in=scale_value(168, 8, bits), gamma=0.35), mode=7)),
@@ -254,7 +254,7 @@ def FineDehalo(
 
     vszip = hasattr(core,'vszip')
     # Keeps only the sharpest edges (line edges)
-    EXPR = core.akarin.Expr if hasattr(core, 'akarin') else core.cranexpr.Expr if hasattr(core, 'cranexpr') else core.std.Expr
+    EXPR = get_expr()
     strong = EXPR(edges, expr=f'x {scale_value(thmi, 8, bits)} - {thma - thmi} / 255 *')
     if is_float:
         strong = strong.vszip.Limiter() if vszip else strong.std.Limiter()
@@ -371,7 +371,7 @@ def FineDehalo_contrasharp(dehaloed: vs.VideoNode, src: vs.VideoNode, level: flo
     else:
       bb2 = core.rgvs.Repair(bb, core.rgvs.Repair(bb, bbb, mode=1), mode=1)
     xd = core.std.MakeDiff(bb, bb2)
-    EXPR = core.akarin.Expr if hasattr(core, 'akarin') else core.cranexpr.Expr if hasattr(core, 'cranexpr') else core.std.Expr
+    EXPR = get_expr()
     xd = EXPR(xd, expr=f'x {neutral} - 2.49 * {level} * {neutral} +')
     xdd = EXPR(
         [xd, core.std.MakeDiff(src, dehaloed)], expr=f'x {neutral} - y {neutral} - * 0 < {neutral} x {neutral} - abs y {neutral} - abs < x y ? ?'
@@ -548,7 +548,7 @@ def SecondOrderDehalo(
     else:
         raise vs.Error(f'FineDehalo2: Unknown edgemask type "{edgemask}"')
 
-    EXPR = core.akarin.Expr if hasattr(core, 'akarin') else core.std.Expr
+    EXPR = get_expr()
     temp_h = EXPR([mask_h, mask_v], ['x 3 * y -'])
     temp_v = EXPR([mask_v, mask_h], ['x 3 * y -'])
 

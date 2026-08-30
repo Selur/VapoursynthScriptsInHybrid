@@ -7,7 +7,7 @@ from functools import partial
 from typing import Optional, Union, Sequence
 
 from misc import MinBlur, mt_clamp
-from helpers import GetPlane, cround, scale, clamp, Padding, DFTTest
+from helpers import GetPlane, cround, scale, clamp, Padding, DFTTest, get_expr, get_rg
 from color import LimitFilter
 
 ################################################################################################
@@ -387,7 +387,7 @@ def LSFmod(input, strength=None, Smode=None, Smethod=None, kernel=11, preblur=No
     elif kernel == 20:
         RemoveGrain = partial(core.std.Convolution, matrix=[1, 1, 1, 1, 1, 1, 1, 1, 1])
     else:
-        RG = core.zsmooth.RemoveGrain if has_zsmooth else core.rgvs.RemoveGrain
+        RG = get_rg()
         RemoveGrain = partial(RG, mode=[kernel])
 
     if soft == -1:
@@ -410,7 +410,7 @@ def LSFmod(input, strength=None, Smode=None, Smethod=None, kernel=11, preblur=No
     if not isGray:
         tmp_orig = tmp
         tmp = GetPlane(tmp, 0)
-    EXPR = core.akarin.Expr if hasattr(core, 'akarin') else core.cranexpr.Expr if hasattr(core, 'cranexpr') else core.std.Expr
+    EXPR = get_expr()
     if preblur <= -1:
         pre = tmp
     elif preblur >= 3:
@@ -603,7 +603,7 @@ def FineSharp(clip, mode=1, sstr=2.5, cstr=None, xstr=0, lstr=1.5, pstr=1.28, ld
         return clip
 
     tmp = core.std.ShufflePlanes(clip, [0], vs.GRAY) if color in [vs.YUV] else clip
-    EXPR = core.akarin.Expr if hasattr(core, 'akarin') else core.cranexpr.Expr if hasattr(core, 'cranexpr') else core.std.Expr
+    EXPR = get_expr()
     if abs(mode) == 1:
         c2 = core.std.Convolution(tmp, matrix=mat1).zsmooth.Median() if has_zsmooth else core.std.Convolution(tmp, matrix=mat1).std.Median()
     else:
@@ -668,7 +668,7 @@ def DetailSharpen(clip, z=4, sstr=1.5, power=4, ldmp=1, mode=1, med=False):
         blur = blur.zsmooth.Median() if hasattr(core,'zsmooth') else blur.std.Median()
 
     expr = 'x y = x dup {} dup dup abs {} / {} pow swap2 abs {} + / * {} * + ?'
-    EXPR = core.akarin.Expr if hasattr(core, 'akarin') else core.cranexpr.Expr if hasattr(core, 'cranexpr') else core.std.Expr
+    EXPR = get_expr()
     tmp = EXPR([tmp, blur], [expr.format(xy, z, 1/power, ldmp, sstr*z*i)])
 
     return core.std.ShufflePlanes([tmp, clip], [0, 1, 2], color) if color in [vs.YUV] else tmp
@@ -713,7 +713,7 @@ def psharpen(clip, strength=25, threshold=75, ss_x=1.0, ss_y=1.0, dest_x=None, d
 
     max_ = core.std.Maximum(clip)
     min_ = core.std.Minimum(clip)
-    EXPR = core.akarin.Expr if hasattr(core, 'akarin') else core.cranexpr.Expr if hasattr(core, 'cranexpr') else core.std.Expr
+    EXPR = get_expr()
     nmax = EXPR([max_, min_], ["x y -"])
     nval = EXPR([clip, min_], ["x y -"])
 
@@ -856,7 +856,7 @@ def ContraSharpening(
     else:
       ssDD = core.rgvs.Repair(ssD, allD, mode=[rep if i in planes else 0 for i in plane_range])
     # abs(diff) after limiting may not be bigger than before
-    EXPR = core.akarin.Expr if hasattr(core, 'akarin') else core.cranexpr.Expr if hasattr(core, 'cranexpr') else core.std.Expr
+    EXPR = get_expr()
     ssDD = EXPR([ssDD, ssD], expr=[f'x {neutral} - abs y {neutral} - abs < x y ?' if i in planes else '' for i in plane_range])
     # apply the limited difference (sharpening is just inverse blurring)
     last = core.std.MergeDiff(denoised, ssDD, planes=planes)
@@ -880,7 +880,7 @@ def UnsharpMask(clip: vs.VideoNode, strength: int = 64, radius: int = 3, thresho
     """
 
     # Choose Expr function: prefer akarin.Expr if available for faster execution
-    expr_func = core.akarin.Expr if hasattr(core, "akarin") else core.std.Expr
+    expr_func = get_expr()
 
     # Validate input parameters to avoid invalid or dangerous values
     if strength < 0 or strength > 128:

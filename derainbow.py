@@ -4,7 +4,7 @@ import vapoursynth as vs
 
 core = vs.core
 
-from helpers import GetPlane, scale
+from helpers import GetPlane, scale, get_expr
 
 try:
     from color import Tweak as _color_tweak  # type: ignore
@@ -16,7 +16,7 @@ try:
 except ImportError:
     _contra_sharpening = None
 
-from misc import MV
+from misc import MV, SCDetect
 
 # ---------------------------------------------------------------------------
 # Plugin wrappers — each wrapper tries the fastest available backend first
@@ -858,8 +858,7 @@ def ChubbyRain2(c, th=10, radius=10, show=False, sft=10, interlaced=False):
             thresh = max(1, round(0.10 * 254 * (1 << max(bits - 8, 0))))
             cc = core.scd.Detect(clip=cc, thresh=thresh)
         else:
-            import misc
-            cc = misc.SCDetect(clip=cc, threshold=0.10)
+            cc = SCDetect(clip=cc, threshold=0.10)
 
         # mode/tmode/radius/sense/str below reproduce Cnr2's defaults
         # (mode="oxx", scdthr=10.0, ln/un/vn=35/47/47, lm/um/vm=192/255/255)

@@ -3,7 +3,7 @@ from vapoursynth import core
 
 from typing import Any, Dict, Sequence, Union, Optional
 
-from helpers import GetPlane, BoxFilter, DFTTest
+from helpers import GetPlane, BoxFilter, DFTTest, get_expr
 from misc import mt_expand_multi, mt_inpand_multi
 from color import LimitFilter
 
@@ -312,7 +312,7 @@ def GradFun3(src, thr=None, radius=None, elast=None, mask=None, mode=None, ampo=
     if mask > 0:
         dmask = GetPlane(src_8, 0)
         dmask = _Build_gf3_range_mask(dmask, mask)
-        EXPR = core.akarin.Expr if hasattr(core, 'akarin') else core.cranexpr.Expr if hasattr(core, 'cranexpr') else core.std.Expr
+        EXPR = get_expr()
         dmask = EXPR([dmask], [mexpr])
         if hasattr(core,'zsmooth'):
           dmask = core.zsmooth.RemoveGrain(dmask, [22])
@@ -579,7 +579,7 @@ def _GF3_bilateral_multistage(src: vs.VideoNode, ref: vs.VideoNode, radius: int,
 
 def _Build_gf3_range_mask(src: vs.VideoNode, radius: int = 1) -> vs.VideoNode:
     last = src
-    EXPR = core.akarin.Expr if hasattr(core, 'akarin') else core.cranexpr.Expr if hasattr(core, 'cranexpr') else core.std.Expr
+    EXPR = get_expr()
     if radius > 1:
         ma = mt_expand_multi(last, mode='ellipse', planes=[0], sw=radius, sh=radius)
         mi = mt_inpand_multi(last, mode='ellipse', planes=[0], sw=radius, sh=radius)

@@ -5,7 +5,7 @@ import math
 
 from typing import TypeVar, Optional
 from functools import partial
-from helpers import GetPlane, m4, scale, NNEDI3 as _NNEDI3, EEDI3 as _EEDI3
+from helpers import GetPlane, m4, scale, NNEDI3 as _NNEDI3, EEDI3 as _EEDI3, get_expr
 
 # Taken from old havsfunc
 def daa(
@@ -246,7 +246,7 @@ def aaf(                \
                              , inputClip.std.Minimum(planes=0)\
                              , planes=0)
     expr = 'x {i} > {estr} x {neutral} - {j} 90 / * {bstr} + ?'.format(i=scale(218, peak), estr=scale(estr, peak), neutral=neutral, j=estr - bstr, bstr=scale(bstr, peak))
-    EXPR = core.akarin.Expr if hasattr(core, 'akarin') else core.cranexpr.Expr if hasattr(core, 'cranexpr') else core.std.Expr
+    EXPR = get_expr()
     mask = EXPR(mask, expr=[expr] if isGray else [expr, ''])
 
     merged = core.std.MaskedMerge(inputClip, aa, mask, planes=0)

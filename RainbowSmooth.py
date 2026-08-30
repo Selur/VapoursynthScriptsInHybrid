@@ -2,14 +2,14 @@ import vapoursynth as vs
 from vapoursynth import core
 from typing import List
 
-from helpers import GetPlane, NNEDI3
+from helpers import GetPlane, NNEDI3, get_expr
 import masked
 
 
 def RainbowSmooth(clip, radius=3, lthresh=0, hthresh=220, mask="original"):
     if isinstance(mask, str):
         if mask == "original":
-            EXPR = core.akarin.Expr if hasattr(core, "akarin") else core.cranexpr.Expr if hasattr(core, "cranexpr") else core.std.Expr
+            EXPR = get_expr()
             mask = EXPR(clips=[clip.std.Maximum(planes=0), clip.std.Minimum(planes=0)], expr=["x y - 90 > 255 x y - 255 90 / * ?", "", ""])
         elif mask == "prewitt":
             PREWITT = core.edgemasks.ExPrewitt if hasattr(core,"edgemasks") else core.std.Prewitt
@@ -41,7 +41,7 @@ def RainbowSmooth(clip, radius=3, lthresh=0, hthresh=220, mask="original"):
 
 
 def derainbow(clip: vs.VideoNode) -> vs.VideoNode:
-    EXPR = core.akarin.Expr if hasattr(core, "akarin") else core.cranexpr.Expr if hasattr(core, "cranexpr") else core.std.Expr
+    EXPR = get_expr()
 
     pre = clip[0] + clip[:-1]
     post = clip[1:] + clip[-1]

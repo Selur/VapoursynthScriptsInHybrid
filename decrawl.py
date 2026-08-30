@@ -5,7 +5,8 @@ import math
 
 from functools import partial
 
-from helpers import GetPlane, scale
+from helpers import GetPlane, scale, get_expr
+from misc import SCDetect
 
 # Taken from havsfunc
 ########################################################
@@ -87,7 +88,7 @@ def LUTDeCrawl(input, ythresh=10, cthresh=10, maxdiff=50, scnchg=25, usemaxdiff=
     input_plus_y = GetPlane(input_plus, 0)
     input_plus_u = GetPlane(input_plus, 1)
     input_plus_v = GetPlane(input_plus, 2)
-    EXPR = core.akarin.Expr if hasattr(core, 'akarin') else core.cranexpr.Expr if hasattr(core, 'cranexpr') else core.std.Expr
+    EXPR = get_expr()
 
     average_y = EXPR([input_minus_y, input_plus_y], expr=[f'x y - abs {ythresh} < x y + 2 / 0 ?'])
     average_u = EXPR([input_minus_u, input_plus_u], expr=[f'x y - abs {cthresh} < {peak} 0 ?'])
@@ -107,11 +108,7 @@ def LUTDeCrawl(input, ythresh=10, cthresh=10, maxdiff=50, scnchg=25, usemaxdiff=
     fixed_y = core.std.Merge(average_y, input_y)
 
     output = core.std.ShufflePlanes([core.std.MaskedMerge(input_y, fixed_y, themask), input], planes=[0, 1, 2], colorfamily=input.format.color_family)
-    if hasattr(core,'scd'):
-      input = core.scd.Detect(input, thresh=scnchg / 255)
-    else:
-      import misc
-      input = misc.SCDetect(input, threshold=scnchg / 255)
+    input = SCDetect(input, threshold=scnchg / 255)
     output = output.std.FrameEval(eval=partial(YDifferenceFromPrevious, clips=[input, output]), prop_src=input)
     output = output.std.FrameEval(eval=partial(YDifferenceToNext, clips=[input, output]), prop_src=input)
 

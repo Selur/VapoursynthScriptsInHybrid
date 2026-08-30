@@ -1,6 +1,6 @@
 import vapoursynth as vs
 from vapoursynth import core
-from misc import MV
+from misc import MV, SCDetect
 
 '''
 call using:
@@ -37,11 +37,7 @@ class FillDuplicateFrames:
       self.mode = mode
       self.frames = frames
       if sceneThr > 0 and method.lower() == 'rife':
-         if hasattr(core,'scd'):
-           clip = core.scd.Detect(clip, thresh=sceneThresh) 
-         else:
-           import misc
-           clip = misc.SCDetect(clip=clip,threshold=sceneThresh)
+         clip = SCDetect(clip=clip, threshold=sceneThresh)
         
         
       if method == 'Replace' and not frames:

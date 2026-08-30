@@ -36,6 +36,7 @@
 
 import vapoursynth as vs
 from typing import Optional
+from helpers import get_expr
 
 core = vs.core
 
@@ -58,7 +59,7 @@ def mf_str_level(x: str, in_low: int, in_high: int, out_low: int, out_high: int,
 def Xsharpen(clip: vs.VideoNode, strength: int = 128, threshold: int = 8) -> vs.VideoNode:
     bits = clip.format.bits_per_sample
     expr = f"y x - x z - min {threshold} < x z - y x - < z y ? {strength / 256} * x {(256 - strength) / 256} * + x ?"
-    EXPR = core.akarin.Expr if hasattr(core, 'akarin') else core.cranexpr.Expr if hasattr(core, 'cranexpr') else core.std.Expr
+    EXPR = get_expr()
     return EXPR([clip, clip.std.Maximum(planes=0), clip.std.Minimum(planes=0)], [expr, ""])
 
 def merge_chroma(luma: vs.VideoNode, chroma: vs.VideoNode) -> vs.VideoNode:
@@ -79,7 +80,7 @@ def proToon(input: vs.VideoNode,
     thn = thinning / 16.0  # line thinning amount, 0-255
 
     # Create the edgemask
-    EXPR = core.akarin.Expr if hasattr(core, 'akarin') else core.cranexpr.Expr if hasattr(core, 'cranexpr') else core.std.Expr
+    EXPR = get_expr()
     if hasattr(core, 'zsmooth'):
       edgemask = EXPR(EXPR(
           [input, core.zsmooth.RemoveGrain(input, 12)],

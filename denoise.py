@@ -5,7 +5,7 @@ import math
 
 from typing import Optional, Union, Sequence
 
-from helpers import GetPlane, scale_value, scale, cround, DitherLumaRebuild, KNLMeansCL, DFTTest
+from helpers import GetPlane, scale_value, scale, cround, DitherLumaRebuild, KNLMeansCL, DFTTest, get_expr, get_rg
 
 from misc import MV, MinBlur, SCDetect, mt_expand_multi
         
@@ -452,12 +452,8 @@ def MCTemporalDenoise(i, radius=None, pfMode=3, sigma=None, twopass=None, useTTm
             c = core.std.Interleave([f6c, f5c, f4c, f3c, f2c, f1c, i, b1c, b2c, b3c, b4c, b5c, b6c])
             # SAD_m = core.std.Interleave([SAD_f6m, SAD_f5m, SAD_f4m, SAD_f3m, SAD_f2m, SAD_f1m, b, SAD_b1m, SAD_b2m, SAD_b3m, SAD_b4m, SAD_b5m, SAD_b6m])
 
-        if hasattr(core,'scd'):
-          c = core.scd.Detect(c, thresh=0.999)
-          sm = core.zsmooth.TTempSmooth(c, maxr=radius, thresh=[255], mdiff=[1], strength=radius + 1, scthresh=-1, fp=False, planes=planes)
-        elif hasattr(core,'zsmooth'):
-          import misc
-          c = SCDetect(c, threshold=0.999)
+        c = SCDetect(c, threshold=0.999)
+        if hasattr(core,'zsmooth'):
           sm = core.zsmooth.TTempSmooth(c, maxr=radius, thresh=[255], mdiff=[1], strength=radius + 1, scthresh=-1, fp=False, planes=planes)
         else:
           sm = c.ttmpsm.TTempSmooth(maxr=radius, thresh=[255], mdiff=[1], strength=radius + 1, scthresh=99.9, fp=False, planes=planes)
@@ -466,7 +462,7 @@ def MCTemporalDenoise(i, radius=None, pfMode=3, sigma=None, twopass=None, useTTm
     ### DENOISING: FIRST PASS
     dMVS = MV.Super(d, levels=1, **super_args)
     sm = MCTD_TTSM(d, dMVS, thSAD) if useTTmpSm else MCTD_MVD(d, dMVS, thSAD, thSADC)
-    EXPR = core.akarin.Expr if hasattr(core, 'akarin') else core.cranexpr.Expr if hasattr(core, 'cranexpr') else core.std.Expr
+    EXPR = get_expr()
     if limit <= -1:
         smD = core.std.MakeDiff(i, sm, planes=planes)
         expr = f'x {neutral} - abs y {neutral} - abs < x y ?'
@@ -610,10 +606,10 @@ def mClean(clip, thSAD=400, chroma=True, sharp=10, rn=14, deband=0, depth=0, str
 
     if zsmooth:
       RE = core.zsmooth.Repair
-      RG = core.zsmooth.RemoveGrain
+      RG = get_rg()
     else:
       RE = core.rgsf.Repair if outbits == 32 else core.rgvs.Repair
-      RG = core.rgsf.RemoveGrain if outbits == 32 else core.rgvs.RemoveGrain
+      RG = get_rg(is_float=(outbits == 32))
     
     sc = 8 if defH > 2880 else 4 if defH > 1440 else 2 if defH > 720 else 1
     i = 0.00392 if outbits == 32 else 1 << (outbits - 8)
@@ -718,7 +714,7 @@ def mClean(clip, thSAD=400, chroma=True, sharp=10, rn=14, deband=0, depth=0, str
 
     # If selected, combining ReNoise
     noise_diff = core.std.MakeDiff(clean2, cy)
-    EXPR = core.akarin.Expr if hasattr(core, 'akarin') else core.cranexpr.Expr if hasattr(core, 'cranexpr') else core.std.Expr
+    EXPR = get_expr()
     if rn:
         import color
         expr = "x {a} < 0 x {b} > {p} 0 x {c} - {p} {a} {d} - / * - ? ?".format(a=32*i, b=45*i, c=35*i, d=65*i, p=peak)

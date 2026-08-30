@@ -43,15 +43,12 @@ MSharpen
 """
 
 import vapoursynth as vs
+from helpers import get_expr
 
 core = vs.core
 
 # ── Expr backend selection ───────────────────────────────────────────────────
-EXPR = (
-    core.akarin.Expr    if hasattr(core, 'akarin')     else
-    core.cranexpr.Expr  if hasattr(core, 'cranexpr')   else
-    core.std.Expr
-)
+EXPR = get_expr()
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Internal helpers

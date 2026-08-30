@@ -3,7 +3,7 @@ from vapoursynth import core
 
 from typing import Union, Sequence, Optional
 import math
-from helpers import GetPlane, m4, scale
+from helpers import GetPlane, m4, scale, get_expr
 
 # Taken from old havsfunc
 # Parameters:
@@ -150,7 +150,7 @@ def GrainFactory3(
     expr2: str = f"x {th3} < 0 x {th4} > {peak} {peak} {th4 - th3} / x {th3} - * ? ?"
 
     # Prefer akarin.Expr, then cranexpr, then std.Expr.
-    EXPR = core.akarin.Expr if hasattr(core, "akarin") else core.cranexpr.Expr if hasattr(core, "cranexpr") else core.std.Expr
+    EXPR = get_expr()
 
     # Blend dark → midtone → bright grain according to the luma masks.
     grainlayer: vs.VideoNode = core.std.MaskedMerge(core.std.MaskedMerge(grainlayer1, grainlayer2, EXPR(clp, expr=[expr1])), grainlayer3, EXPR(clp, expr=[expr2]))

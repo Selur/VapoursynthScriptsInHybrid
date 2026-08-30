@@ -6,7 +6,7 @@ import math
 import sys
 import json
 
-from helpers import NLMeans as _NLMeans, NNEDI3 as _NNEDI3
+from helpers import NLMeans as _NLMeans, NNEDI3 as _NNEDI3, get_expr
 
 fmtc_args                      = dict(fulls=True, fulld=True)
 msuper_args                    = dict(hpad=0, vpad=0, sharp=2, levels=0)
@@ -55,8 +55,7 @@ class get_core:
 
           # --- Common functions ---
           self.Resample        = self.core.fmtc.resample
-          self.Expr            = (self.core.akarin.Expr if hasattr(self.core,'akarin')
-                                  else self.core.std.Expr)
+          self.Expr            = get_expr()
           self.MakeDiff        = self.core.std.MakeDiff
           self.MergeDiff       = self.core.std.MergeDiff
           self.Crop            = self.core.std.CropRel

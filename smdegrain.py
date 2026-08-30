@@ -6,7 +6,7 @@ from typing import Sequence, Union, Optional
 
 import math
 
-from helpers import scale, Padding, DitherLumaRebuild, DFTTest, GetPlane, KNLMeansCL
+from helpers import scale, Padding, DitherLumaRebuild, DFTTest, GetPlane, KNLMeansCL, get_expr
 from misc import MV, MinBlur
 from sharpen import LSFmod, ContraSharpening
 from nnedi3_resample import nnedi3_resample
@@ -133,7 +133,7 @@ def SMDegrain(input, tr=2, thSAD=300, thSADC=None, RefineMotion=False, contrasha
     # Prefilter & Motion Filter
     if mfilter is None:
         mfilter = inputP
-    EXPR = core.akarin.Expr if hasattr(core, 'akarin') else core.cranexpr.Expr if hasattr(core, 'cranexpr') else core.std.Expr
+    EXPR = get_expr()
     if not GlobalR:
         if preclip:
             pref = prefilter

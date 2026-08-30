@@ -5,7 +5,7 @@ import math
 import functools
 from typing import Union, Optional, Callable, Dict, Any, Sequence
 
-from helpers import Depth, BoxFilter, NNEDI3
+from helpers import Depth, BoxFilter, NNEDI3, get_expr
 
 # --- shim to preserve color.Depth's range/dither defaults on top of helpers.Depth ---
 def _range(full):
@@ -668,7 +668,7 @@ def SSIM_downsample(clip: vs.VideoNode, w: int, h: int,
 
     clip = Depth(clip, 32, **depth_args)
 
-    EXPR = core.akarin.Expr if hasattr(core, 'akarin') else core.cranexpr.Expr if hasattr(core, 'cranexpr') else core.std.Expr
+    EXPR = get_expr()
 
     kernel = kernel.capitalize()
 

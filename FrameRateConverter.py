@@ -100,6 +100,7 @@ import vapoursynth as vs
 import ChangeFPS
 from vapoursynth import core
 from misc import MV
+from helpers import get_expr
 
 def FrameRateConverter(C, newNum = None, newDen = None, preset = "normal", blkSize = None, blkSizeV = None, frameDouble = None, output = "auto", debug = False, \
     prefilter = None, maskThr = None, maskOcc = None, skipThr = 45, blendOver = None, skipOver = None, stp = 35, dct = None, dctRe = None, blendRatio = 50, rife = None, rifeModel = None, rifeTta = False, rifeGpu = 0):
@@ -200,7 +201,7 @@ def FrameRateConverter(C, newNum = None, newDen = None, preset = "normal", blkSi
         # Mask: Temporal blending
         EMfwd = ToGray(MV.Mask(C, fwd, ml=255, kind=1, gamma=1/gam, thscd2=skipOver))
         EM = misc.Overlay(EM, EMfwd, opacity=.6, mode="lighten")
-    EXPR = core.akarin.Expr if hasattr(core, 'akarin') else core.cranexpr.Expr if hasattr(core, 'cranexpr') else core.std.Expr
+    EXPR = get_expr()
     # Mask: Occlusion
     if maskOcc > 0:
         EMocc = ToGray(MV.Mask(C, bak, ml=maskOcc, kind=2, gamma=1/gam, ysc=255, thscd2=skipOver).std.Minimum())
@@ -442,7 +443,7 @@ def StripeMask(clip, blksize = 16, blksizev = None, str = 200, strf = 0):
     blksize *= 1.25
     blksizev *= 1.25
     mask2 = clip.frc.StripeMaskPass(blksize=blksize, blksizev=blksizev, overlap=blksize//2+1, overlapv=blksizev//2+1, thr=42, range=214, gamma=2.2, comp=5, str=str)
-    EXPR = core.akarin.Expr if hasattr(core, 'akarin') else core.cranexpr.Expr if hasattr(core, 'cranexpr') else core.std.Expr
+    EXPR = get_expr()
     if strf > 0:
         mask1f = mask1.std.DeleteFrames(frames=[0]).std.DuplicateFrames(frames=[clip.num_frames-2])
         mask2f = mask2.std.DeleteFrames(frames=[0]).std.DuplicateFrames(frames=[clip.num_frames-2])
