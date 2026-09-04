@@ -31,6 +31,32 @@ def retinex_edgemask(src: vs.VideoNode, sigma: int = 1, draft: bool = False) -> 
         return EXPR([k, tc], f"x y + {max_value} min")
     return EXPR([k, ret], f"x y + {max_value} min")
 
+# Like retinex_edgemask, but using CLAHE (contrast limited adaptive histogram equalization) to lift dark scenes.
+# from https://github.com/dnjulek/jvsfunc/blob/master/jvsfunc/mask.py, ehist.CLAHE replaced by vszip.CLAHE
+def clahe_edgemask(src: vs.VideoNode, tcanny_sigma: float = 1.0, clahe_limit: int = 2000,
+                   clahe_tile: int = 5, brz: int = 8000) -> vs.VideoNode:
+    """
+    Like retinex_edgemask, but using CLAHE.
+
+    :param src: Input clip.
+    :param tcanny_sigma: sigma of tcanny.
+    :param clahe_limit: Threshold for contrast limiting (16-bit scale, the luma is always raised to 16 bit).
+    :param clahe_tile: Tile count for the histogram equalization.
+    :param brz: if brz > 0 output will be binarized (brz uses 16-bit scale).
+    """
+    EXPR = get_expr()
+    luma16 = Depth(GetPlane(src, 0), 16)
+    clahe = core.vszip.CLAHE(luma16, limit=clahe_limit, tiles=clahe_tile)
+    tc = clahe.tcanny.TCanny(mode=1, sigma=tcanny_sigma).std.Minimum(coordinates=[1, 0, 1, 0, 0, 1, 0, 1])
+    k1 = luma16.std.Convolution(matrix=[5, 5, 5, -3, 0, -3, -3, -3, -3], saturate=False)
+    k2 = luma16.std.Convolution(matrix=[-3, 5, 5, -3, 0, 5, -3, -3, -3], saturate=False)
+    k3 = luma16.std.Convolution(matrix=[-3, -3, 5, -3, 0, 5, -3, -3, 5], saturate=False)
+    k4 = luma16.std.Convolution(matrix=[-3, -3, -3, -3, 0, 5, -3, 5, 5], saturate=False)
+    expr = 'x y z a max max max b + 65535 min'
+    expr_brz = f'x y z a max max max b + {brz} > 65535 0 ?'
+    mask = EXPR([k1, k2, k3, k4, tc], expr_brz if brz > 0 else expr)
+    return Depth(mask, src.format.bits_per_sample, dither_type='none', range_in='full', range='full')
+
 # Kirsch edge detection. This uses 8 directions, so it's slower but better than Sobel (4 directions).
 # more information: https://ddl.kageru.moe/konOJ.pdf
 # from https://blog.kageru.moe/legacy/edgemasks.html
