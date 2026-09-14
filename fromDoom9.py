@@ -189,10 +189,10 @@ def deflickerPreset1(sm: vs.VideoNode, zsmooth: bool=False):
   smm = core.std.Merge(smm, sm, 0.25)
   if zsmooth:
     sm = SCDetect(sm, threshold=0.06)
-    smm = core.zsmooth.TemporalSoften(clip=sm,radius=2, threshold=[3,5,5],scenechange=6,scalep=True)
+    smm = core.zsmooth.TemporalSoften(clip=sm,radius=2, threshold=[3,5,5],scenechange=-1,scalep=True)
   else:
     smm = core.focus2.TemporalSoften2(clip=sm,radius=2,luma_threshold=3,chroma_threshold=5,scenechange=6,mode=2)
-  smm = core.msmoosh.MSmooth(clip=smm,threshold=2.0,strength=1.0,planes=[1,2])
+  smm = SMOOTH(clip=smm,threshold=2.0,strength=1.0,planes=[1,2])
   return smm
 
 def deflickerPreset2(sm: vs.VideoNode, chroma: bool, zsmooth: bool=False):
