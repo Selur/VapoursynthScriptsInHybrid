@@ -2,11 +2,11 @@ import vapoursynth as vs
 core = vs.core
 from misc import MV, SCDetect
 
-def fillWithMVTools(clip):  
-  super = MV.Super(clip, pel=2, blksize=8, overlap=0)
-  vfe = MV.Analyse(super, truemotion=True, isb=False, delta=1)
-  vbe = MV.Analyse(super, truemotion=True, isb=True, delta=1)
-  return MV.FlowInter(clip, super, mvbw=vbe, mvfw=vfe, time=50)
+def fillWithMVTools(clip):
+    super = MV.Super(clip, pel=2, blksize=8, overlap=0)
+    vfe = MV.Analyse(super, truemotion=True, isb=False, delta=1)
+    vbe = MV.Analyse(super, truemotion=True, isb=True, delta=1)
+    return MV.FlowInter(clip, super, mvbw=vbe, mvfw=vfe, time=50)
     
 def fillWithRIFE(clip, firstframe=None, rifeModel=22, rifeTTA=False, rifeUHD=False, sceneThresh=0.15):
   clip1 = core.std.AssumeFPS(clip, fpsnum=1, fpsden=1)
@@ -182,3 +182,61 @@ def ReplaceSingle(clip, frameList, method="mv", rifeModel=0, rifeTTA=False, rife
         return core.text.Text(clip=clip,text="kept frame: "+str(n),alignment=8)
       return clip
     return core.std.FrameEval(clip, selectFunc)
+
+def fillWithMVToolsM(clip, start, end, time):
+    pair = clip[start-1:start] + clip[end+1:end+2]
+    super = MV.Super(pair, pel=2, blksize=8, overlap=0)
+    vfe = MV.Analyse(super, truemotion=True, isb=False, delta=1)
+    vbe = MV.Analyse(super, truemotion=True, isb=True, delta=1)
+    return MV.FlowInter(pair, super, mvbw=vbe, mvfw=vfe, time=time)[0]
+
+def fillWithRIFEM(clip, start, end, rifeModel=22, rifeTTA=False, rifeUHD=False, sceneThresh=0.15):
+    clip1 = core.std.AssumeFPS(clip, fpsnum=1, fpsden=1)
+    left = core.std.Trim(clip1, first=start-1, length=1)
+    right = core.std.Trim(clip1, first=end+1, length=1)
+    pair = left + right
+    pair = core.resize.Bicubic(pair, format=vs.RGBS, matrix_in_s="709")
+    r = core.rife.RIFE(pair, model=rifeModel, tta=rifeTTA, uhd=rifeUHD, sc=sceneThresh>0)
+    r = core.resize.Bicubic(r, format=clip.format, matrix_s="709")
+    return r
+
+
+def ReplaceFlagged(clip, method="mv", debug=False):
+    core = vs.core
+    flags = [bool(clip.get_frame(n).props.get("_UseInterp", 0)) for n in range(clip.num_frames)]
+    replacements = {}
+
+    n = 0
+    while n < clip.num_frames:
+        if not flags[n]:
+            n += 1
+            continue
+
+        start = n
+        while n + 1 < clip.num_frames and flags[n + 1]:
+            n += 1
+        end = n
+
+        if start > 0 and end < clip.num_frames - 1:
+            count = end - start + 1
+
+            for i in range(count):
+                frame = start + i
+                time = 100 * (i + 1) / (count + 1)
+
+                if method == "mv":
+                    replacements[frame] = fillWithMVToolsM(clip, start, end, time)
+                elif method == "rife":
+                    replacements[frame] = fillWithRIFEM(clip, start, end, time)
+                else:
+                    raise vs.Error("ReplaceFlagged: unsupported method " + method)
+
+        n += 1
+
+    def selectFunc(n, f):
+        result = replacements.get(n, clip[n])
+        if debug and n in replacements:
+            result = core.text.Text(result, text="INTERPOLATED n=" + str(n), alignment=8)
+        return result
+
+    return core.std.FrameEval(clip, selectFunc, prop_src=clip)
