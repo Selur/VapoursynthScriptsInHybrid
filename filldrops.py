@@ -1,3 +1,5 @@
+import importlib.util
+
 import vapoursynth as vs
 core = vs.core
 from misc import MV, SCDetect
@@ -72,8 +74,22 @@ def fillWithRIFEM(clip, start, end, rifeModel=22, rifeTTA=False, rifeUHD=False, 
     return r[1:count + 1]
 
 
+def hasGMFSSfortuna():
+    """True when the optional vsgmfss_fortuna package can be imported."""
+    return importlib.util.find_spec("vsgmfss_fortuna") is not None
+
+
+def _gmfss_fortuna():
+    """Import vsgmfss_fortuna, with a clear message when it is not installed."""
+    try:
+        from vsgmfss_fortuna import gmfss_fortuna
+    except ImportError as e:
+        raise vs.Error("gmfssfortuna: vsgmfss_fortuna is not installed") from e
+    return gmfss_fortuna
+
+
 def fillWithGMFSSUnionM(clip, start, end, gmfssModel=0, sceneThresh=0.15):
-    from vsgmfss_fortuna import gmfss_fortuna
+    gmfss_fortuna = _gmfss_fortuna()
 
     clip1 = core.std.AssumeFPS(clip, fpsnum=1, fpsden=1)
     pair = clip1[start - 1:start] + clip1[end + 1:end + 2]
@@ -315,7 +331,7 @@ def _ranges_from_props(clip):
     return ranges
 
 
-def flickerFlag(clip, max_flash_frames=5, min_diff=0.05, return_ranges=False):
+def flickerFlag(clip, max_flash_frames=5, min_diff=0.01, return_ranges=False):
     """
     Detects short brightness flashes and marks the affected frames with the
     frame property "_UseInterp" (1 = frame should be replaced/interpolated,
@@ -423,6 +439,10 @@ def ReplaceFlagged(clip, ranges=None, method="mv", rifeModel=22, rifeTTA=False, 
         interp = _interp_range(clip, start, end, method, rifeModel, rifeTTA, rifeUHD,
                                sceneThresh, gmfssModel)
 
+        # The segment is built from the frames around the run, so it inherits
+        # their _UseInterp=0 - retag it as replaced.
+        interp = core.std.SetFrameProp(interp, prop="_UseInterp", intval=1)
+
         if debug:
             interp = core.text.Text(interp, text="INTERPOLATED " + str(start) + "-" + str(end), alignment=8)
 
@@ -441,13 +461,121 @@ def ReplaceFlagged(clip, ranges=None, method="mv", rifeModel=22, rifeTTA=False, 
 
 
 # ---------------------------------------------------------------------------
+# lazy detection: no full decode while the graph is built
+# ---------------------------------------------------------------------------
+
+def _shift(clip, k):
+    """clip moved by k frames, same length, edges clamped."""
+    if k == 0:
+        return clip
+    num_frames = clip.num_frames
+    if k > 0:
+        return clip[k:] + clip[num_frames - 1:] * k
+    return clip[:1] * (-k) + clip[:num_frames + k]
+
+
+def _flash_range_at(luma, n, num_frames, max_flash_frames, min_diff, backoff):
+    """The flash range containing frame n, or None.
+
+    Runs the same greedy scan as flickerFlag(), but starts at n - backoff
+    instead of at frame 1. That gives the same answer because two flashes can
+    never touch: a flash starts on a rise from the preceding frame and ends on
+    a drop to the following one, so at least one normal frame separates them
+    and a locally started scan resynchronises on it.
+    """
+    m = max(1, n - backoff)
+
+    while m < num_frames - 1 and m <= n:
+
+        if luma(m) < luma(m - 1) + min_diff:
+            m += 1
+            continue
+
+        found = False
+
+        for length in range(1, max_flash_frames + 1):
+
+            end = m + length - 1
+
+            if end >= num_frames - 1:
+                break
+
+            if luma(end) < luma(end + 1) + min_diff:
+                continue
+
+            baseline = max(luma(m - 1), luma(end + 1))
+
+            if all(luma(i) >= baseline + min_diff for i in range(m, end + 1)):
+                if m <= n <= end:
+                    return m, end
+                found = True
+                m = end + 1
+                break
+
+        if not found:
+            m += 1
+
+    return None
+
+
+def _fixFlickerLazy(clip, max_flash_frames, min_diff, method, rifeModel, rifeTTA,
+                    rifeUHD, sceneThresh, gmfssModel, debug):
+    """FixFlicker without the analysis pass, see FixFlicker(lazy=True)."""
+    if min_diff <= 0:
+        raise vs.Error('FixFlicker: lazy detection needs a positive min_diff')
+
+    backoff = 2 * max_flash_frames + 2
+    lo, hi = -(backoff + 1), max_flash_frames + 1
+    num_frames = clip.num_frames
+
+    # One PlaneStats node, read through shifted views: frame n of view k
+    # carries the luma of frame n + k, so the whole window is available
+    # without ever touching a frame outside it.
+    stats = core.std.PlaneStats(clip, plane=0)
+    prop_src = [_shift(stats, k) for k in range(lo, hi + 1)]
+    zero = -lo
+
+    off = core.std.SetFrameProp(clip, prop="_UseInterp", intval=0)
+    segments = {}
+
+    def selectFunc(n, f):
+        window = {n + (i - zero): fr.props["PlaneStatsAverage"] for i, fr in enumerate(f)}
+
+        def luma(i):
+            return window[min(max(i, n + lo), n + hi)]
+
+        found = _flash_range_at(luma, n, num_frames, max_flash_frames, min_diff, backoff)
+
+        if found is None:
+            return off
+
+        start, end = found
+        interp = segments.get(found)
+
+        # Built once per range, not once per frame: with RIFE the range
+        # interpolation computes every intermediate frame anyway.
+        if interp is None:
+            interp = _interp_range(clip, start, end, method, rifeModel, rifeTTA, rifeUHD,
+                                   sceneThresh, gmfssModel)
+            interp = core.std.SetFrameProp(interp, prop="_UseInterp", intval=1)
+            if debug:
+                interp = core.text.Text(interp, text="INTERPOLATED " + str(start) + "-" + str(end),
+                                        alignment=8)
+            segments[found] = interp
+
+        return _loop_single(clip, interp[n - start:n - start + 1])
+
+    return core.std.FrameEval(clip, selectFunc, prop_src=prop_src)
+
+
+# ---------------------------------------------------------------------------
 # convenience wrapper
 # ---------------------------------------------------------------------------
 
-def FixFlicker(clip: vs.VideoNode, max_flash_frames: int = 1, min_diff: float = 0.05,
+def FixFlicker(clip: vs.VideoNode, max_flash_frames: int = 1, min_diff: float = 0.01,
                method: str = "mv", rifeModel: int = 22, rifeTTA: bool = False,
                rifeUHD: bool = False, sceneThresh: float = 0.15, gmfssModel: int = 0,
-               debug: bool = False) -> vs.VideoNode:
+               debug: bool = False, lazy: bool = False) -> vs.VideoNode:
     """
     Detects short brightness flashes and replaces them by an interpolation
     between the frames surrounding the flash.
@@ -456,10 +584,24 @@ def FixFlicker(clip: vs.VideoNode, max_flash_frames: int = 1, min_diff: float = 
     min_diff:         minimum luma difference (0..1) required to count as a flash.
     method:           mv, svp, svp_gpu, rife or gmfssfortuna.
     debug:            label the replaced frames.
+    lazy:             decide per frame instead of scanning the clip up front.
+                      Nothing is decoded while the graph is built, which is what
+                      a preview wants; the detected flashes are the same.
 
     The returned clip keeps the _UseInterp property, so the detection result
     stays inspectable downstream.
     """
+    if not isinstance(clip, vs.VideoNode):
+        raise vs.Error("FixFlicker: 'clip' must be a clip")
+    if clip.format is None or clip.format.color_family not in (vs.YUV, vs.GRAY):
+        raise vs.Error('FixFlicker: clip must be YUV or GRAY (convert RGB first)')
+    if max_flash_frames < 1:
+        raise vs.Error('FixFlicker: max_flash_frames must be at least 1')
+
+    if lazy:
+        return _fixFlickerLazy(clip, max_flash_frames, min_diff, method, rifeModel,
+                               rifeTTA, rifeUHD, sceneThresh, gmfssModel, debug)
+
     flagged, ranges = flickerFlag(clip,
                                   max_flash_frames=max_flash_frames,
                                   min_diff=min_diff,
