@@ -1,6 +1,6 @@
 import vapoursynth as vs
 from vapoursynth import core
-from misc import MV, SCDetect
+from misc import MV
 
 '''
 call using:
@@ -36,10 +36,7 @@ class FillDuplicateFrames:
       self.clip = core.std.PlaneStats(clip, clip[0]+clip)
       self.mode = mode
       self.frames = frames
-      if sceneThr > 0 and method.lower() == 'rife':
-         clip = SCDetect(clip=clip, threshold=sceneThresh)
-        
-        
+
       if method == 'Replace' and not frames:
         raise ValueError(f'FillDuplicateFrames: "frames" needs to be set when using \'{self.method}\'!')
 
