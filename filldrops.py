@@ -283,6 +283,18 @@ def ReplaceSingle(clip, frameList, method="mv", rifeModel=0, rifeTTA=False, rife
 # flicker detection
 # ---------------------------------------------------------------------------
 
+def _brighter(min_diff):
+    """Is a frame clearly brighter than a reference frame?
+
+    min_diff = 0 is the plain local maximum test - brighter than the
+    neighbours, by any amount. A larger value asks for that much margin on
+    top, which is what separates a flash from ordinary luma noise.
+    """
+    if min_diff > 0:
+        return lambda value, reference: value >= reference + min_diff
+    return lambda value, reference: value > reference
+
+
 def _luma_values(clip):
     """Average luma per frame, decoded with VapourSynth's own prefetching."""
     stats = core.std.PlaneStats(clip, plane=0)
@@ -331,16 +343,19 @@ def _ranges_from_props(clip):
     return ranges
 
 
-def flickerFlag(clip, max_flash_frames=5, min_diff=0.01, return_ranges=False):
+def flickerFlag(clip, max_flash_frames=5, min_diff=0.0, return_ranges=False, luma=None):
     """
     Detects short brightness flashes and marks the affected frames with the
     frame property "_UseInterp" (1 = frame should be replaced/interpolated,
     0 = keep). The clip itself is not modified.
 
     max_flash_frames: maximum length of a flash in frames.
-    min_diff:         minimum luma difference (0..1) required to count as a flash.
+    min_diff:         luma margin (0..1) a frame needs over its neighbours to
+                      count as a flash. 0 takes every local maximum.
     return_ranges:    also return the detected (start, end) ranges, so that
                       ReplaceFlagged does not have to rediscover them.
+    luma:             per frame luma from an earlier _luma_values() run, to
+                      save a second pass over the clip.
     """
     if not isinstance(clip, vs.VideoNode):
         raise vs.Error("flickerFlag: 'clip' must be a clip")
@@ -350,18 +365,21 @@ def flickerFlag(clip, max_flash_frames=5, min_diff=0.01, return_ranges=False):
     num_frames = clip.num_frames
 
     # Calculate luma values once, at full resolution so detection stays exact.
-    luma = _luma_values(clip)
+    if luma is None:
+        luma = _luma_values(clip)
 
     # Frames that should be replaced.
     use_interp = [False] * num_frames
     ranges = []
+
+    brighter = _brighter(min_diff)
 
     n = 1
     while n < num_frames - 1:
 
         # A flash must start with a strong increase
         # compared to the previous frame.
-        if luma[n] < luma[n - 1] + min_diff:
+        if not brighter(luma[n], luma[n - 1]):
             n += 1
             continue
 
@@ -381,14 +399,14 @@ def flickerFlag(clip, max_flash_frames=5, min_diff=0.01, return_ranges=False):
 
             # The last flash frame must also be clearly brighter
             # than the frame after the flash.
-            if luma[end] < after + min_diff:
+            if not brighter(luma[end], after):
                 continue
 
             # The surrounding frames define the normal brightness.
             baseline = max(before, after)
 
             # Every frame of the flash must be clearly above that baseline.
-            if all(luma[i] >= baseline + min_diff for i in range(n, end + 1)):
+            if all(brighter(luma[i], baseline) for i in range(n, end + 1)):
                 for i in range(n, end + 1):
                     use_interp[i] = True
 
@@ -474,20 +492,22 @@ def _shift(clip, k):
     return clip[:1] * (-k) + clip[:num_frames + k]
 
 
-def _flash_range_at(luma, n, num_frames, max_flash_frames, min_diff, backoff):
+def _flash_range_at(luma, n, num_frames, max_flash_frames, brighter, backoff):
     """The flash range containing frame n, or None.
 
     Runs the same greedy scan as flickerFlag(), but starts at n - backoff
     instead of at frame 1. That gives the same answer because two flashes can
     never touch: a flash starts on a rise from the preceding frame and ends on
     a drop to the following one, so at least one normal frame separates them
-    and a locally started scan resynchronises on it.
+    and a locally started scan resynchronises on it. That holds for the plain
+    local maximum test as well, a frame cannot be brighter and darker than the
+    same neighbour.
     """
     m = max(1, n - backoff)
 
     while m < num_frames - 1 and m <= n:
 
-        if luma(m) < luma(m - 1) + min_diff:
+        if not brighter(luma(m), luma(m - 1)):
             m += 1
             continue
 
@@ -500,12 +520,12 @@ def _flash_range_at(luma, n, num_frames, max_flash_frames, min_diff, backoff):
             if end >= num_frames - 1:
                 break
 
-            if luma(end) < luma(end + 1) + min_diff:
+            if not brighter(luma(end), luma(end + 1)):
                 continue
 
             baseline = max(luma(m - 1), luma(end + 1))
 
-            if all(luma(i) >= baseline + min_diff for i in range(m, end + 1)):
+            if all(brighter(luma(i), baseline) for i in range(m, end + 1)):
                 if m <= n <= end:
                     return m, end
                 found = True
@@ -518,12 +538,28 @@ def _flash_range_at(luma, n, num_frames, max_flash_frames, min_diff, backoff):
     return None
 
 
+def _luma_label(n, value, previous):
+    """Debug line: frame number, its luma and the step from the frame before.
+
+    The step is what min_diff is compared against, so both numbers together
+    say why a frame was taken for a flash or passed over.
+    """
+    return "n %d  luma %.4f  d %+.4f" % (n, value, value - previous)
+
+
+def _label_luma(clip, luma):
+    """Write the per frame luma under an already built clip."""
+    def selectFunc(n):
+        return core.text.Text(clip, text=_luma_label(n, luma[n], luma[n - 1] if n else luma[n]),
+                              alignment=2)
+
+    return core.std.FrameEval(clip, selectFunc)
+
+
 def _fixFlickerLazy(clip, max_flash_frames, min_diff, method, rifeModel, rifeTTA,
                     rifeUHD, sceneThresh, gmfssModel, debug):
     """FixFlicker without the analysis pass, see FixFlicker(lazy=True)."""
-    if min_diff <= 0:
-        raise vs.Error('FixFlicker: lazy detection needs a positive min_diff')
-
+    brighter = _brighter(min_diff)
     backoff = 2 * max_flash_frames + 2
     lo, hi = -(backoff + 1), max_flash_frames + 1
     num_frames = clip.num_frames
@@ -544,26 +580,31 @@ def _fixFlickerLazy(clip, max_flash_frames, min_diff, method, rifeModel, rifeTTA
         def luma(i):
             return window[min(max(i, n + lo), n + hi)]
 
-        found = _flash_range_at(luma, n, num_frames, max_flash_frames, min_diff, backoff)
+        found = _flash_range_at(luma, n, num_frames, max_flash_frames, brighter, backoff)
 
         if found is None:
-            return off
+            out = off
+        else:
+            start, end = found
+            interp = segments.get(found)
 
-        start, end = found
-        interp = segments.get(found)
+            # Built once per range, not once per frame: with RIFE the range
+            # interpolation computes every intermediate frame anyway.
+            if interp is None:
+                interp = _interp_range(clip, start, end, method, rifeModel, rifeTTA, rifeUHD,
+                                       sceneThresh, gmfssModel)
+                interp = core.std.SetFrameProp(interp, prop="_UseInterp", intval=1)
+                if debug:
+                    interp = core.text.Text(interp, text="INTERPOLATED " + str(start) + "-" + str(end),
+                                            alignment=8)
+                segments[found] = interp
 
-        # Built once per range, not once per frame: with RIFE the range
-        # interpolation computes every intermediate frame anyway.
-        if interp is None:
-            interp = _interp_range(clip, start, end, method, rifeModel, rifeTTA, rifeUHD,
-                                   sceneThresh, gmfssModel)
-            interp = core.std.SetFrameProp(interp, prop="_UseInterp", intval=1)
-            if debug:
-                interp = core.text.Text(interp, text="INTERPOLATED " + str(start) + "-" + str(end),
-                                        alignment=8)
-            segments[found] = interp
+            out = _loop_single(clip, interp[n - start:n - start + 1])
 
-        return _loop_single(clip, interp[n - start:n - start + 1])
+        if debug:
+            out = core.text.Text(out, text=_luma_label(n, luma(n), luma(n - 1)), alignment=2)
+
+        return out
 
     return core.std.FrameEval(clip, selectFunc, prop_src=prop_src)
 
@@ -572,7 +613,7 @@ def _fixFlickerLazy(clip, max_flash_frames, min_diff, method, rifeModel, rifeTTA
 # convenience wrapper
 # ---------------------------------------------------------------------------
 
-def FixFlicker(clip: vs.VideoNode, max_flash_frames: int = 1, min_diff: float = 0.01,
+def FixFlicker(clip: vs.VideoNode, max_flash_frames: int = 1, min_diff: float = 0.0,
                method: str = "mv", rifeModel: int = 22, rifeTTA: bool = False,
                rifeUHD: bool = False, sceneThresh: float = 0.15, gmfssModel: int = 0,
                debug: bool = False, lazy: bool = False) -> vs.VideoNode:
@@ -581,7 +622,8 @@ def FixFlicker(clip: vs.VideoNode, max_flash_frames: int = 1, min_diff: float = 
     between the frames surrounding the flash.
 
     max_flash_frames: maximum length of a flash in frames.
-    min_diff:         minimum luma difference (0..1) required to count as a flash.
+    min_diff:         luma margin (0..1) a frame needs over its neighbours to
+                      count as a flash. 0 takes every local maximum.
     method:           mv, svp, svp_gpu, rife or gmfssfortuna.
     debug:            label the replaced frames.
     lazy:             decide per frame instead of scanning the clip up front.
@@ -602,19 +644,25 @@ def FixFlicker(clip: vs.VideoNode, max_flash_frames: int = 1, min_diff: float = 
         return _fixFlickerLazy(clip, max_flash_frames, min_diff, method, rifeModel,
                                rifeTTA, rifeUHD, sceneThresh, gmfssModel, debug)
 
+    # Needed twice with debug on - for the detection and for the labels.
+    luma = _luma_values(clip) if debug else None
+
     flagged, ranges = flickerFlag(clip,
                                   max_flash_frames=max_flash_frames,
                                   min_diff=min_diff,
-                                  return_ranges=True)
+                                  return_ranges=True,
+                                  luma=luma)
 
     if not ranges:
-        return flagged
+        return _label_luma(flagged, luma) if debug else flagged
 
-    return ReplaceFlagged(flagged, ranges,
-                          method=method,
-                          rifeModel=rifeModel,
-                          rifeTTA=rifeTTA,
-                          rifeUHD=rifeUHD,
-                          sceneThresh=sceneThresh,
-                          gmfssModel=gmfssModel,
-                          debug=debug)
+    out = ReplaceFlagged(flagged, ranges,
+                         method=method,
+                         rifeModel=rifeModel,
+                         rifeTTA=rifeTTA,
+                         rifeUHD=rifeUHD,
+                         sceneThresh=sceneThresh,
+                         gmfssModel=gmfssModel,
+                         debug=debug)
+
+    return _label_luma(out, luma) if debug else out
