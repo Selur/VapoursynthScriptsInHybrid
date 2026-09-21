@@ -96,8 +96,11 @@ def fillWithGMFSSUnionM(clip, start, end, gmfssModel=0, sceneThresh=0.15):
     pair = core.resize.Bicubic(pair, format=vs.RGBH, matrix_in_s="709")
 
     count = end - start + 1
+    # sc_threshold=0 would flag every frame as a scene change and stop the
+    # interpolation, so the argument is left out to switch the check off.
+    extra = {"sc_threshold": sceneThresh} if sceneThresh > 0 else {}
     r = gmfss_fortuna(pair, model=gmfssModel, factor_num=count + 1, factor_den=1,
-                      sc_threshold=sceneThresh)
+                      sc=sceneThresh > 0, **extra)
     r = core.resize.Bicubic(r, format=clip.format, matrix_s="709")
 
     return r[1:count + 1]
