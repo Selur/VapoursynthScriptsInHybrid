@@ -726,8 +726,9 @@ def mt_inpand_multi(src: vs.VideoNode, mode: str = 'rectangle', planes: Optional
 #     not explicitly given we fall back to mvu's own defaults (mvlambda=1000, lsad=400,
 #     pnew=25), which match old truemotion=True except lsad (was 1200 under
 #     truemotion=True, mvu always uses 400).
-#   - Degrain family: `limit`/`limitc` (0-255 int, 255 == "off") are converted to
-#     mvu's float `limit` (per-plane, inf == "off"), scaled to the clip's peak value.
+#   - Degrain family: `limit`/`limitc` are always given on the 8-bit scale (0-255 int,
+#     255 == "off") and converted to mvu's float `limit` (per-plane, inf == "off") or to
+#     mvtools' native-bit-depth integer, both scaled to the clip's peak value.
 #   - Mask: mvu splits `Mask(kind=0/1/2)` into three separate functions and drops the
 #     `clip`/`ysc` arguments, returning a single grayscale plane instead of a
 #     clip-shaped/UV-colored mask. Code relying on the old multi-plane mask shape
@@ -796,6 +797,14 @@ def _mvu_limit_to_float(limit: Optional[float], clip: vs.VideoNode) -> float:
     peak = (1 << clip.format.bits_per_sample) - 1
     return limit * peak / 255.0
 
+
+def _legacy_limit(limit: float, clip: vs.VideoNode):
+    '''DegrainN `limit`/`limitc` (0-255 int, 255 = off) -> mvtools' native-bit-depth integer limit.'''
+    if clip.format.sample_type == vs.FLOAT:
+        return limit
+    peak = (1 << clip.format.bits_per_sample) - 1
+    return int(limit * peak / 255 + 0.5)
+
 class MotionVectors:
     '''
     mvtools/mvsf-style wrapper that optionally routes to mvutensils (core.mvu).
@@ -827,6 +836,16 @@ class MotionVectors:
         if self._prefer_mvutensils is False:
             return False
         return has_mvutensils()
+
+    def max_degrain_radius(self, clip: vs.VideoNode) -> Optional[int]:
+        '''Largest temporal radius Degrain() accepts for this clip; None = no limit (mvutensils).'''
+        if self.use_mvu:
+            return None
+        ns = self._legacy_ns(clip)
+        radius = 0
+        while hasattr(ns, f'Degrain{radius + 1}'):
+            radius += 1
+        return radius
     # -- internal helpers ----------------------------------------------------
 
     def _legacy_ns(self, clip: vs.VideoNode):
@@ -1231,8 +1250,8 @@ class MotionVectors:
             thsad=thsad,
             thsadc=thsadc if thsadc is not None else thsad,
             plane=plane,
-            limit=limit,
-            limitc=limitc if limitc is not None else limit,
+            limit=_legacy_limit(limit, clip),
+            limitc=_legacy_limit(limitc if limitc is not None else limit, clip),
             thscd1=thscd1,
             thscd2=thscd2,
             opt=opt,

@@ -5,6 +5,7 @@ from typing import Sequence, Union, Optional
 
 
 import math
+import warnings
 
 from helpers import scale, Padding, DitherLumaRebuild, DFTTest, GetPlane, KNLMeansCL, get_expr
 from misc import MV, MinBlur
@@ -33,11 +34,11 @@ from nnedi3_resample import nnedi3_resample
 ###
 ################################################################################################
 
-# Globals
-bv6 = bv4 = bv3 = bv2 = bv1 = fv1 = fv2 = fv3 = fv4 = fv6 = None
 
 def SMDegrain(input, tr=2, thSAD=300, thSADC=None, RefineMotion=False, contrasharp=None, CClip=None, interlaced=False, tff=None, plane=4, Globals=0, pel=None, subpixel=2, prefilter=-1, mfilter=None,
               blksize=None, overlap=None, search=4, truemotion=None, MVglobal=None, dct=0, limit=255, limitc=None, thSCD1=400, thSCD2=130, chroma=True, hpad=None, vpad=None, Str=1.0, Amp=0.0625, opencl=False, device=None):
+    # RefineMotion: False/0 = off, True/1 = one Recalculate pass, N = N passes each halving the block size.
+    # limit/limitc: maximum pixel change on the 8-bit scale (255 = off), scaled to the clip's bit depth by MV.
     if not isinstance(input, vs.VideoNode):
         raise vs.Error('SMDegrain: This is not a clip')
 
@@ -74,10 +75,8 @@ def SMDegrain(input, tr=2, thSAD=300, thSADC=None, RefineMotion=False, contrasha
 
     if blksize is None:
         blksize = 16 if is_large else 8
-    blk2 = blksize // 2
     if overlap is None:
-        overlap = blk2
-    ovl2 = overlap // 2
+        overlap = blksize // 2
     if truemotion is None:
         truemotion = not is_large
     if MVglobal is None:
@@ -90,11 +89,8 @@ def SMDegrain(input, tr=2, thSAD=300, thSADC=None, RefineMotion=False, contrasha
         hpad = blksize
     if vpad is None:
         vpad = blksize
-    limit = scale(limit, peak)
     if limitc is None:
         limitc = limit
-    else:
-        limitc = scale(limitc, peak)
 
     # Error Report
     if not (ifC or isinstance(contrasharp, int)):
@@ -111,17 +107,27 @@ def SMDegrain(input, tr=2, thSAD=300, thSADC=None, RefineMotion=False, contrasha
         raise vs.Error("SMDegrain: 'prefilter' must be the same format as input")
     if mfilter is not None and (not isinstance(mfilter, vs.VideoNode) or mfilter.format.id != input.format.id):
         raise vs.Error("SMDegrain: 'mfilter' must be the same format as input")
-    if RefineMotion and blksize < 8:
-        raise vs.Error('SMDegrain: For RefineMotion you need a blksize of at least 8')
+    if not (isinstance(RefineMotion, int) and RefineMotion >= 0):
+        raise vs.Error("SMDegrain: 'RefineMotion' must be a bool or a non-negative integer")
+    if not (isinstance(tr, int) and tr >= 1):
+        raise vs.Error("SMDegrain: 'tr' must be a positive integer")
     # not sure whether this is still true, so I disabled it
     #if not chroma and plane != 0:
     #    raise vs.Error('SMDegrain: Denoising chroma with luma only vectors is bugged in mvtools and thus unsupported')
 
-    # RefineMotion Variables
-    if RefineMotion:
-        halfblksize = blk2                                         # MRecalculate works with half block size
-        halfoverlap = overlap if overlap <= 2 else ovl2 + ovl2 % 2 # Halve the overlap to suit the halved block size
-        halfthSAD = thSAD2                                         # MRecalculate uses a more strict thSAD, which defaults to 150 (half of function's default of 300)
+    # Each RefineMotion pass halves the block size; 4x4 is the smallest block size.
+    refine_passes = int(RefineMotion)
+    max_passes = 0
+    while (blksize >> (max_passes + 1)) >= 4:
+        max_passes += 1
+    if refine_passes > max_passes:
+        warnings.warn(f'SMDegrain: RefineMotion={refine_passes} exceeds what blksize={blksize} allows, using {max_passes}', stacklevel=2)
+        refine_passes = max_passes
+
+    max_tr = MV.max_degrain_radius(input)
+    if max_tr is not None and tr > max_tr:
+        warnings.warn(f'SMDegrain: tr={tr} exceeds the largest radius the motion vector plugin supports, using {max_tr}', stacklevel=2)
+        tr = max_tr
 
     # Input preparation for Interlacing
     if not interlaced:
@@ -163,7 +169,6 @@ def SMDegrain(input, tr=2, thSAD=300, thSADC=None, RefineMotion=False, contrasha
         pref = DitherLumaRebuild(pref, s0=Str, c=Amp, chroma=chroma)
 
     # Motion vectors search
-    global bv6, bv4, bv3, bv2, bv1, fv1, fv2, fv3, fv4, fv6
     super_args = dict(hpad=hpad, vpad=vpad, pel=pel, blksize=blksize, overlap=overlap)
     # Subpixel 3
     if pelclip:
@@ -176,88 +181,37 @@ def SMDegrain(input, tr=2, thSAD=300, thSADC=None, RefineMotion=False, contrasha
     else:
       super_search = MV.Super(pref, chroma=chroma, sharp=subpixel, rfilter=4, **super_args)
 
-    
-    analyse_args = dict(blksize=blksize, search=search, chroma=chroma, truemotion=truemotion, global_=MVglobal, overlap=overlap, dct=dct)
-    if RefineMotion:
-        recalculate_args = dict(thsad=halfthSAD, blksize=halfblksize, search=search, chroma=chroma, truemotion=truemotion, overlap=halfoverlap, dct=dct)
-
-
+    refine_super = None
     if not GlobalR:
         if pelclip:
             super_render = MV.Super(inputP, levels=1, chroma=plane0, pelclip=pclip2, **super_args)
-            if RefineMotion:
-                Recalculate = MV.Super(pref, levels=1, chroma=chroma, pelclip=pclip, **super_args)
+            if refine_passes:
+                refine_super = MV.Super(pref, levels=1, chroma=chroma, pelclip=pclip, **super_args)
         else:
             super_render = MV.Super(inputP, levels=1, chroma=plane0, sharp=subpixel, **super_args)
-            if RefineMotion:
-                Recalculate = MV.Super(pref, levels=1, chroma=chroma, sharp=subpixel, **super_args)
-
-        if interlaced:
-            if tr > 2:
-                bv6 = MV.Analyse(super_search, isb=True, delta=6, **analyse_args)
-                fv6 = MV.Analyse(super_search, isb=False, delta=6, **analyse_args)
-                if RefineMotion:
-                    bv6 = MV.Recalculate(Recalculate, bv6, **recalculate_args)
-                    fv6 = MV.Recalculate(Recalculate, fv6, **recalculate_args)
-            if tr > 1:
-                bv4 = MV.Analyse(super_search, isb=True, delta=4, **analyse_args)
-                fv4 = MV.Analyse(super_search, isb=False, delta=4, **analyse_args)
-                if RefineMotion:
-                    bv4 = MV.Recalculate(Recalculate, bv4, **recalculate_args)
-                    fv4 = MV.Recalculate(Recalculate, fv4, **recalculate_args)
-        else:
-            if tr > 2:
-                bv3 = MV.Analyse(super_search, isb=True, delta=3, **analyse_args)
-                fv3 = MV.Analyse(super_search, isb=False, delta=3, **analyse_args)
-                if RefineMotion:
-                    bv3 = MV.Recalculate(Recalculate, bv3, **recalculate_args)
-                    fv3 = MV.Recalculate(Recalculate, fv3, **recalculate_args)
-            bv1 = MV.Analyse(super_search, isb=True, delta=1, **analyse_args)
-            fv1 = MV.Analyse(super_search, isb=False, delta=1, **analyse_args)
-            if RefineMotion:
-                bv1 = MV.Recalculate(Recalculate, bv1, **recalculate_args)
-                fv1 = MV.Recalculate(Recalculate, fv1, **recalculate_args)
-        if interlaced or tr > 1:
-            bv2 = MV.Analyse(super_search, isb=True, delta=2, **analyse_args)
-            fv2 = MV.Analyse(super_search, isb=False, delta=2, **analyse_args)
-            if RefineMotion:
-                bv2 = MV.Recalculate(Recalculate, bv2, **recalculate_args)
-                fv2 = MV.Recalculate(Recalculate, fv2, **recalculate_args)
+            if refine_passes:
+                refine_super = MV.Super(pref, levels=1, chroma=chroma, sharp=subpixel, **super_args)
     else:
         super_render = super_search
+        if refine_passes:
+            refine_super = super_render
+
+    search_params = dict(blksize=blksize, search=search, chroma=chroma, truemotion=truemotion, global_=MVglobal, overlap=overlap, dct=dct)
+    # Overlap of a refine pass: at most half its block size, a multiple of the chroma subsampling.
+    overlap_align = (1 << max(input.format.subsampling_w, input.format.subsampling_h)) if chroma else 1
+    refine_params = []
+    for i in range(1, refine_passes + 1):
+        refine_blksize = blksize >> i
+        refine_overlap = min(overlap >> i, refine_blksize // 2)
+        refine_overlap -= refine_overlap % overlap_align
+        refine_params.append(dict(thsad=thSAD2, blksize=refine_blksize, search=search, chroma=chroma, truemotion=truemotion, overlap=refine_overlap, dct=dct))
+
+    vectors = get_motion_vectors(super_search, refine_super, search_params, refine_params, tr, interlaced)
 
     # Finally, MDegrain
-    search_params = dict(blksize=blksize, search=search, chroma=chroma, truemotion=truemotion, global_=MVglobal, overlap=overlap, dct=dct)
-    refine_params = dict(thsad=thSAD2, blksize=blksize // 2, search=search, chroma=chroma, truemotion=truemotion, overlap=overlap // 2, dct=dct) if RefineMotion else None
-        
-    refine_super = None
-    if RefineMotion:
-        # If Recalculate was created earlier in the function it will be in locals()
-        refine_super = Recalculate if 'Recalculate' in locals() else super_render
-    vectors = get_motion_vectors(super_search, refine_super, search_params, refine_params, tr, interlaced)
-    
-    degrain_args = dict(thsad=thSAD, thsadc=thSADC, plane=plane, limit=limit, limitc=limitc, thscd1=thSCD1, thscd2=thSCD2)
     if not GlobalO:
-      if interlaced:
-        if tr >= 3:
-            output = MV.Degrain3(mfilter, super_render, bv2, fv2, bv4, fv4, bv6, fv6, **degrain_args)
-        elif tr == 2:
-            output = MV.Degrain2(mfilter, super_render, bv2, fv2, bv4, fv4, **degrain_args)
-        else:
-            output = MV.Degrain1(mfilter, super_render, bv2, fv2, **degrain_args)
-      else:
-        if tr >= 6:
-          output = MV.Degrain6(inputP, super_render, vectors['bv1'], vectors['fv1'], vectors['bv2'], vectors['fv2'], vectors['bv3'], vectors['fv3'], vectors['bv4'], vectors['fv4'], vectors['bv5'], vectors['fv5'], vectors['bv6'], vectors['fv6'], **degrain_args)
-        elif tr == 5:
-          output = MV.Degrain5(inputP, super_render, vectors['bv1'], vectors['fv1'], vectors['bv2'], vectors['fv2'], vectors['bv3'], vectors['fv3'], vectors['bv4'], vectors['fv4'], vectors['bv5'], vectors['fv5'], **degrain_args)
-        elif tr == 4: 
-          output = MV.Degrain4(inputP, super_render, vectors['bv1'], vectors['fv1'], vectors['bv2'], vectors['fv2'], vectors['bv3'], vectors['fv3'], vectors['bv4'], vectors['fv4'], **degrain_args)
-        elif tr == 3:
-          output = MV.Degrain3(inputP, super_render, vectors['bv1'], vectors['fv1'], vectors['bv2'], vectors['fv2'], vectors['bv3'], vectors['fv3'], **degrain_args)
-        elif tr == 2:
-          output = MV.Degrain2(inputP, super_render, vectors['bv1'], vectors['fv1'], vectors['bv2'], vectors['fv2'], **degrain_args)
-        else:
-          output = MV.Degrain1(inputP, super_render, vectors['bv1'], vectors['fv1'], **degrain_args)
+        degrain_clip = mfilter if interlaced else inputP
+        output = MV.Degrain(degrain_clip, super_render, *vectors, thsad=thSAD, thsadc=thSADC, plane=plane, limit=limit, limitc=limitc, thscd1=thSCD1, thscd2=thSCD2)
 
   # Contrasharp (only sharpens luma)
     if not GlobalO and if0:
@@ -287,34 +241,14 @@ def SMDegrain(input, tr=2, thSAD=300, thSADC=None, RefineMotion=False, contrasha
         return input
 
 # Helpers
-     
-def get_motion_vectors(super_search, refine, search_params, refine_params, tr, interlaced):
-    vectors = {}
-    
-    if tr >= 1:
-        vectors['bv1'] = MV.Analyse(super_search, isb=True, delta=1, **search_params)
-        vectors['fv1'] = MV.Analyse(super_search, isb=False, delta=1, **search_params)
-        if refine:
-            vectors['bv1'] = MV.Recalculate(refine, vectors['bv1'], **refine_params)
-            vectors['fv1'] = MV.Recalculate(refine, vectors['fv1'], **refine_params)
-    
-    if interlaced or tr >= 2:
-        vectors['bv2'] = MV.Analyse(super_search, isb=True, delta=2, **search_params)
-        vectors['fv2'] = MV.Analyse(super_search, isb=False, delta=2, **search_params)
-        if refine:
-            vectors['bv2'] = MV.Recalculate(refine, vectors['bv2'], **refine_params)
-            vectors['fv2'] = MV.Recalculate(refine, vectors['fv2'], **refine_params)
-    
-    if tr >= 3:
-        for i in range(3, tr + 1):
-            vectors[f'bv{i}'] = MV.Analyse(super_search, isb=True, delta=i, **search_params)
-            vectors[f'fv{i}'] = MV.Analyse(super_search, isb=False, delta=i, **search_params)
-            if refine:
-                vectors[f'bv{i}'] = MV.Recalculate(refine, vectors[f'bv{i}'], **refine_params)
-                vectors[f'fv{i}'] = MV.Recalculate(refine, vectors[f'fv{i}'], **refine_params)
-    
+
+def get_motion_vectors(super_search, refine_super, search_params, refine_params, tr, interlaced):
+    '''Returns [bv1, fv1, bv2, fv2, ...] up to radius tr; separated fields use every second field (same parity).'''
+    vectors = MV.AnalyseMany(super_search, radius=tr, delta=2 if interlaced else 1, **search_params)
+    for params in refine_params:
+        vectors = MV.Recalculate(refine_super, vectors, **params)
     return vectors
-    
+
 def Weave(clip: vs.VideoNode, tff: Optional[bool] = None) -> vs.VideoNode:
     if not isinstance(clip, vs.VideoNode):
         raise vs.Error('Weave: this is not a clip')
