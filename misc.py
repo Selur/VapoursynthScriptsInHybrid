@@ -1342,7 +1342,11 @@ class MotionVectors:
             func = {0: core.mvu.VectorLengthMask, 1: core.mvu.SADMask, 2: core.mvu.OcclusionMask}.get(kind)
             if func is None:
                 raise vs.Error(f'MV.Mask: unsupported kind {kind!r}')
-            return func(vectors, ml=ml, gamma=gamma, time=time, thscd1=thscd1, thscd2=_mvu_scale_thscd2(thscd2))
+            # ysc is on the 8-bit scale; mvutensils takes it as scval in the vector clip's own format.
+            fmt = vectors.format
+            peak = 1.0 if fmt.sample_type == vs.FLOAT else (1 << fmt.bits_per_sample) - 1
+            return func(vectors, ml=ml, gamma=gamma, time=time, scval=ysc * peak / 255.0, thscd1=thscd1,
+                        thscd2=_mvu_scale_thscd2(thscd2))
         ns = self._legacy_ns(clip)
         return ns.Mask(clip, vectors, ml=ml, gamma=gamma, kind=kind, time=time, ysc=ysc, thscd1=thscd1, thscd2=thscd2)
 
