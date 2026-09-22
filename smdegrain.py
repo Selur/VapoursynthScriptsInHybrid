@@ -7,7 +7,7 @@ from typing import Sequence, Union, Optional
 import math
 import warnings
 
-from helpers import scale, cround, Padding, DitherLumaRebuild, DFTTest, GetPlane, KNLMeansCL, get_expr, is_limited_range
+from helpers import scale, cround, Padding, DitherLumaRebuild, DFTTest, GetPlane, KNLMeansCL, get_expr, is_limited_range, BM3D
 from misc import MV, MinBlur
 from sharpen import LSFmod, ContraSharpening
 from nnedi3_resample import nnedi3_resample
@@ -169,7 +169,7 @@ def SMDegrain(input, tr=2, thSAD=300, thSADC=None, RefineMotion=False, contrasha
             filtered = DFTTest(inputP, tbsize=1, slocation=[0.0,4.0, 0.2,9.0, 1.0,15.0], planes=planes)
             pref = core.std.MaskedMerge(filtered, inputP, EXPR(GetPlane(inputP, 0), expr=[expr]), planes=planes)
         elif prefilter == 5:
-            pref = _bm3d_prefilter(inputP, chroma)
+            pref = _bm3d_prefilter(inputP, chroma, device)
         elif prefilter == 6:
             pref = _dgdenoise_prefilter(inputP, chroma, device)
         elif prefilter > 6:
@@ -271,21 +271,18 @@ def SMDegrain(input, tr=2, thSAD=300, thSADC=None, RefineMotion=False, contrasha
 
 # Helpers
 
-def _bm3d_prefilter(clip: vs.VideoNode, chroma: bool) -> vs.VideoNode:
-    '''BM3D prefilter like Dogway's ex_BM3D preset "normal" (sigma 10, chroma 5, radius 1), on core.bm3d in float.'''
+def _bm3d_prefilter(clip: vs.VideoNode, chroma: bool, device) -> vs.VideoNode:
+    '''BM3D prefilter like Dogway's ex_BM3D preset "normal" (sigma 10, chroma 5, radius 1) on the BM3D plugin that is loaded.'''
     fmt = clip.format
-    chroma = chroma and fmt.color_family != vs.GRAY
-    if fmt.color_family == vs.GRAY:
-        work_format = vs.GRAYS
-        sigma = [10.0]
-    else:
-        # core.bm3d only denoises chroma in 4:4:4.
-        work_format = vs.YUV444PS if chroma else fmt.replace(sample_type=vs.FLOAT, bits_per_sample=32).id
-        sigma = [10.0, 5.0, 5.0] if chroma else [10.0, 0.0, 0.0]
-    work = core.resize.Bicubic(clip, format=work_format)
-    work = core.bm3d.VBasic(work, sigma=sigma, radius=1, block_step=4, bm_range=16, ps_range=5)
-    work = core.bm3d.VAggregate(work, radius=1, sample=1)
-    return core.resize.Bicubic(work, format=fmt.id)
+    params = dict(radius=1, block_step=4, bm_range=16, ps_range=5, device_id=device if isinstance(device, int) else None)
+    if chroma and fmt.color_family != vs.GRAY:
+        # Chroma is denoised together with luma (CBM3D), which needs 4:4:4.
+        work = BM3D(core.resize.Bicubic(clip, format=vs.YUV444PS), sigma=[10.0, 5.0, 5.0], chroma=True, **params)
+        return core.resize.Bicubic(work, format=fmt.id)
+    luma = core.std.ShufflePlanes(clip, 0, vs.GRAY)
+    work = BM3D(core.resize.Point(luma, format=vs.GRAYS), sigma=[10.0], **params)
+    work = core.resize.Point(work, format=luma.format.id)
+    return work if fmt.color_family == vs.GRAY else core.std.ShufflePlanes([work, clip], [0, 1, 2], vs.YUV)
 
 def _dgdenoise_prefilter(clip: vs.VideoNode, chroma: bool, device) -> vs.VideoNode:
     '''DGDenoise prefilter with Dogway's strengths (luma 0.10, chroma 0.05); DGDenoise takes YV12, YUV420P16 and YUV444P16 only.'''

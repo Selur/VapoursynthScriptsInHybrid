@@ -5,6 +5,7 @@ import vapoursynth as vs
 core = vs.core
 
 import math
+import warnings
 from typing import Optional, Union, Sequence, Dict, Any
 
 class Range:
@@ -583,6 +584,42 @@ def DFTTest(clip: vs.VideoNode, cuda: Optional[bool] = None, **kwargs) -> vs.Vid
             # Let dfttest2 pick its backend: NVRTC where it fits, cuFFT for everything else.
             return dfttest2.DFTTest(clip, **kwargs)
     return core.dfttest.DFTTest(clip, **kwargs)
+
+
+# The BM3D implementations with the BM3DCUDA interface, in the order they are preferred when more than one is loaded.
+_BM3D_IMPLEMENTATIONS = ('bm3dcuda', 'bm3dhip', 'bm3dcpu')
+
+
+def BM3D(clip: vs.VideoNode, sigma: Sequence[float], radius: int = 0, block_step: int = 8, bm_range: int = 9,
+         ps_num: int = 2, ps_range: int = 4, chroma: bool = False, device_id: Optional[int] = None) -> vs.VideoNode:
+    '''Basic BM3D estimate (aggregated when radius > 0) on the BM3D plugin that is loaded.
+
+    The clip must be 32-bit float, chroma=True (CBM3D, block matching on luma) needs YUV444PS; the result is
+    32-bit float. Looked for in this order: bm3dcuda, bm3dhip, bm3dcpu, then core.bm3d. A GPU plugin that cannot
+    create its filter (no usable card, e.g. an AMD iGPU the bundled ROCm runtime does not support) is skipped with
+    a warning, so a GPU choice should be loaded together with bm3dcpu. With the BM3DCUDA plugins, planes with
+    sigma 0 are undefined unless chroma=True.
+    '''
+    if clip.format.sample_type != vs.FLOAT or clip.format.bits_per_sample != 32:
+        raise vs.Error('BM3D: the clip must be 32-bit float')
+    for name in _BM3D_IMPLEMENTATIONS:
+        if not hasattr(core, name):
+            continue
+        kwargs = dict(sigma=list(sigma), radius=radius, block_step=block_step, bm_range=bm_range, ps_num=ps_num,
+                      ps_range=ps_range, chroma=chroma)
+        if name != 'bm3dcpu' and device_id is not None and device_id >= 0:
+            kwargs['device_id'] = device_id
+        try:
+            return getattr(core, name).BM3Dv2(clip, **kwargs)
+        except vs.Error as error:
+            warnings.warn(f'BM3D: {name} cannot be used ({str(error).splitlines()[0]}), trying the next implementation')
+    if not hasattr(core, 'bm3d'):
+        raise vs.Error('BM3D: no usable BM3D plugin is loaded')
+    if radius == 0:
+        return core.bm3d.Basic(clip, sigma=list(sigma), block_step=block_step, bm_range=bm_range)
+    basic = core.bm3d.VBasic(clip, sigma=list(sigma), radius=radius, block_step=block_step, bm_range=bm_range,
+                             ps_num=ps_num, ps_range=ps_range)
+    return core.bm3d.VAggregate(basic, radius=radius, sample=1)
 
 
 # The NLMeans implementations, in the order they are preferred when more than one is loaded.
