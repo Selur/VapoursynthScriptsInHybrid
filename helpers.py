@@ -215,8 +215,9 @@ def Padding(clip: vs.VideoNode, left: int = 0, right: int = 0, top: int = 0, bot
 
     return clip.resize.Point(width, height, src_left=-left, src_top=-top, src_width=width, src_height=height)
 
-def DitherLumaRebuild(src: vs.VideoNode, s0: float = 2.0, c: float = 0.0625, chroma: bool = True) -> vs.VideoNode:
+def DitherLumaRebuild(src: vs.VideoNode, s0: float = 2.0, c: float = 0.0625, chroma: bool = True, tv_range: bool = True) -> vs.VideoNode:
     '''Converts luma (and chroma) to PC levels, and optionally allows tweaking for pumping up the darks. (for the clip to be fed to motion search only)'''
+    # tv_range=False: the input is already full range, only the dark-boosting curve is applied and chroma is left alone.
     if not isinstance(src, vs.VideoNode):
         raise vs.Error('DitherLumaRebuild: this is not a clip')
 
@@ -228,12 +229,25 @@ def DitherLumaRebuild(src: vs.VideoNode, s0: float = 2.0, c: float = 0.0625, chr
 
     bits = src.format.bits_per_sample
     neutral = 1 << (bits - 1)
+    peak = (1 << bits) - 1
 
     k = (s0 - 1) * c
-    t = f'x {scale_value(16, 8, bits)} - {scale_value(219, 8, bits)} / 0 max 1 min' if is_integer else 'x 0 max 1 min'
-    e = f'{k} {1 + c} {(1 + c) * c} {t} {c} + / - * {t} 1 {k} - * + ' + (f'{scale_value(256, 8, bits)} *' if is_integer else '')
+    if not is_integer:
+        t, out = 'x 0 max 1 min', ''
+    elif tv_range:
+        t, out = f'x {scale_value(16, 8, bits)} - {scale_value(219, 8, bits)} / 0 max 1 min', f'{scale_value(256, 8, bits)} *'
+    else:
+        t, out = f'x {peak} / 0 max 1 min', f'{peak} *'
+    e = f'{k} {1 + c} {(1 + c) * c} {t} {c} + / - * {t} 1 {k} - * + ' + out
     EXPR = get_expr()
-    return EXPR(src, expr=e if is_gray else [e, f'x {neutral} - 128 * 112 / {neutral} +' if chroma and is_integer else ''])
+    return EXPR(src, expr=e if is_gray else [e, f'x {neutral} - 128 * 112 / {neutral} +' if chroma and is_integer and tv_range else ''])
+
+def is_limited_range(clip: vs.VideoNode, default: bool = True) -> bool:
+    '''True if frame 0 is tagged as limited (TV) range; `default` if the clip carries no range property.'''
+    prop_name = '_Range' if core.core_version.release_major >= 74 else '_ColorRange'
+    with clip.get_frame(0) as frame:
+        value = frame.props.get(prop_name)
+    return default if value is None else value == vs.RANGE_LIMITED
 
 def get_expr():
     '''Return the best Expr backend available, in order of preference: akarin, cranexpr, std.'''

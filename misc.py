@@ -722,10 +722,13 @@ def mt_inpand_multi(src: vs.VideoNode, mode: str = 'rectangle', planes: Optional
 #   - Analyse/Recalculate: `dct` (0-10) only maps cleanly to mvu's boolean `satd`
 #     for dct in {0, 5}; other dct modes have no mvutensils equivalent and are
 #     approximated as satd=True for dct>=5, satd=False otherwise.
-#   - Analyse: mvu removed the `truemotion` preset. When `lambda_`/`lsad`/`pnew` are
-#     not explicitly given we fall back to mvu's own defaults (mvlambda=1000, lsad=400,
-#     pnew=25), which match old truemotion=True except lsad (was 1200 under
-#     truemotion=True, mvu always uses 400).
+#   - Analyse/Recalculate: mvu removed the `truemotion` preset. Arguments not given
+#     explicitly get mvtools' preset values: truemotion=True -> lambda 1000 (per 8x8),
+#     lsad 1200, plevel 1, global True, pnew/pzero 50; truemotion=False -> lambda 0,
+#     lsad 400, plevel 0, global False, pnew/pzero 0.
+#   - lambda_: mvtools takes it absolute (callers scale it by blksize*blksizev/64
+#     themselves), mvu takes it per 8x8 block and scales internally, so it is divided
+#     back to the 8x8 value.
 #   - Degrain family: `limit`/`limitc` are always given on the 8-bit scale (0-255 int,
 #     255 == "off") and converted to mvu's float `limit` (per-plane, inf == "off") or to
 #     mvtools' native-bit-depth integer, both scaled to the clip's peak value.
@@ -770,6 +773,18 @@ def _mvu_search_mode(search: int) -> int:
 def _mvu_rfilter(rfilter: int) -> int:
     '''mvtools rfilter 0-4 -> mvutensils rfilter 0-2 (old modes 1 and 3 dropped).'''
     return {0: 0, 1: 0, 2: 1, 3: 1, 4: 2}.get(rfilter, 1)
+
+
+def _mvu_lambda(lambda_: Optional[int], truemotion: bool, blksize: int, blksizev: int) -> int:
+    '''mvtools lambda (absolute, or the truemotion preset if None) -> mvutensils mvlambda (per 8x8 block).'''
+    if lambda_ is None:
+        return 1000 if truemotion else 0
+    return int(lambda_ * 64 / (blksize * blksizev) + 0.5)
+
+
+def _mvu_pnew(pnew: Optional[int], truemotion: bool) -> int:
+    '''mvtools pnew (or the truemotion preset if None) -> mvutensils pnew.'''
+    return pnew if pnew is not None else (50 if truemotion else 0)
 
 
 def _mvu_dct_to_satd(dct: int) -> bool:
@@ -916,12 +931,12 @@ class MotionVectors:
             levels=levels,
             search=_mvu_search_mode(search),
             searchparam=searchparam,
-            mvlambda=(lambda_ if lambda_ is not None else (1000 if truemotion else 0)),
+            mvlambda=_mvu_lambda(lambda_, truemotion, blksize, blksizev or blksize),
             chroma=chroma,
-            lsad=(lsad if lsad is not None else 400),
-            plevel=(plevel if plevel is not None else 1),
-            globalmv=(global_ if global_ is not None else True),
-            pnew=(pnew if pnew is not None else 25),
+            lsad=(lsad if lsad is not None else (1200 if truemotion else 400)),
+            plevel=(plevel if plevel is not None else (1 if truemotion else 0)),
+            globalmv=(global_ if global_ is not None else bool(truemotion)),
+            pnew=_mvu_pnew(pnew, truemotion),
             pglobal=pglobal,
             badsad=badsad,
             badrange=badrange,
@@ -1085,9 +1100,9 @@ class MotionVectors:
                     blksize=[blksize, blksizev or blksize],
                     search=_mvu_search_mode(search),
                     searchparam=searchparam,
-                    mvlambda=(lambda_ if lambda_ is not None else (1000 if truemotion else 0)),
+                    mvlambda=_mvu_lambda(lambda_, truemotion, blksize, blksizev or blksize),
                     chroma=chroma,
-                    pnew=(pnew if pnew is not None else 25),
+                    pnew=_mvu_pnew(pnew, truemotion),
                     overlap=[overlap, overlapv or overlap],
                     meander=meander,
                     fields=fields,
@@ -1111,9 +1126,9 @@ class MotionVectors:
                 blksize=[blksize, blksizev or blksize],
                 search=_mvu_search_mode(search),
                 searchparam=searchparam,
-                mvlambda=(lambda_ if lambda_ is not None else (1000 if truemotion else 0)),
+                mvlambda=_mvu_lambda(lambda_, truemotion, blksize, blksizev or blksize),
                 chroma=chroma,
-                pnew=(pnew if pnew is not None else 25),
+                pnew=_mvu_pnew(pnew, truemotion),
                 overlap=[overlap, overlapv or overlap],
                 meander=meander,
                 fields=fields,

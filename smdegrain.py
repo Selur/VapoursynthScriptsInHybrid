@@ -7,7 +7,7 @@ from typing import Sequence, Union, Optional
 import math
 import warnings
 
-from helpers import scale, Padding, DitherLumaRebuild, DFTTest, GetPlane, KNLMeansCL, get_expr
+from helpers import scale, cround, Padding, DitherLumaRebuild, DFTTest, GetPlane, KNLMeansCL, get_expr, is_limited_range
 from misc import MV, MinBlur
 from sharpen import LSFmod, ContraSharpening
 from nnedi3_resample import nnedi3_resample
@@ -36,9 +36,12 @@ from nnedi3_resample import nnedi3_resample
 
 
 def SMDegrain(input, tr=2, thSAD=300, thSADC=None, RefineMotion=False, contrasharp=None, CClip=None, interlaced=False, tff=None, plane=4, Globals=0, pel=None, subpixel=2, prefilter=-1, mfilter=None,
-              blksize=None, overlap=None, search=4, truemotion=None, MVglobal=None, dct=0, limit=255, limitc=None, thSCD1=400, thSCD2=130, chroma=True, hpad=None, vpad=None, Str=1.0, Amp=0.0625, opencl=False, device=None):
+              blksize=None, overlap=None, search=4, truemotion=None, MVglobal=None, dct=0, limit=255, limitc=None, thSCD1=None, thSCD2=130, chroma=True, hpad=None, vpad=None, Str=1.0, Amp=0.0625, opencl=False, device=None,
+              tv_range=None, v4formulas=False):
     # RefineMotion: False/0 = off, True/1 = one Recalculate pass, N = N passes each halving the block size.
     # limit/limitc: maximum pixel change on the 8-bit scale (255 = off), scaled to the clip's bit depth by MV.
+    # tv_range: range of the input for the luma rebuild of the motion search clip; None = read from the frame properties.
+    # v4formulas: thSADC, thSCD1, the refine threshold and the motion search parameters follow Dogway's SMDegrain 4.x.
     if not isinstance(input, vs.VideoNode):
         raise vs.Error('SMDegrain: This is not a clip')
 
@@ -49,10 +52,6 @@ def SMDegrain(input, tr=2, thSAD=300, thSADC=None, RefineMotion=False, contrasha
     peak = (1 << input.format.bits_per_sample) - 1
 
     # Defaults & Conditionals
-    thSAD2 = thSAD // 2
-    if thSADC is None:
-        thSADC = thSAD2
-
     GlobalR = (Globals == 1)
     GlobalO = (Globals >= 3)
     if1 = CClip is not None
@@ -81,6 +80,25 @@ def SMDegrain(input, tr=2, thSAD=300, thSADC=None, RefineMotion=False, contrasha
         truemotion = not is_large
     if MVglobal is None:
         MVglobal = truemotion
+
+    is_hd = w > 1099 or h > 599
+    is_uhd = w > 2599 or h > 1499
+    if v4formulas:
+        csad = _scale_csad(plane in (0, 4), chroma, input.format, is_hd)
+        if thSADC is None:
+            thSADC = cround(thSAD * 0.755 * 0.25 * math.exp(csad * 0.693))
+        if thSCD1 is None:
+            thSCD1 = cround(0.35 * thSAD + 260)
+        thSAD_refine = cround(math.exp(-101 / (thSAD * 0.83)) * 360)
+    else:
+        if thSADC is None:
+            thSADC = thSAD // 2
+        if thSCD1 is None:
+            thSCD1 = 400
+        thSAD_refine = thSAD // 2
+
+    if tv_range is None:
+        tv_range = is_limited_range(input)
 
     planes = [0, 1, 2] if chroma else [0]
     plane0 = (plane != 0)
@@ -150,7 +168,13 @@ def SMDegrain(input, tr=2, thSAD=300, thSADC=None, RefineMotion=False, contrasha
             # Takes the first DFTTest implementation that is loaded, GPU ones first.
             filtered = DFTTest(inputP, tbsize=1, slocation=[0.0,4.0, 0.2,9.0, 1.0,15.0], planes=planes)
             pref = core.std.MaskedMerge(filtered, inputP, EXPR(GetPlane(inputP, 0), expr=[expr]), planes=planes)
-        elif prefilter >= 4:
+        elif prefilter == 5:
+            pref = _bm3d_prefilter(inputP, chroma)
+        elif prefilter == 6:
+            pref = _dgdenoise_prefilter(inputP, chroma, device)
+        elif prefilter > 6:
+            raise vs.Error("SMDegrain: 'prefilter' must be -1 to 6 or a clip")
+        elif prefilter == 4:
             # Takes the first NLMeans implementation that is loaded: nlm_ispc (CPU),
             # nlm_cuda (CUDA), knlm (KNLMeansCL, OpenCL). Usually exactly one of
             # them is loaded for this filter - nlm_ispc when 'opencl' is off,
@@ -166,7 +190,7 @@ def SMDegrain(input, tr=2, thSAD=300, thSADC=None, RefineMotion=False, contrasha
 
     # Default Auto-Prefilter - Luma expansion TV->PC (up to 16% more values for motion estimation)
     if not GlobalR:
-        pref = DitherLumaRebuild(pref, s0=Str, c=Amp, chroma=chroma)
+        pref = DitherLumaRebuild(pref, s0=Str, c=Amp, chroma=chroma, tv_range=tv_range)
 
     # Motion vectors search
     super_args = dict(hpad=hpad, vpad=vpad, pel=pel, blksize=blksize, overlap=overlap)
@@ -197,6 +221,11 @@ def SMDegrain(input, tr=2, thSAD=300, thSADC=None, RefineMotion=False, contrasha
             refine_super = super_render
 
     search_params = dict(blksize=blksize, search=search, chroma=chroma, truemotion=truemotion, global_=MVglobal, overlap=overlap, dct=dct)
+    refine_search = {}
+    if v4formulas:
+        searchparam = (2 if is_uhd else 5) if refine_passes and truemotion else (1 if is_uhd else 2)
+        search_params.update(searchparam=searchparam, pelsearch=max(0, searchparam * 2 - 2), pglobal=11, plevel=0)
+        refine_search = dict(searchparam=max(0, cround(math.exp(0.69 * searchparam - 1.79) - 0.67)))
     # Overlap of a refine pass: at most half its block size, a multiple of the chroma subsampling.
     overlap_align = (1 << max(input.format.subsampling_w, input.format.subsampling_h)) if chroma else 1
     refine_params = []
@@ -204,7 +233,7 @@ def SMDegrain(input, tr=2, thSAD=300, thSADC=None, RefineMotion=False, contrasha
         refine_blksize = blksize >> i
         refine_overlap = min(overlap >> i, refine_blksize // 2)
         refine_overlap -= refine_overlap % overlap_align
-        refine_params.append(dict(thsad=thSAD2, blksize=refine_blksize, search=search, chroma=chroma, truemotion=truemotion, overlap=refine_overlap, dct=dct))
+        refine_params.append(dict(thsad=thSAD_refine, blksize=refine_blksize, search=search, chroma=chroma, truemotion=truemotion, overlap=refine_overlap, dct=dct, **refine_search))
 
     vectors = get_motion_vectors(super_search, refine_super, search_params, refine_params, tr, interlaced)
 
@@ -241,6 +270,54 @@ def SMDegrain(input, tr=2, thSAD=300, thSADC=None, RefineMotion=False, contrasha
         return input
 
 # Helpers
+
+def _bm3d_prefilter(clip: vs.VideoNode, chroma: bool) -> vs.VideoNode:
+    '''BM3D prefilter like Dogway's ex_BM3D preset "normal" (sigma 10, chroma 5, radius 1), on core.bm3d in float.'''
+    fmt = clip.format
+    chroma = chroma and fmt.color_family != vs.GRAY
+    if fmt.color_family == vs.GRAY:
+        work_format = vs.GRAYS
+        sigma = [10.0]
+    else:
+        # core.bm3d only denoises chroma in 4:4:4.
+        work_format = vs.YUV444PS if chroma else fmt.replace(sample_type=vs.FLOAT, bits_per_sample=32).id
+        sigma = [10.0, 5.0, 5.0] if chroma else [10.0, 0.0, 0.0]
+    work = core.resize.Bicubic(clip, format=work_format)
+    work = core.bm3d.VBasic(work, sigma=sigma, radius=1, block_step=4, bm_range=16, ps_range=5)
+    work = core.bm3d.VAggregate(work, radius=1, sample=1)
+    return core.resize.Bicubic(work, format=fmt.id)
+
+def _dgdenoise_prefilter(clip: vs.VideoNode, chroma: bool, device) -> vs.VideoNode:
+    '''DGDenoise prefilter with Dogway's strengths (luma 0.10, chroma 0.05); DGDenoise takes YV12, YUV420P16 and YUV444P16 only.'''
+    fmt = clip.format
+    gray = fmt.color_family == vs.GRAY
+    work = core.std.ShufflePlanes(clip, [0, 0, 0], vs.YUV) if gray else clip
+    if gray or (fmt.subsampling_w, fmt.subsampling_h) == (0, 0):
+        work_format = vs.YUV444P16
+    elif fmt.id == vs.YUV420P8:
+        work_format = vs.YUV420P8
+    else:
+        work_format = vs.YUV420P16
+    if work.format.id != work_format:
+        work = core.resize.Bicubic(work, format=work_format)
+    work = core.dgdenoise.DGDenoise(work, strength=0.10, cstrength=0.05 if chroma and not gray else 0.0,
+                                    device=device if isinstance(device, int) and device >= 0 else 255)
+    if gray:
+        work = core.std.ShufflePlanes(work, 0, vs.GRAY)
+    return work if work.format.id == fmt.id else core.resize.Bicubic(work, format=fmt.id)
+
+def _scale_csad(luma: bool, chroma: bool, fmt: vs.VideoFormat, is_hd: bool) -> int:
+    '''Dogway's scaleCSAD exponent (MDegrain mode): how much chroma counts in the SAD relative to luma.'''
+    if not luma:
+        return 2
+    if not chroma:
+        return -2
+    subsampling = (fmt.subsampling_w, fmt.subsampling_h)
+    if subsampling == (0, 0):
+        return 2 if is_hd else 1
+    if subsampling == (2, 0):
+        return 0 if is_hd else -1
+    return 2 if is_hd else 0
 
 def get_motion_vectors(super_search, refine_super, search_params, refine_params, tr, interlaced):
     '''Returns [bv1, fv1, bv2, fv2, ...] up to radius tr; separated fields use every second field (same parity).'''
