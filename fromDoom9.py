@@ -387,8 +387,8 @@ def VHSClean(clip: vs.VideoNode, ths: int=100, blur_sharp=True) -> vs.VideoNode:
       f6x1 = MV.Analyse(sx1,delta=6, isb=False, truemotion=tm, blksize=64, blksizev=64, overlap=32, overlapv=32, search=srch, searchparam=srhp, badsad=badsad, dct=0, chroma=chroma, lambda_=lambda_)
       b6x1 = MV.Analyse(sx1,delta=6, isb=True,  truemotion=tm, blksize=64, blksizev=64, overlap=32, overlapv=32, search=srch, searchparam=srhp, badsad=badsad, dct=0, chroma=chroma, lambda_=lambda_)
 
-  mv123 = MV.Degrain3(x1, sx0, b1x1,f1x1,b2x1,f2x1,b3x1,f3x1,thsad=ths1,thsadc=thsc1)
-  mv456 = MV.Degrain3(x1, sx0, b4x1,f4x1,b5x1,f5x1,b6x1,f6x1,thsad=ths1,thsadc=thsc1)
+  mv123 = MV.Degrain3(x1, sx0, b1x1,f1x1,b2x1,f2x1,b3x1,f3x1,thsad=ths1,thsadc=thsc1,centre_from_clip=blur_sharp)
+  mv456 = MV.Degrain3(x1, sx0, b4x1,f4x1,b5x1,f5x1,b6x1,f6x1,thsad=ths1,thsadc=thsc1,centre_from_clip=blur_sharp)
   x4 = core.std.Merge(mv123, mv456, weight=[0.3])
  
 

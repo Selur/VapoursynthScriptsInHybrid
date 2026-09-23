@@ -396,7 +396,7 @@ def MLD_helper(clip, srch, tr, thSAD, rec, chroma, soft):
     if rec:
         vecs = MV.Recalculate(sup1, vecs, **recalculate_args)
 
-    return MV.Degrain(RG, sup2, *vecs, thsad=thSAD, plane=plane)
+    return MV.Degrain(RG, sup2, *vecs, thsad=thSAD, plane=plane, centre_from_clip=soft > 0)
 
 
 def TemporalDegrain2(clip, degrainTR=1, degrainPlane=4, grainLevel=2, grainLevelSetup=False, meAlg=4, meAlgPar=None, meSubpel=None, meBlksz=None, meTM=False,
@@ -828,13 +828,13 @@ def mcdegrainsharp(clip, frames=2, bblur=0.3, csharp=0.3, bsrch=True, thsad=400,
             mvfw3 = MV.Analyse(super_a, isb=False, delta=3, overlap=blksize//2, blksize=blksize)
 
     if frames == 1:
-        last = MV.Degrain1(clip=c2, super=super_rend, mvbw=mvbw1, mvfw=mvfw1, thsad=thsad, plane=plane)
+        last = MV.Degrain1(clip=c2, super=super_rend, mvbw=mvbw1, mvfw=mvfw1, thsad=thsad, plane=plane, centre_from_clip=True)
 
     elif frames == 2:
-        last = MV.Degrain2(clip=c2, super=super_rend, mvbw=mvbw1, mvfw=mvfw1, mvbw2=mvbw2, mvfw2=mvfw2, thsad=thsad, plane=plane)
+        last = MV.Degrain2(clip=c2, super=super_rend, mvbw=mvbw1, mvfw=mvfw1, mvbw2=mvbw2, mvfw2=mvfw2, thsad=thsad, plane=plane, centre_from_clip=True)
 
     elif frames == 3:
-        last = MV.Degrain3(clip=c2, super=super_rend, mvbw=mvbw1, mvfw=mvfw1, mvbw2=mvbw2, mvfw2=mvfw2, mvbw3=mvbw3, mvfw3=mvfw3, thsad=thsad, plane=plane)
+        last = MV.Degrain3(clip=c2, super=super_rend, mvbw=mvbw1, mvfw=mvfw1, mvbw2=mvbw2, mvfw2=mvfw2, mvbw3=mvbw3, mvfw3=mvfw3, thsad=thsad, plane=plane, centre_from_clip=True)
 
     else:
         raise ValueError('"frames" must be 1, 2 or 3.')

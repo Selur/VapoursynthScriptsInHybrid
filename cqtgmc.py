@@ -94,7 +94,7 @@ def CQTGMC(clip: vs.VideoNode, Sharpness: float=0.25, thSAD1: int=192, thSAD2: i
     sharpen = mt_clamp(sharpen, tMax, tMin, Sharpness, Sharpness, [0])
     
     csuper = MV.Super(sharpen, levels=1, blksize=8, overlap=0)
-    degrained = MV.Degrain1(clip=degrained, super=csuper, mvbw=bVec1, mvfw=fVec1, thsad=thSAD1)
+    degrained = MV.Degrain1(clip=degrained, super=csuper, mvbw=bVec1, mvfw=fVec1, thsad=thSAD1, centre_from_clip=True)
     
     # Crop back to the original dimensions
     degrained = core.std.Crop(degrained, left=0, top=0, right=pWidth - clip.width, bottom=pHeight - clip.height)
