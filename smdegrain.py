@@ -45,7 +45,7 @@ def SMDegrain(input, tr=2, thSAD=300, thSADC=None, RefineMotion=False, contrasha
     # v4formulas: thSADC, thSCD1, the refine threshold and the motion search parameters follow Dogway's SMDegrain 4.x.
     # LFR: Dogway's Low Frequency Restore; True = 300 Hz cutoff at 1920 wide, a number = cutoff in Hz (at least 50), False/0 = off.
     # DCTFlicker: with LFR, calms the restored low frequencies with a second, temporal SMDegrain pass on them.
-    # bm3d_backend: BM3D implementation for prefilter 5 ('bm3dcuda', 'bm3dhip', 'bm3dcpu', 'bm3d'); None = first one loaded.
+    # bm3d_backend: BM3D implementation for prefilter 5 ('bm3dcuda', 'bm3dhip', 'bm3dmetal', 'bm3dcpu', 'bm3d'); None = first one loaded.
     if not isinstance(input, vs.VideoNode):
         raise vs.Error('SMDegrain: This is not a clip')
 
