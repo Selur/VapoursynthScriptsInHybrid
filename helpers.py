@@ -591,20 +591,38 @@ _BM3D_IMPLEMENTATIONS = ('bm3dcuda', 'bm3dhip', 'bm3dcpu')
 
 
 def BM3D(clip: vs.VideoNode, sigma: Sequence[float], radius: int = 0, block_step: int = 8, bm_range: int = 9,
-         ps_num: int = 2, ps_range: int = 4, chroma: bool = False, device_id: Optional[int] = None) -> vs.VideoNode:
+         ps_num: int = 2, ps_range: int = 4, chroma: bool = False, device_id: Optional[int] = None,
+         backend: Optional[str] = None) -> vs.VideoNode:
     '''Basic BM3D estimate (aggregated when radius > 0) on the BM3D plugin that is loaded.
 
     The clip must be 32-bit float, chroma=True (CBM3D, block matching on luma) needs YUV444PS; the result is
-    32-bit float. Looked for in this order: bm3dcuda, bm3dhip, bm3dcpu, then core.bm3d. A GPU plugin that cannot
+    32-bit float. Looked for in this order: bm3dcuda, bm3dhip, bm3dcpu, then core.bm3d. backend ('bm3dcuda',
+    'bm3dhip', 'bm3dcpu' or 'bm3d') moves that implementation to the front, a GPU one followed by bm3dcpu; it matters where every plugin is
+    autoloaded (Linux, macOS), with explicit loading only the chosen one is there anyway. A GPU plugin that cannot
     create its filter (no usable card, e.g. an AMD iGPU the bundled ROCm runtime does not support) is skipped with
     a warning, so a GPU choice should be loaded together with bm3dcpu. With the BM3DCUDA plugins, planes with
     sigma 0 are undefined unless chroma=True.
     '''
     if clip.format.sample_type != vs.FLOAT or clip.format.bits_per_sample != 32:
         raise vs.Error('BM3D: the clip must be 32-bit float')
-    for name in _BM3D_IMPLEMENTATIONS:
+    order = _BM3D_IMPLEMENTATIONS + ('bm3d',)
+    if backend is not None:
+        if backend not in order:
+            raise vs.Error(f'BM3D: unknown backend "{backend}", use one of {", ".join(order)}')
+        if not hasattr(core, backend):
+            warnings.warn(f'BM3D: {backend} is not loaded, trying the next implementation')
+        # A GPU choice falls back to bm3dcpu first, as where only the chosen port and bm3dcpu are loaded.
+        first = (backend, 'bm3dcpu') if backend in ('bm3dcuda', 'bm3dhip') else (backend,)
+        order = first + tuple(name for name in order if name not in first)
+    for name in order:
         if not hasattr(core, name):
             continue
+        if name == 'bm3d':
+            if radius == 0:
+                return core.bm3d.Basic(clip, sigma=list(sigma), block_step=block_step, bm_range=bm_range)
+            basic = core.bm3d.VBasic(clip, sigma=list(sigma), radius=radius, block_step=block_step,
+                                     bm_range=bm_range, ps_num=ps_num, ps_range=ps_range)
+            return core.bm3d.VAggregate(basic, radius=radius, sample=1)
         kwargs = dict(sigma=list(sigma), radius=radius, block_step=block_step, bm_range=bm_range, ps_num=ps_num,
                       ps_range=ps_range, chroma=chroma)
         if name != 'bm3dcpu' and device_id is not None and device_id >= 0:
@@ -613,13 +631,7 @@ def BM3D(clip: vs.VideoNode, sigma: Sequence[float], radius: int = 0, block_step
             return getattr(core, name).BM3Dv2(clip, **kwargs)
         except vs.Error as error:
             warnings.warn(f'BM3D: {name} cannot be used ({str(error).splitlines()[0]}), trying the next implementation')
-    if not hasattr(core, 'bm3d'):
-        raise vs.Error('BM3D: no usable BM3D plugin is loaded')
-    if radius == 0:
-        return core.bm3d.Basic(clip, sigma=list(sigma), block_step=block_step, bm_range=bm_range)
-    basic = core.bm3d.VBasic(clip, sigma=list(sigma), radius=radius, block_step=block_step, bm_range=bm_range,
-                             ps_num=ps_num, ps_range=ps_range)
-    return core.bm3d.VAggregate(basic, radius=radius, sample=1)
+    raise vs.Error('BM3D: no usable BM3D plugin is loaded')
 
 
 # The NLMeans implementations, in the order they are preferred when more than one is loaded.

@@ -38,13 +38,14 @@ from nnedi3_resample import nnedi3_resample
 
 def SMDegrain(input, tr=2, thSAD=300, thSADC=None, RefineMotion=False, contrasharp=None, CClip=None, interlaced=False, tff=None, plane=4, Globals=0, pel=None, subpixel=2, prefilter=-1, mfilter=None,
               blksize=None, overlap=None, search=4, truemotion=None, MVglobal=None, dct=0, limit=255, limitc=None, thSCD1=None, thSCD2=130, chroma=True, hpad=None, vpad=None, Str=1.0, Amp=0.0625, opencl=False, device=None,
-              tv_range=None, v4formulas=False, LFR=False, DCTFlicker=False):
+              tv_range=None, v4formulas=False, LFR=False, DCTFlicker=False, bm3d_backend=None):
     # RefineMotion: False/0 = off, True/1 = one Recalculate pass, N = N passes each halving the block size.
     # limit/limitc: maximum pixel change on the 8-bit scale (255 = off), scaled to the clip's bit depth by MV.
     # tv_range: range of the input for the luma rebuild of the motion search clip; None = read from the frame properties.
     # v4formulas: thSADC, thSCD1, the refine threshold and the motion search parameters follow Dogway's SMDegrain 4.x.
     # LFR: Dogway's Low Frequency Restore; True = 300 Hz cutoff at 1920 wide, a number = cutoff in Hz (at least 50), False/0 = off.
     # DCTFlicker: with LFR, calms the restored low frequencies with a second, temporal SMDegrain pass on them.
+    # bm3d_backend: BM3D implementation for prefilter 5 ('bm3dcuda', 'bm3dhip', 'bm3dcpu', 'bm3d'); None = first one loaded.
     if not isinstance(input, vs.VideoNode):
         raise vs.Error('SMDegrain: This is not a clip')
 
@@ -175,7 +176,7 @@ def SMDegrain(input, tr=2, thSAD=300, thSADC=None, RefineMotion=False, contrasha
             filtered = DFTTest(inputP, tbsize=1, slocation=[0.0,4.0, 0.2,9.0, 1.0,15.0], planes=planes)
             pref = core.std.MaskedMerge(filtered, inputP, EXPR(GetPlane(inputP, 0), expr=[expr]), planes=planes)
         elif prefilter == 5:
-            pref = _bm3d_prefilter(inputP, chroma, device)
+            pref = _bm3d_prefilter(inputP, chroma, device, bm3d_backend)
         elif prefilter == 6:
             pref = _dgdenoise_prefilter(inputP, chroma, device)
         elif prefilter > 6:
@@ -339,10 +340,11 @@ def _average(clips):
     variables = 'xyzabcdefghijklmnopqrstuvw'
     return get_expr()(clips, expr=[' '.join(variables[:count]) + ' +' * (count - 1) + f' {count} /'])
 
-def _bm3d_prefilter(clip: vs.VideoNode, chroma: bool, device) -> vs.VideoNode:
-    '''BM3D prefilter like Dogway's ex_BM3D preset "normal" (sigma 10, chroma 5, radius 1) on the BM3D plugin that is loaded.'''
+def _bm3d_prefilter(clip: vs.VideoNode, chroma: bool, device, backend=None) -> vs.VideoNode:
+    '''BM3D prefilter like Dogway's ex_BM3D preset "normal" (sigma 10, chroma 5, radius 1) on the chosen or first loaded BM3D plugin.'''
     fmt = clip.format
-    params = dict(radius=1, block_step=4, bm_range=16, ps_range=5, device_id=device if isinstance(device, int) else None)
+    params = dict(radius=1, block_step=4, bm_range=16, ps_range=5, device_id=device if isinstance(device, int) else None,
+                  backend=backend)
     if chroma and fmt.color_family != vs.GRAY:
         # Chroma is denoised together with luma (CBM3D), which needs 4:4:4.
         work = BM3D(core.resize.Bicubic(clip, format=vs.YUV444PS), sigma=[10.0, 5.0, 5.0], chroma=True, **params)
