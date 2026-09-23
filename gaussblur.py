@@ -83,6 +83,10 @@ def GaussBlur(
 
     # ---------- Exact small-kernel path ----------
     kernel = _gauss_kernel(sigma, radius)
+    if clip.format.sample_type == vs.INTEGER:
+        # std.Convolution rounds the coefficients to integers for integer clips (at most 1023) and divides by their sum.
+        top = max(kernel)
+        kernel = [round(v / top * 1023) for v in kernel]
 
     out = clip
     if "h" in mode:
