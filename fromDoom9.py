@@ -429,42 +429,46 @@ def maskedCAS(clip: vs.VideoNode, strength: float=0.2):
   
 # Vapoursynth port of ContrastMask from javlak
 # https://forum.doom9.org/showthread.php?p=1514814#post1514814
-# requires masktools and TCanny
+# blur: TCanny if loaded, else gaussblur.GaussBlur, else BoxBlur
 # the default 'enhance' seems to be too high for normal usage, best start with 1 and increase it slowly
+# gblur has no visible effect, as in the original: there it is the chroma variance of the already desaturated copy
 def ContrastMask(clip, gblur=20.0, enhance=10.0):
     enhance = max(0.0, min(enhance, 10.0)) * 0.1
-
-    # Convert to grayscale and invert
-    v2 = core.std.ShufflePlanes(clip, planes=0, colorfamily=vs.GRAY)
-    v2 = core.std.Invert(v2)
-
-    # Apply Gaussian blur
-    if hasattr(core,'tcanny'):
-      v2 = core.tcanny.TCanny(v2, sigma=50, sigma_v=50+gblur, mode=-1)
-    elif GaussBlur is not None:
-      v2 = GaussBlur(v2, sigma=50, mode='h')
-      v2 = GaussBlur(v2, sigma=50+gblur, mode='v')
-    else:
-      radius_h = max(1, round(50 * 1.5))
-      radius_v = max(1, round((50 + gblur) * 1.5))
-      v2 = _boxblur_fn()(v2, hradius=radius_h, hpasses=3, vradius=radius_v, vpasses=3)
-
-    # Get the bit depth and scaling factors
-    bit_depth = clip.format.bits_per_sample
-    prop_name = '_Range' if core.core_version.release_major >= 74 else '_ColorRange'
-    color_range = clip.get_frame(0).props.get(prop_name, vs.RANGE_FULL)
-
-    if color_range == vs.RANGE_LIMITED:
-        max_val = 235 << (bit_depth - 8)
-    else:  # full range
-        max_val = (1 << bit_depth) - 1
-    
-    half_max_val = max_val / 2.0
-
-    # Apply the contrast mask effect using Expr
-    expr = f"x {half_max_val} > y {max_val} x - {half_max_val} / * x {max_val} x - - + y x {half_max_val} / * ?"
     EXPR = get_expr()
-    photoshop_overlay = EXPR([clip.std.ShufflePlanes(planes=0, colorfamily=vs.GRAY), v2], [expr])
+
+    # Like the original, work on the coded luma values at full scale, whatever the range.
+    luma = core.std.ShufflePlanes(clip, planes=0, colorfamily=vs.GRAY)
+    to_normalised = None
+    if clip.format.sample_type == vs.FLOAT:
+        peak = 1.0
+        prop_name = '_Range' if core.core_version.release_major >= 74 else '_ColorRange'
+        if clip.get_frame(0).props.get(prop_name, vs.RANGE_FULL) == vs.RANGE_LIMITED:
+            # float limited luma is normalised (16 -> 0.0, 235 -> 1.0); map it to the coded scale and back afterwards
+            luma = EXPR(luma, f"x {219 / 255} * {16 / 255} +")
+            to_normalised = f"x {16 / 255} - {255 / 219} *"
+    else:
+        peak = (1 << clip.format.bits_per_sample) - 1
+    half = peak / 2.0
+
+    # Invert
+    v2 = EXPR(luma, f"{peak} x -")
+
+    # Gaussian blur like VariableBlur's GaussianBlur(50.0, ...): luma variance 50
+    sigma = math.sqrt(50.0)
+    if hasattr(core,'tcanny'):
+      v2 = core.tcanny.TCanny(v2, sigma=sigma, mode=-1)
+    elif GaussBlur is not None:
+      v2 = GaussBlur(v2, sigma=sigma)
+    else:
+      # three box passes of radius r have the variance r * (r + 1)
+      radius = max(1, round(sigma))
+      v2 = _boxblur_fn()(v2, hradius=radius, hpasses=3, vradius=radius, vpasses=3)
+
+    # Photoshop overlay
+    expr = f"x {half} > y {peak} x - {half} / * x {peak} x - - + y x {half} / * ?"
+    photoshop_overlay = EXPR([luma, v2], [expr])
+    if to_normalised:
+        photoshop_overlay = EXPR(photoshop_overlay, to_normalised)
 
     # Merge the original and overlay clips
     photoshop_overlay = core.std.ShufflePlanes([photoshop_overlay, clip], planes=[0, 1, 2], colorfamily=vs.YUV)
