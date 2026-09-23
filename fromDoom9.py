@@ -314,18 +314,27 @@ def channel_mixer(rgb, RR=100.0, RG=0.0,   RB=0.0,
 # Required masktools2, mvtools2
 # Should work on YUVXXXP8 
 
-def blur(clip: vs.VideoNode, blur_radius: float=0.5) -> vs.VideoNode:
-  # Define the blur radius
-  kernel_size = 3  # Use 3 for kernel size 9, or 5 for kernel size 25
-  sigma = blur_radius / 3.0
-  blur_kernel = [
-      round((1 / (2 * 3.14159 * sigma**2)) * 2.71828**(-((x - kernel_size//2)**2 + (y - kernel_size//2)**2) / (2 * sigma**2)), 4)
-      for y in range(kernel_size)
-      for x in range(kernel_size)
-  ]
-  sum_kernel = sum(blur_kernel)
-  blur_kernel = [val / sum_kernel for val in blur_kernel]
-  return vs.core.std.Convolution(clip=clip, matrix=blur_kernel)
+def _adjust_focus(clip: vs.VideoNode, amount: float) -> vs.VideoNode:
+  '''AviSynth's AdjustFocus: kernel [(1-c)/2, c, (1-c)/2] with c = 2^amount, horizontal and vertical.'''
+  c = 2.0 ** amount
+  kernel = [(1 - c) / 2, c, (1 - c) / 2]
+  if clip.format.sample_type == vs.INTEGER:
+    # std.Convolution rounds the coefficients to integers for integer clips (at most 1023) and divides by their sum.
+    top = max(abs(v) for v in kernel)
+    kernel = [round(v / top * 1023) for v in kernel]
+  return core.std.Convolution(clip=clip, matrix=kernel, mode='hv')
+
+def blur(clip: vs.VideoNode, amount: float=0.5) -> vs.VideoNode:
+  '''AviSynth's Blur(amount), amount in [-1.0, 1.58].'''
+  if amount < -1.0 or amount > 1.5849625:
+    raise vs.Error('blur: amount must be in the range -1.0 to 1.58')
+  return _adjust_focus(clip, -amount)
+
+def sharpen(clip: vs.VideoNode, amount: float=0.5) -> vs.VideoNode:
+  '''AviSynth's Sharpen(amount), amount in [-1.58, 1.0].'''
+  if amount < -1.5849625 or amount > 1.0:
+    raise vs.Error('sharpen: amount must be in the range -1.58 to 1.0')
+  return _adjust_focus(clip, amount)
 
 def VHSClean(clip: vs.VideoNode, ths: int=100, blur_sharp=True) -> vs.VideoNode:
  
@@ -341,13 +350,14 @@ def VHSClean(clip: vs.VideoNode, ths: int=100, blur_sharp=True) -> vs.VideoNode:
   thsc1= ths1* 2
   bs = 8
   bblur  = 0.6
-  
+  csharp = 0.6
+
   
   sx = MV.Super(clip=clip, pel=pel, sharp=1,blksize=16,blksizev=8,overlap=8,overlapv=4)
 
   #phase 1. Soft denoising
   if hasattr(core, "mvu"):
-      b1x, f1x, b2x, f2x = MV.AnalyseMany(sx, radius=2, delta=1, truemotion=tm, blksize=16, blksizev=8, overlap=8, overlapv=4, search=srch, searchparam=srhp, badsad=badsad, dct=5, chroma=chroma, lambda_=lambda_)
+      b1x, f1x, b2x, f2x = MV.AnalyseMany(sx, radius=2, delta=1, truemotion=tm, blksize=16, blksizev=8, overlap=8, overlapv=4, search=srch, searchparam=srhp, badsad=badsad, dct=1, chroma=chroma, lambda_=lambda_)
   else:
       f1x = MV.Analyse(sx,delta=1, isb=False, truemotion=tm, blksize=16, blksizev=8, overlap=8, overlapv=4, search=srch, searchparam=srhp, badsad=badsad, dct=1, chroma=chroma, lambda_=lambda_)
       b1x = MV.Analyse(sx,delta=1, isb=True,  truemotion=tm, blksize=16, blksizev=8, overlap=8, overlapv=4, search=srch, searchparam=srhp, badsad=badsad, dct=1, chroma=chroma, lambda_=lambda_)
@@ -361,9 +371,8 @@ def VHSClean(clip: vs.VideoNode, ths: int=100, blur_sharp=True) -> vs.VideoNode:
 
   #phase 3. Strong denoising. Same style as MCDegrainSharp (By Didée and Stainless)
   if (blur_sharp):
-    sharpen_kernel = [-0.1, -0.1, -0.1, -0.1, 2.0, -0.1, -0.1, -0.1, -0.1] # csharp = 0.6
-    x0 = core.std.Convolution(clip=x3, matrix=sharpen_kernel)
-    x1 = blur(clip=x3, blur_radius=bblur)
+    x0 = sharpen(x3, csharp)
+    x1 = blur(x3, bblur)
   else:
     x0 = x3
     x1 = x3
@@ -387,14 +396,17 @@ def VHSClean(clip: vs.VideoNode, ths: int=100, blur_sharp=True) -> vs.VideoNode:
       f6x1 = MV.Analyse(sx1,delta=6, isb=False, truemotion=tm, blksize=64, blksizev=64, overlap=32, overlapv=32, search=srch, searchparam=srhp, badsad=badsad, dct=0, chroma=chroma, lambda_=lambda_)
       b6x1 = MV.Analyse(sx1,delta=6, isb=True,  truemotion=tm, blksize=64, blksizev=64, overlap=32, overlapv=32, search=srch, searchparam=srhp, badsad=badsad, dct=0, chroma=chroma, lambda_=lambda_)
 
-  mv123 = MV.Degrain3(x1, sx0, b1x1,f1x1,b2x1,f2x1,b3x1,f3x1,thsad=ths1,thsadc=thsc1,centre_from_clip=blur_sharp)
-  mv456 = MV.Degrain3(x1, sx0, b4x1,f4x1,b5x1,f5x1,b6x1,f6x1,thsad=ths1,thsadc=thsc1,centre_from_clip=blur_sharp)
-  x4 = core.std.Merge(mv123, mv456, weight=[0.3])
+  x4 = MV.Degrain6(x1, sx0, b1x1,f1x1,b2x1,f2x1,b3x1,f3x1,b4x1,f4x1,b5x1,f5x1,b6x1,f6x1,thsad=ths1,thsadc=thsc1,centre_from_clip=blur_sharp)
  
 
   #phase 4. Recover quick flying objects and water drops
   EXPR = get_expr()
-  mx=EXPR([blur(clip=x4, blur_radius=1.5),blur(clip=x3, blur_radius=1.5)],expr="y x - abs 12 >  255 0 ?")
+  # threshold 12 and mask maximum 255 are 8-bit values
+  if clip.format.sample_type == vs.INTEGER:
+    th, peak = 12 << (clip.format.bits_per_sample - 8), (1 << clip.format.bits_per_sample) - 1
+  else:
+    th, peak = 12 / 255, 1.0
+  mx=EXPR([blur(x4, 1.5),blur(x3, 1.5)],expr=f"y x - abs {th} > {peak} 0 ?")
   return core.std.MaskedMerge(clipa=x4,clipb=x3,mask=_boxblur_fn()(mx,hradius=2,vradius=2),planes=[0, 1, 2])
     
     
