@@ -325,7 +325,10 @@ def _lfr_mask(vectors, luma: vs.VideoNode, gamma: float, thscd1, thscd2) -> vs.V
             # normalizes it to 8 bit, which Dogway's ml=50 is meant for.
             mask = MV.Mask(core.resize.Point(luma, format=vs.GRAY8), vector, ml=50 * (1 << (bits - 8)), gamma=gamma,
                            kind=1, ysc=255, thscd1=thscd1, thscd2=thscd2)
-        masks.append(core.resize.Point(GetPlane(mask, 0), format=luma.format.id, range_in=1, range=1))
+        # A mask is full range whatever it is tagged with: the tag would win over range_in (mvtools' mask inherits
+        # the limited tag of its 8-bit input, mvutensils < 9 tagged it limited by mistake), so drop it before converting.
+        mask = core.std.RemoveFrameProps(GetPlane(mask, 0), props=['_Range', '_ColorRange'])
+        masks.append(core.resize.Point(mask, format=luma.format.id, range_in=1, range=1))
     return _average(masks)
 
 def _average(clips):
