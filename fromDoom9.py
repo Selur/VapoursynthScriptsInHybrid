@@ -429,8 +429,9 @@ def ContrastMask(clip, gblur=20.0, enhance=10.0):
     # Apply Gaussian blur
     if hasattr(core,'tcanny'):
       v2 = core.tcanny.TCanny(v2, sigma=50, sigma_v=50+gblur, mode=-1)
-    elif 'GaussBlur' in globals():
-      v2 = GaussBlur(v2, sigma=50, sigma_v=50+gblur)
+    elif GaussBlur is not None:
+      v2 = GaussBlur(v2, sigma=50, mode='h')
+      v2 = GaussBlur(v2, sigma=50+gblur, mode='v')
     else:
       radius_h = max(1, round(50 * 1.5))
       radius_v = max(1, round((50 + gblur) * 1.5))
