@@ -66,20 +66,18 @@ def _fft3d(clip: vs.VideoNode, **kwargs) -> vs.VideoNode:
     return core.fft3dfilter.FFT3DFilter(clip, **kwargs)
 
 
-def _bilateral(clip: vs.VideoNode, sigmaS: float = 3.0, sigmaR: float = 0.02, **kwargs) -> vs.VideoNode:
-    """Bilateral filter — prefers bilateralgpu, then vszip, then bilateral."""
-    if hasattr(core,'zipcl'):
-      last = core.vszipcl.Bilateral(clip, sigmaS=sigmaS, sigmaR=sigmaR, **kwargs)
-    elif hasattr(core,'zipcu'):
-      last = core.vszipcu.Bilateral(clip, sigmaS=sigmaS, sigmaR=sigmaR, **kwargs)
-    elif hasattr(core, "bilateralgpu"):
-        return core.bilateralgpu.Bilateral(clip, sigma_spatial=sigmaS, sigma_color=sigmaR, **kwargs)
+def _bilateral(clip: vs.VideoNode, sigmaS: float = 3.0, sigmaR: float = 0.02, gpu: bool | None = None, **kwargs) -> vs.VideoNode:
+    """Bilateral filter — a loaded GPU port (bilateralgpu_rtc, bilateralgpu, vszipcl, vszipcu) unless gpu is False, then vszip, then bilateral."""
+    # The GPU ports name the sigmas sigma_spatial/sigma_color, on the same scale as sigmaS/sigmaR.
+    for namespace in (() if gpu is False else ("bilateralgpu_rtc", "bilateralgpu", "vszipcl", "vszipcu")):
+        if hasattr(core, namespace):
+            return getattr(core, namespace).Bilateral(clip, sigma_spatial=sigmaS, sigma_color=sigmaR, **kwargs)
     if hasattr(core, "vszip"):
         return core.vszip.Bilateral(clip, sigmaS=sigmaS, sigmaR=sigmaR, **kwargs)
     if hasattr(core, "bilateral"):
         return core.bilateral.Bilateral(clip, sigmaS=sigmaS, sigmaR=sigmaR, **kwargs)
     raise RuntimeError(
-        "srfcomb: a bilateral filter plugin is required (bilateralgpu, vszip, or bilateral) — "
+        "srfcomb: a bilateral filter plugin is required (vszipcl, vszipcu, bilateralgpu, vszip, or bilateral) — "
         "install one from https://github.com/dnjulek/vapoursynth-zip"
     )
 
@@ -495,6 +493,7 @@ def SRFComb2(
     pal: bool | None = None,
     progressive: bool | None = None,
     contrasharp: bool = True,
+    bilateral_gpu: bool | None = None,
 ) -> vs.VideoNode:
     """
     SRFComb2 — spatial + temporal dot-crawl and rainbow artefact reduction.
@@ -530,6 +529,10 @@ def SRFComb2(
     contrasharp : bool
         Apply contra-sharpening after motion compensation to recover
         detail lost during degrain (default ``True``).
+    bilateral_gpu : bool, optional
+        ``False`` keeps the chroma bilateral filter on the CPU (vszip) even
+        when a GPU port is loaded; by default a loaded GPU port
+        (bilateralgpu_rtc, bilateralgpu, vszipcl, vszipcu) is used.
 
     Returns
     -------
@@ -713,7 +716,7 @@ def SRFComb2(
     u_in = core.std.ShufflePlanes(spati_comb_c, 1, vs.GRAY)
     v_in = core.std.ShufflePlanes(spati_comb_c, 2, vs.GRAY)
     uv_interleaved = core.std.Interleave([u_in, v_in])
-    uv_filtered    = _bilateral(uv_interleaved, sigmaS=1.4, sigmaR=0.028)
+    uv_filtered    = _bilateral(uv_interleaved, sigmaS=1.4, sigmaR=0.028, gpu=bilateral_gpu)
     u_filtered     = core.std.SelectEvery(uv_filtered, 2, [0])
     v_filtered     = core.std.SelectEvery(uv_filtered, 2, [1])
     spati_comb_c   = core.std.ShufflePlanes(

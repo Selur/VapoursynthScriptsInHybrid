@@ -2,7 +2,7 @@ import vapoursynth as vs
 from vapoursynth import core
 from typing import List
 
-from helpers import GetPlane, NNEDI3, get_expr
+from helpers import Depth, GetPlane, NNEDI3, get_expr
 import masked
 
 
@@ -22,7 +22,7 @@ def RainbowSmooth(clip, radius=3, lthresh=0, hthresh=220, mask="original"):
         elif mask == "fast_sobel":
             mask = masked.fast_sobel(clip)
         elif mask == "kirsch":
-            KIRSCH = core.edgemasks.Kirsch if hasattr(core,"edgemasks") else core.std.kirsch
+            KIRSCH = core.edgemasks.Kirsch if hasattr(core,"edgemasks") else masked.kirsch
             mask = KIRSCH(clip)
         elif mask == "retinex_edgemask":
             mask = Depth(masked.retinex_edgemask(clip), clip.format.bits_per_sample)

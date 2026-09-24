@@ -327,7 +327,9 @@ def santiag(
                 return core.eedi2cuda.EEDI2(c, field=field)
             if hasattr(core, 'eedi2'):
                 return core.eedi2.EEDI2(c, field=field)
-            return core.eedi2cuda.EEDI2(c, field=field)
+            if hasattr(core, 'eedi2cuda'):
+                return core.eedi2cuda.EEDI2(c, field=field)
+            raise vs.Error('santiag: type "eedi2" needs the eedi2 or eedi2cuda plugin')
         elif type == 'eedi3':
             sclip = nnedi3(c, field=field, dh=dh)
             return get_eedi3()(c, field=field, dh=dh, sclip=sclip)

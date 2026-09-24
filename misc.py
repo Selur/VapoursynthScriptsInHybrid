@@ -220,10 +220,14 @@ def ShiftLinesHorizontally(clip: vs.VideoNode, shift: int, ymin: int, ymax: int)
     
     return core.std.StackVertical(parts)
 
+def _scd_thresh(threshold: float, bits: int) -> int:
+    '''SCDetect's 0-1 threshold as scd.Detect's absolute luma difference (0-254 at 8 bit, times 2^(bits-8)).'''
+    return max(1, round(threshold * 254 * (1 << max(bits - 8, 0))))
+
 def SCDetect(clip: vs.VideoNode, threshold: float = 0.1, plane: int = 0) -> vs.VideoNode:
     """
     Scene change detection with _SceneChangePrev/_SceneChangeNext frame properties.
-    Uses core.misc.SCDetect or core.scd.Detect if available (plane=0 only), otherwise falls back to
+    Uses core.scd.Detect (integer clips) or core.misc.SCDetect if available (plane=0 only), otherwise falls back to
     a std.PlaneStats-based reimplementation.
 
     Args:
@@ -242,10 +246,10 @@ def SCDetect(clip: vs.VideoNode, threshold: float = 0.1, plane: int = 0) -> vs.V
     if clip.num_frames < 2:
         raise vs.Error('SCDetect: clip must have more than one frame')
 
-    if hasattr(core,'scd'):
+    if hasattr(core,'scd') and plane == 0 and clip.format.sample_type == vs.INTEGER:
       if clip.format.color_family == vs.RGB:
             sc = clip.resize.Point(format=vs.GRAY8, matrix_s='709')
-            sc = core.misc.SCDetect(sc, threshold=threshold)
+            sc = core.scd.Detect(sc, thresh=_scd_thresh(threshold, 8))
 
             def _copy_props(n: int, f: list[vs.VideoFrame]) -> vs.VideoFrame:
                 fout = f[0].copy()
@@ -255,7 +259,7 @@ def SCDetect(clip: vs.VideoNode, threshold: float = 0.1, plane: int = 0) -> vs.V
 
             return clip.std.ModifyFrame(clips=[clip, sc], selector=_copy_props)
 
-      return core.scd.Detect(clip, thresh=threshold)
+      return core.scd.Detect(clip, thresh=_scd_thresh(threshold, clip.format.bits_per_sample))
     elif hasattr(core, 'misc') and plane == 0:
       if clip.format.color_family == vs.RGB:
         sc = clip.resize.Point(format=vs.GRAY8, matrix_s='709')
@@ -302,6 +306,8 @@ def scene_aware(
 
     if not isinstance(clip, vs.VideoNode):
         raise TypeError("scene_aware: 'clip' must be a VideoNode")
+    if clip.num_frames < 2:
+        return filter_func(clip, **filter_kwargs)
 
     # --- SCDetect: clip must be constant format and of integer 8-16 bit type or 32 bit float
     sc_src = clip
@@ -310,12 +316,7 @@ def scene_aware(
     elif clip.format.sample_type == vs.FLOAT and clip.format.bits_per_sample != 32:
         sc_src = core.resize.Bicubic(clip, format=vs.YUV420P8)
 
-    if hasattr(core,'scd'):
-      sc = core.scd.Detect(sc_src, thresh=sc_threshold)
-    elif hasattr(core,'misc'):
-      sc = core.misc.SCDetect(sc_src, threshold=sc_threshold)
-    else: 
-      sc = SCDetect(sc_src, threshold=sc_threshold)
+    sc = SCDetect(sc_src, threshold=sc_threshold)
     sc_frames = [i for i in range(clip.num_frames) if sc.get_frame(i).props._SceneChangePrev == 1]
 
     # --- Remove very short segments

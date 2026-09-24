@@ -19,7 +19,7 @@ it will behave just like unmodified GradFun3.
 
 Differences:
 
- - added smode=5 that uses a bilateral filter on the GPU (CUDA)
+ - added smode=5 that uses a bilateral filter on the GPU (BilateralGPU, vszipcl or vszipcu)
    output should be very similar to smode=2
  - fixed the strength of the bilateral filter when using 
    smode=2 to match the AviSynth version
@@ -168,17 +168,20 @@ def GradFun3(src, thr=None, radius=None, elast=None, mask=None, mode=None, ampo=
         return last
 
     def bilateral_gpu(src, ref, radius, thr, elast, planes):
-        t = max(thr * 4.5, 1.25)
-        r = max(radius * 4 / 3, 4.0)
-        if hasattr(core,'zipcl'):
-          last = core.vszipcl.Bilateral(src, sigma_spatial=r / 2, sigma_color=t)  
-        elif hasattr(core,'zipcu'):
-          last = core.vszipcu.Bilateral(src, sigma_spatial=r / 2, sigma_color=t)  
-        elif hasattr(core,'bilateralgpu_rtc'):
-          last = core.bilateralgpu_rtc.Bilateral(src, sigma_spatial=r / 2, sigma_color=t)  
+        # smode 2 on the GPU: the ports take sigma_color on the same 0-1 scale as sigmaR.
+        thr_1 = max(thr * 4.5, 1.25)
+        r4 = max(radius * 4 / 3, 4.0)
+        for namespace in ('bilateralgpu_rtc', 'bilateralgpu', 'vszipcl', 'vszipcu'):
+            if hasattr(core, namespace):
+                last = getattr(core, namespace).Bilateral(src, ref=ref, sigma_spatial=r4 / 2, sigma_color=thr_1 / 255)
+                break
         else:
-          last = core.bilateralgpu.Bilateral(src, sigma_spatial=r / 2, sigma_color=t)
-        last = LimitFilter(last, ref, thr=thr, elast=elast, planes=planes)
+            raise vs.Error(funcname + ': smode=5 needs bilateralgpu_rtc, bilateralgpu, vszipcl or vszipcu')
+        # The ports filter every plane; the planes not asked for stay untouched, as with smode 2.
+        if len(planes) < src.format.num_planes:
+            last = core.std.ShufflePlanes([last if p in planes else src for p in range(src.format.num_planes)],
+                                          list(range(src.format.num_planes)), src.format.color_family)
+        last = LimitFilter(last, src, thr=thr, elast=elast, planes=planes)
         return last
 
     funcname = 'GradFun3'
@@ -275,9 +278,10 @@ def GradFun3(src, thr=None, radius=None, elast=None, mask=None, mode=None, ampo=
     ow = src.width
     oh = src.height
 
-    src_16 = core.fmtc.bitdepth(src, bits=16, planes=planes) if src.format.bits_per_sample < 16 else src
+    # All planes: fmtc.bitdepth leaves the planes it does not process undefined.
+    src_16 = core.fmtc.bitdepth(src, bits=16) if src.format.bits_per_sample < 16 else src
     src_8 = core.fmtc.bitdepth(src, bits=8, dmode=1, planes=[0]) if src.format.bits_per_sample != 8 else src
-    ref_16 = core.fmtc.bitdepth(ref, bits=16, planes=planes) if ref.format.bits_per_sample < 16 else ref
+    ref_16 = core.fmtc.bitdepth(ref, bits=16) if ref.format.bits_per_sample < 16 else ref
 
     # Do lineart smoothing first for sharper results
     if resizer.lower() == 'lineart_rpow2':
@@ -359,6 +363,11 @@ def GradFun3(src, thr=None, radius=None, elast=None, mask=None, mode=None, ampo=
     # Dithering
     result = res_16 if bits == 16 else core.fmtc.bitdepth(res_16, bits=bits, planes=planes, dmode=mode, ampo=ampo,
                                                           ampn=ampn, dyn=dyn, staticnoise=staticnoise, patsize=pat)
+    # fmtc.bitdepth leaves the planes it does not process undefined; those are rounded without dithering noise.
+    if bits != 16 and len(planes) < res_16.format.num_planes:
+        rounded = core.fmtc.bitdepth(res_16, bits=bits, dmode=1)
+        result = core.std.ShufflePlanes([result if p in planes else rounded for p in range(res_16.format.num_planes)],
+                                        list(range(res_16.format.num_planes)), res_16.format.color_family)
 
     if debug:
         last = dmask
