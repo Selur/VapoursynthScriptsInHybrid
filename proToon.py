@@ -36,7 +36,7 @@
 
 import vapoursynth as vs
 from typing import Optional
-from helpers import get_expr
+from helpers import get_expr, tool_function, pick_tool
 
 core = vs.core
 
@@ -56,10 +56,10 @@ def mf_str_level(x: str, in_low: int, in_high: int, out_low: int, out_high: int,
     return mf_max(mf_min(f"{x} {scale} * {in_low} - {in_high - in_low} / {out_high - out_low} * {out_low} +", f"{235 * scale // 255}"), f"{16 * scale // 255}")
 
 # Xsharpen function based on WarpSharpSupport
-def Xsharpen(clip: vs.VideoNode, strength: int = 128, threshold: int = 8) -> vs.VideoNode:
+def Xsharpen(clip: vs.VideoNode, strength: int = 128, threshold: int = 8, tools=None) -> vs.VideoNode:
     bits = clip.format.bits_per_sample
     expr = f"y x - x z - min {threshold} < x z - y x - < z y ? {strength / 256} * x {(256 - strength) / 256} * + x ?"
-    EXPR = get_expr()
+    EXPR = get_expr(tools)
     return EXPR([clip, clip.std.Maximum(planes=0), clip.std.Minimum(planes=0)], [expr, ""])
 
 def merge_chroma(luma: vs.VideoNode, chroma: vs.VideoNode) -> vs.VideoNode:
@@ -69,7 +69,7 @@ def proToon(input: vs.VideoNode,
             strength: int = 48, luma_cap: int = 191, threshold: int = 4, thinning: int = 0, 
             sharpen: bool = True, mask: bool = True, 
             ssw: int = 4, ssh: int = 4, 
-            xstren: int = 255, xthresh: int = 255, pcScale: bool = False) -> vs.VideoNode:
+            xstren: int = 255, xthresh: int = 255, pcScale: bool = False, tools=None) -> vs.VideoNode:
 
     bits = input.format.bits_per_sample
     scale = (1 << bits) - 1
@@ -80,17 +80,12 @@ def proToon(input: vs.VideoNode,
     thn = thinning / 16.0  # line thinning amount, 0-255
 
     # Create the edgemask
-    EXPR = get_expr()
-    if hasattr(core, 'zsmooth'):
-      edgemask = EXPR(EXPR(
-          [input, core.zsmooth.RemoveGrain(input, 12)],
-          expr=[mf_str_level("x y - abs 128 +", 132, 145, 0, 255, bits)]
-      ).zsmooth.RemoveGrain(12), expr=[mf_str_level("x", 0, 64, 0, 255, bits)])
-    else:
-      edgemask = EXPR(EXPR(
-          [input, core.rgvs.RemoveGrain(input, 12)],
-          expr=[mf_str_level("x y - abs 128 +", 132, 145, 0, 255, bits)]
-      ).rgvs.RemoveGrain(12), expr=[mf_str_level("x", 0, 64, 0, 255, bits)])
+    EXPR = get_expr(tools)
+    RG = tool_function(tools, 'rg', 'RemoveGrain')
+    edgemask = EXPR(RG(EXPR(
+        [input, RG(input, 12)],
+        expr=[mf_str_level("x y - abs 128 +", 132, 145, 0, 255, bits)]
+    ), 12), expr=[mf_str_level("x", 0, 64, 0, 255, bits)])
 
     exin = core.std.Maximum(input).std.Minimum()
     diff = EXPR(
@@ -118,7 +113,7 @@ def proToon(input: vs.VideoNode,
 
     if sharpen:
         upscaled = core.resize.Lanczos(masked, width=input.width * ssw, height=input.height * ssh)
-        sharpened = Xsharpen(upscaled, xstren, xthresh)
+        sharpened = Xsharpen(upscaled, xstren, xthresh, tools=tools)
         sharpened = core.resize.Lanczos(sharpened, width=input.width, height=input.height)
     else:
         sharpened = masked
@@ -129,7 +124,7 @@ def proToon(input: vs.VideoNode,
     if not pcScale:
         minV = 16 * scale // 255
         maxV = max=235 * scale // 255 
-        if (hasattr(core,'vszip')):
+        if pick_tool(tools, 'limiter', ('vszip', 'std'), lambda name: name == 'std' or hasattr(core, 'vszip')) == 'vszip':
           output = core.vszip.Limiter(output, min=[minV,minV,minV], max=[maxV,maxV,maxV])
         else:
           output = core.std.Limiter(output, min=minV, max=maxV)

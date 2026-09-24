@@ -1,9 +1,10 @@
 from vapoursynth import core
 import vapoursynth as vs
 
-from typing import Optional, Union, Sequence, List
+import warnings
+from typing import Optional, Union, Sequence, List, Mapping
 
-from helpers import get_expr
+from helpers import get_expr, pick_tool
 
 def Overlay(
     base: vs.VideoNode,
@@ -15,6 +16,7 @@ def Overlay(
     mode: str = 'normal',
     planes: Optional[Union[int, Sequence[int]]] = None,
     mask_first_plane: bool = True,
+    tools: Optional[Mapping[str, str]] = None,
 ) -> vs.VideoNode:
     '''
     Puts clip overlay on top of clip base using different blend modes, and with optional x,y positioning, masking and opacity.
@@ -38,6 +40,8 @@ def Overlay(
         planes: Specifies which planes will be processed. Any unprocessed planes will be simply copied.
 
         mask_first_plane: If true, only the mask's first plane will be used for transparency.
+
+        tools: tools['expr'] picks the Expr implementation.
     '''
     if not (isinstance(base, vs.VideoNode) and isinstance(overlay, vs.VideoNode)):
         raise vs.Error('Overlay: this is not a clip')
@@ -97,7 +101,7 @@ def Overlay(
     overlay = overlay.std.AddBorders(left=pl, right=pr, top=pt, bottom=pb)
     mask = mask.std.Crop(left=cl, right=cr, top=ct, bottom=cb)
     mask = mask.std.AddBorders(left=pl, right=pr, top=pt, bottom=pb, color=[0] * mask.format.num_planes)
-    EXPR = get_expr()
+    EXPR = get_expr(tools)
     if opacity < 1:
         mask = EXPR(mask, expr=f'x {opacity} *')
 
@@ -224,7 +228,8 @@ def _scd_thresh(threshold: float, bits: int) -> int:
     '''SCDetect's 0-1 threshold as scd.Detect's absolute luma difference (0-254 at 8 bit, times 2^(bits-8)).'''
     return max(1, round(threshold * 254 * (1 << max(bits - 8, 0))))
 
-def SCDetect(clip: vs.VideoNode, threshold: float = 0.1, plane: int = 0) -> vs.VideoNode:
+def SCDetect(clip: vs.VideoNode, threshold: float = 0.1, plane: int = 0,
+             tools: Optional[Mapping[str, str]] = None) -> vs.VideoNode:
     """
     Scene change detection with _SceneChangePrev/_SceneChangeNext frame properties.
     Uses core.scd.Detect (integer clips) or core.misc.SCDetect if available (plane=0 only), otherwise falls back to
@@ -235,6 +240,8 @@ def SCDetect(clip: vs.VideoNode, threshold: float = 0.1, plane: int = 0) -> vs.V
         threshold : Scene change threshold (default: 0.1, must be 0.0–1.0)
         plane     : Plane to analyze; only honoured in fallback path —
                     misc.SCDetect always uses plane 0
+        tools     : tools['scd'] ('scd', 'misc' or 'std') picks the implementation; scd and misc need plane 0,
+                    scd an integer clip
 
     Returns:
         Clip with _SceneChangePrev and _SceneChangeNext frame properties set.
@@ -246,7 +253,10 @@ def SCDetect(clip: vs.VideoNode, threshold: float = 0.1, plane: int = 0) -> vs.V
     if clip.num_frames < 2:
         raise vs.Error('SCDetect: clip must have more than one frame')
 
-    if hasattr(core,'scd') and plane == 0 and clip.format.sample_type == vs.INTEGER:
+    usable = {'scd': hasattr(core, 'scd') and plane == 0 and clip.format.sample_type == vs.INTEGER,
+              'misc': hasattr(core, 'misc') and plane == 0, 'std': True}
+    detector = pick_tool(tools, 'scd', ('scd', 'misc', 'std'), usable.get)
+    if detector == 'scd':
       if clip.format.color_family == vs.RGB:
             sc = clip.resize.Point(format=vs.GRAY8, matrix_s='709')
             sc = core.scd.Detect(sc, thresh=_scd_thresh(threshold, 8))
@@ -260,7 +270,7 @@ def SCDetect(clip: vs.VideoNode, threshold: float = 0.1, plane: int = 0) -> vs.V
             return clip.std.ModifyFrame(clips=[clip, sc], selector=_copy_props)
 
       return core.scd.Detect(clip, thresh=_scd_thresh(threshold, clip.format.bits_per_sample))
-    elif hasattr(core, 'misc') and plane == 0:
+    elif detector == 'misc':
       if clip.format.color_family == vs.RGB:
         sc = clip.resize.Point(format=vs.GRAY8, matrix_s='709')
         sc = core.misc.SCDetect(sc, threshold=threshold)
@@ -292,17 +302,31 @@ def SCDetect(clip: vs.VideoNode, threshold: float = 0.1, plane: int = 0) -> vs.V
         selector=_set_sc_props
     )
 
+def _takes_tools(func) -> bool:
+    '''True if func accepts a tools keyword (named or through **kwargs).'''
+    import inspect
+    try:
+        parameters = inspect.signature(func).parameters.values()
+    except (TypeError, ValueError):
+        return False
+    return any(p.name == 'tools' or p.kind == p.VAR_KEYWORD for p in parameters)
+
 def scene_aware(
     clip: vs.VideoNode,
     filter_func,
     sc_threshold: float = 0.1,
     min_scene_len: int = 5,
     color_matrix: str = "709",
+    tools: Optional[Mapping[str, str]] = None,
     **filter_kwargs
 ) -> vs.VideoNode:
     """
     Automatically split a clip by scene changes and apply a filter separately per scene.
+
+    tools is used for the scene detection and passed on to filter_func when that takes a tools argument.
     """
+    if tools is not None and _takes_tools(filter_func):
+        filter_kwargs['tools'] = tools
 
     if not isinstance(clip, vs.VideoNode):
         raise TypeError("scene_aware: 'clip' must be a VideoNode")
@@ -316,7 +340,7 @@ def scene_aware(
     elif clip.format.sample_type == vs.FLOAT and clip.format.bits_per_sample != 32:
         sc_src = core.resize.Bicubic(clip, format=vs.YUV420P8)
 
-    sc = SCDetect(sc_src, threshold=sc_threshold)
+    sc = SCDetect(sc_src, threshold=sc_threshold, tools=tools)
     sc_frames = [i for i in range(clip.num_frames) if sc.get_frame(i).props._SceneChangePrev == 1]
 
     # --- Remove very short segments
@@ -433,18 +457,19 @@ def DelayAudio(audio_clip: vs.AudioNode, delay_ms: float) -> vs.AudioNode:
         return core.std.AudioTrim(audio_clip, first=delay_samples)
 
 def AverageFrames(
-    clip: vs.VideoNode, weights: Union[float, Sequence[float]], scenechange: Optional[float] = None, planes: Optional[Union[int, Sequence[int]]] = None
+    clip: vs.VideoNode, weights: Union[float, Sequence[float]], scenechange: Optional[float] = None, planes: Optional[Union[int, Sequence[int]]] = None,
+    tools: Optional[Mapping[str, str]] = None
 ) -> vs.VideoNode:
     if not isinstance(clip, vs.VideoNode):
         raise vs.Error('AverageFrames: this is not a clip')
 
     if scenechange:
-        clip = SCDetect(clip, threshold=scenechange)
+        clip = SCDetect(clip, threshold=scenechange, tools=tools)
     return clip.std.AverageFrames(weights=weights, scenechange=scenechange, planes=planes)
 
 # convert i.e. 1080p50 to 1080i25
-def Interlace(clip: vs.VideoNode, tff: bool=True) -> vs.VideoNode:
-  if hasattr(core,'interlace'):
+def Interlace(clip: vs.VideoNode, tff: bool=True, tools: Optional[Mapping[str, str]] = None) -> vs.VideoNode:
+  if pick_tool(tools, 'interlace', ('interlace', 'std')) == 'interlace':
     return core.interlace.Interlace(clip=clip,tff=tff)
   clip = core.std.SeparateFields(clip=clip, tff=tff)
   clip = core.std.SelectEvery(clip=clip, cycle=2, offsets=[0])
@@ -455,6 +480,7 @@ def median_blur(
     clip: vs.VideoNode,
     radius: Union[int, Sequence[int]] = 2,
     planes: Optional[Union[int, Sequence[int]]] = None,
+    tools: Optional[Mapping[str, str]] = None,
     **kwargs
 ) -> vs.VideoNode:
     """
@@ -472,6 +498,8 @@ def median_blur(
         If a sequence is passed, one value per plane may be given.
     planes : int | Sequence[int] | None, optional
         Planes to process. None (default) processes all planes.
+    tools : dict, optional
+        tools['median'] ('ctmf' or 'zsmooth') picks the implementation.
     **kwargs
         Extra arguments forwarded to CTMF only (e.g. memsize).
         Silently ignored when the zsmooth fallback is used.
@@ -492,11 +520,12 @@ def median_blur(
         planes = list(range(clip.format.num_planes))
     elif isinstance(planes, int):
         planes = [planes]
+    median = pick_tool(tools, 'median', ('ctmf', 'zsmooth'), lambda name: hasattr(core, name))
 
     # ------------------------------------------------------------------
     # 1. Prefer vapoursynth-ctmf (the original, now deprecated plugin)
     # ------------------------------------------------------------------
-    if hasattr(core, 'ctmf'):
+    if median == 'ctmf':
         # CTMF accepts radius as int or list[int] natively
         return core.ctmf.CTMF(clip, radius=radius, planes=planes, **kwargs)
 
@@ -505,7 +534,7 @@ def median_blur(
     #    - Supports radius 0–3 only.
     #    - Does NOT accept the extra kwargs that CTMF understands.
     # ------------------------------------------------------------------
-    if hasattr(core, 'zsmooth'):
+    if median == 'zsmooth':
         # zsmooth.Median signature:
         #   Median(clip clip[, int[] radius, int[] planes])
         return core.zsmooth.Median(clip, radius=radius, planes=planes)
@@ -518,8 +547,9 @@ def median_blur(
         "Please install vapoursynth-ctmf or vapoursynth-zsmooth."
     )
 
-def MinBlur(clp: vs.VideoNode, r: int = 1, planes: Optional[Union[int, Sequence[int]]] = None) -> vs.VideoNode:
-    '''Nifty Gauss/Median combination – CTMF-free variant'''
+def MinBlur(clp: vs.VideoNode, r: int = 1, planes: Optional[Union[int, Sequence[int]]] = None,
+            tools: Optional[Mapping[str, str]] = None) -> vs.VideoNode:
+    '''Nifty Gauss/Median combination – CTMF-free variant; tools['median'] picks ctmf or zsmooth, tools['expr'] reaches sbr.'''
     
     if not isinstance(clp, vs.VideoNode):
         raise vs.Error('MinBlur: this is not a clip')
@@ -536,14 +566,15 @@ def MinBlur(clp: vs.VideoNode, r: int = 1, planes: Optional[Union[int, Sequence[
 
     # --- Helper: median with a fallback instead of a hard ctmf call ---
     def _median(clip, radius, planes):
-        if hasattr(core, 'ctmf'):
+        median = pick_tool(tools, 'median', ('ctmf', 'zsmooth'), lambda name: hasattr(core, name))
+        if median == 'ctmf':
             return core.ctmf.CTMF(clip, radius=radius, planes=planes)
-        if hasattr(core, 'zsmooth'):
+        if median == 'zsmooth':
             return core.zsmooth.Median(clip, radius=radius, planes=planes)
         raise RuntimeError("MinBlur: neither ctmf nor zsmooth available")
 
     if r <= 0:
-        RG11 = sbr(clp, planes=planes)
+        RG11 = sbr(clp, planes=planes, tools=tools)
         RG4 = clp.std.Median(planes=planes)
     elif r == 1:
         RG11 = clp.std.Convolution(matrix=matrix1, planes=planes)
@@ -554,12 +585,13 @@ def MinBlur(clp: vs.VideoNode, r: int = 1, planes: Optional[Union[int, Sequence[
     else:
         RG11 = clp.std.Convolution(matrix=matrix1, planes=planes).std.Convolution(matrix=matrix2, planes=planes).std.Convolution(matrix=matrix2, planes=planes)
         # Note: zsmooth.Median supports radius=3 at most
-        if clp.format.bits_per_sample == 16 and hasattr(core, 'ctmf'):
+        if clp.format.bits_per_sample == 16 and pick_tool(tools, 'median', ('ctmf', 'zsmooth'), lambda name: hasattr(core, name)) == 'ctmf':
             # Keep the original LimitFilter logic only when CTMF is available
-            from mvsfunc import LimitFilter
+            from helpers import Depth
+            from color import LimitFilter
             s16 = clp
-            RG4 = depth(clp, 12, dither_type=Dither.NONE).ctmf.CTMF(radius=3, planes=planes)
-            RG4 = LimitFilter(s16, depth(RG4, 16), thr=0.0625, elast=2, planes=planes)
+            RG4 = Depth(clp, 12, dither_type='none').ctmf.CTMF(radius=3, planes=planes)
+            RG4 = LimitFilter(s16, Depth(RG4, 16), thr=0.0625, elast=2, planes=planes, tools=tools)
         else:
             RG4 = _median(clp, radius=3, planes=planes)
 
@@ -569,8 +601,9 @@ def MinBlur(clp: vs.VideoNode, r: int = 1, planes: Optional[Union[int, Sequence[
     )
 
     
-def sbr(c: vs.VideoNode, r: int = 1, planes: Optional[Union[int, Sequence[int]]] = None) -> vs.VideoNode:
-    '''make a highpass on a blur's difference (well, kind of that)'''
+def sbr(c: vs.VideoNode, r: int = 1, planes: Optional[Union[int, Sequence[int]]] = None,
+        tools: Optional[Mapping[str, str]] = None) -> vs.VideoNode:
+    '''make a highpass on a blur's difference (well, kind of that); tools['expr'] picks the Expr implementation'''
     if not isinstance(c, vs.VideoNode):
         raise vs.Error('sbr: this is not a clip')
 
@@ -599,7 +632,7 @@ def sbr(c: vs.VideoNode, r: int = 1, planes: Optional[Union[int, Sequence[int]]]
         RG11DS = RG11DS.std.Convolution(matrix=matrix2, planes=planes)
     if r >= 3:
         RG11DS = RG11DS.std.Convolution(matrix=matrix2, planes=planes)
-    EXPR = get_expr()
+    EXPR = get_expr(tools)
     RG11DD = EXPR(
         [RG11D, RG11DS],
         expr=[f'x y - x {neutral} - * 0 < {neutral} x y - abs x {neutral} - abs < x y - {neutral} + x ? ?' if i in planes else '' for i in plane_range],
@@ -613,6 +646,7 @@ def mt_clamp(
     overshoot: int = 0,
     undershoot: int = 0,
     planes: Optional[Union[int, Sequence[int]]] = None,
+    tools: Optional[Mapping[str, str]] = None,
 ) -> vs.VideoNode:
     if not (isinstance(clip, vs.VideoNode) and isinstance(bright_limit, vs.VideoNode) and isinstance(dark_limit, vs.VideoNode)):
         raise vs.Error('mt_clamp: this is not a clip')
@@ -626,7 +660,7 @@ def mt_clamp(
         planes = list(plane_range)
     elif isinstance(planes, int):
         planes = [planes]
-    EXPR = get_expr()
+    EXPR = get_expr(tools)
     return EXPR([clip, bright_limit, dark_limit], expr=[f'x y {overshoot} + min z {undershoot} - max' if i in planes else '' for i in plane_range])
 
 def mt_expand_multi(src: vs.VideoNode, mode: str = 'rectangle', planes: Optional[Union[int, Sequence[int]]] = None, sw: int = 1, sh: int = 1) -> vs.VideoNode:
@@ -833,16 +867,23 @@ class MotionVectors:
     automatically per call based on clip format and availability.
     '''
 
-    def __init__(self, prefer_mvutensils: Optional[bool] = None):
+    def __init__(self, prefer_mvutensils: Optional[bool] = None, legacy_ns: Optional[str] = None,
+                 tools: Optional[Mapping[str, str]] = None):
         '''
         prefer_mvutensils:
             None  -> use mvutensils automatically whenever core.mvu is available (default).
             True  -> require mvutensils; raises if core.mvu isn't loaded.
             False -> always use legacy core.mv / core.mvsf, even if core.mvu is available.
+        legacy_ns:
+            'mvsf' -> core.mvsf for float clips; integer clips warn and use core.mv.
+            None   -> core.mvsf for float clips when loaded, core.mv otherwise.
+        tools: passed on to the helpers the wrapper uses itself (Expr).
 
         NOTE: availability is checked live on every call
         '''
         self._prefer_mvutensils = prefer_mvutensils
+        self._legacy = legacy_ns
+        self._tools = tools
 
     @property
     def use_mvu(self) -> bool:
@@ -867,6 +908,11 @@ class MotionVectors:
 
     def _legacy_ns(self, clip: vs.VideoNode):
         '''Picks core.mvsf for float clips (if available) or core.mv, exactly like the old code did.'''
+        if self._legacy == 'mvsf':
+            if clip.format.sample_type == vs.FLOAT:
+                return core.mvsf
+            warnings.warn('tools: mv "mvsf" cannot serve integer clips, using mv')
+            return core.mv
         if clip.format.sample_type == vs.FLOAT and hasattr(core, 'mvsf'):
             return core.mvsf
         return core.mv
@@ -1308,7 +1354,7 @@ class MotionVectors:
             parts.append(core.std.SelectEvery(weight, m, j))
         centre_weight = core.std.Interleave(parts, extend=True)[:n]
         expr = ['x y z a - * +' if p in planes else 'x' for p in range(clip.format.num_planes)]
-        return get_expr()([out, centre_weight, clip, centre], expr, format=clip.format.id)
+        return get_expr(self._tools)([out, centre_weight, clip, centre], expr, format=clip.format.id)
 
     def Degrain(self, clip, super, *vectors, **kwargs):
         return self._degrain(clip, super, *vectors, **kwargs)
@@ -1436,3 +1482,28 @@ class MotionVectors:
 # Ready-made singleton: auto-detects mvutensils. Import this from other files:
 #   from misc import MV
 MV = MotionVectors()
+
+_MV_BY_TOOL = {}
+# tools['mv'] -> MotionVectors arguments, and the check whether that choice can be used.
+_MV_CHOICES = {
+    'mvutensils': (dict(prefer_mvutensils=True), has_mvutensils),
+    'mv': (dict(prefer_mvutensils=False), lambda: hasattr(core, 'mv')),
+    'mvsf': (dict(prefer_mvutensils=False, legacy_ns='mvsf'), lambda: hasattr(core, 'mvsf')),
+}
+
+
+def get_mv(tools: Optional[Mapping[str, str]] = None) -> MotionVectors:
+    '''MotionVectors for tools['mv'] ('mvutensils', 'mv' or 'mvsf'); the default MV without it.
+
+    A choice that is not loaded gives a warning and the default MV. 'mv' still takes mvsf for float clips when it is
+    loaded, 'mvsf' uses it for every clip.
+    '''
+    choice = pick_tool(tools, 'mv', (), lambda name: _MV_CHOICES[name][1](), candidates=tuple(_MV_CHOICES))
+    expr = (tools or {}).get('expr')
+    if choice is None and expr is None:
+        return MV
+    key = (choice, expr)
+    if key not in _MV_BY_TOOL:
+        kwargs = dict(_MV_CHOICES[choice][0]) if choice else {}
+        _MV_BY_TOOL[key] = MotionVectors(**kwargs, tools={'expr': expr} if expr else None)
+    return _MV_BY_TOOL[key]

@@ -76,11 +76,11 @@
 
 
 import vapoursynth as vs
-from helpers import get_expr
+from helpers import get_expr, tool_function
 
 
 def Hysteria(clip, strength=1.0, usemask=True, lowthresh=6, highthresh=20, luma_cap=191, maxchg=255, minchg=0,
-             planes=[0], luma=True, showmask=False):
+             planes=[0], luma=True, showmask=False, tools=None):
     core = vs.core
     if not isinstance(clip, vs.VideoNode):
         raise ValueError('This is not a clip')
@@ -105,7 +105,7 @@ def Hysteria(clip, strength=1.0, usemask=True, lowthresh=6, highthresh=20, luma_
 
     # imitate mt_edge(mode=cartoon) (stolen from Frechdachs)
     noisymask = core.std.Convolution(clip, matrix=[0, -2, 1, 0, 1, 0, 0, 0, 0], planes=planes, saturate=True)
-    EXPR = get_expr()
+    EXPR = get_expr(tools)
     noisymask = EXPR(noisymask, ['x {high} >= {maxvalue} x {low} <= 0 x ? ?'
                               .format(low=lowthresh, high=lowthresh, maxvalue=max_bitval)])
 
@@ -113,10 +113,7 @@ def Hysteria(clip, strength=1.0, usemask=True, lowthresh=6, highthresh=20, luma_
     cleanmask = EXPR(cleanmask, ['x {high} >= {maxvalue} x {low} <= 0 x ? ?'
                               .format(low=highthresh, high=highthresh, maxvalue=max_bitval)])
 
-    if hasattr(core,'hysteresis'):
-      themask = core.hysteresis.Hysteresis(cleanmask, noisymask)
-    else:
-      themask = core.misc.Hysteresis(cleanmask, noisymask)
+    themask = tool_function(tools, 'hysteresis', 'Hysteresis')(cleanmask, noisymask)
     themask = core.std.Inflate(themask)
 
     # blur replacement

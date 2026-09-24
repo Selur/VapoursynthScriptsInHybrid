@@ -3,7 +3,7 @@ from math import sqrt
 
 from typing import Union
 import misc
-from helpers import GetPlane, Depth, BoxFilter, get_expr, get_rg
+from helpers import GetPlane, Depth, BoxFilter, get_expr, get_rg, pick_tool
 
 core = vs.core
 
@@ -12,21 +12,21 @@ core = vs.core
 # Use retinex to greatly improve the accuracy of the edge detection in dark scenes.
 # draft=True is a lot faster, albeit less accurate
 # from https://blog.kageru.moe/legacy/edgemasks.html
-def retinex_edgemask(src: vs.VideoNode, sigma: int = 1, draft: bool = False) -> vs.VideoNode:
+def retinex_edgemask(src: vs.VideoNode, sigma: int = 1, draft: bool = False, tools=None) -> vs.VideoNode:
     """
     Use retinex to greatly improve edge detection in dark scenes.
     sigma is the sigma of tcanny.
     """
 
     luma = GetPlane(src, 0)
-    EXPR = get_expr()
+    EXPR = get_expr(tools)
     max_value = 1.0 if src.format.sample_type == vs.FLOAT else (1 << src.format.bits_per_sample) - 1
     if draft:
         ret = EXPR(luma, 'x 65535 / sqrt 65535 *')
     else:
         ret = core.retinex.MSRCP(luma, sigma=[50, 200, 350], upper_thr=0.005)
-    k = kirsch(luma)
-    if hasattr(core, "tcanny"):
+    k = kirsch(luma, tools=tools)
+    if pick_tool(tools, 'tcanny', ('tcanny', 'std')) == 'tcanny':
         tc = ret.tcanny.TCanny(mode=1, sigma=sigma).std.Minimum(coordinates=[1, 0, 1, 0, 0, 1, 0, 1])
         return EXPR([k, tc], f"x y + {max_value} min")
     return EXPR([k, ret], f"x y + {max_value} min")
@@ -34,7 +34,7 @@ def retinex_edgemask(src: vs.VideoNode, sigma: int = 1, draft: bool = False) -> 
 # Like retinex_edgemask, but using CLAHE (contrast limited adaptive histogram equalization) to lift dark scenes.
 # from https://github.com/dnjulek/jvsfunc/blob/master/jvsfunc/mask.py, ehist.CLAHE replaced by vszip.CLAHE
 def clahe_edgemask(src: vs.VideoNode, tcanny_sigma: float = 1.0, clahe_limit: int = 2000,
-                   clahe_tile: int = 5, brz: int = 8000) -> vs.VideoNode:
+                   clahe_tile: int = 5, brz: int = 8000, tools=None) -> vs.VideoNode:
     """
     Like retinex_edgemask, but using CLAHE.
 
@@ -44,7 +44,7 @@ def clahe_edgemask(src: vs.VideoNode, tcanny_sigma: float = 1.0, clahe_limit: in
     :param clahe_tile: Tile count for the histogram equalization.
     :param brz: if brz > 0 output will be binarized (brz uses 16-bit scale).
     """
-    EXPR = get_expr()
+    EXPR = get_expr(tools)
     luma16 = Depth(GetPlane(src, 0), 16)
     clahe = core.vszip.CLAHE(luma16, limit=clahe_limit, tiles=clahe_tile)
     tc = clahe.tcanny.TCanny(mode=1, sigma=tcanny_sigma).std.Minimum(coordinates=[1, 0, 1, 0, 0, 1, 0, 1])
@@ -60,21 +60,21 @@ def clahe_edgemask(src: vs.VideoNode, tcanny_sigma: float = 1.0, clahe_limit: in
 # Kirsch edge detection. This uses 8 directions, so it's slower but better than Sobel (4 directions).
 # more information: https://ddl.kageru.moe/konOJ.pdf
 # from https://blog.kageru.moe/legacy/edgemasks.html
-def kirsch(src: vs.VideoNode) -> vs.VideoNode:
+def kirsch(src: vs.VideoNode, tools=None) -> vs.VideoNode:
     w = [5]*3 + [-3]*5
     weights = [w[-i:] + w[:-i] for i in range(4)]
     c = [src.std.Convolution((w[:4]+[0]+w[4:]), saturate=False) for w in weights]
-    EXPR = get_expr()
+    EXPR = get_expr(tools)
     return EXPR(c, 'x y max z max a max')
 
 
 # should behave similar to std.Sobel() but faster since it has no additional high-/lowpass or gain.
 # the internal filter is also a little brighter
 # from https://blog.kageru.moe/legacy/edgemasks.html
-def fast_sobel(src: vs.VideoNode) -> vs.VideoNode:
+def fast_sobel(src: vs.VideoNode, tools=None) -> vs.VideoNode:
     sx = src.std.Convolution([-1, -2, -1, 0, 0, 0, 1, 2, 1], saturate=False)
     sy = src.std.Convolution([-1, 0, 1, -2, 0, 2, -1, 0, 1], saturate=False)
-    EXPR = get_expr()
+    EXPR = get_expr(tools)
     return EXPR([sx, sy], 'x y max')
 
 
@@ -89,7 +89,7 @@ def bloated_edgemask(src: vs.VideoNode) -> vs.VideoNode:
                                        1,  2,  4,  2, 1], saturate=False)
 
 # https://github.com/DeadNews/dnfunc/blob/f5d22057e424fb3b8bd80d1aadd0c2ed2b7e71d5/dnfunc.py#L1212                                                                              
-def kirsch2(clip_y: vs.VideoNode) -> vs.VideoNode:
+def kirsch2(clip_y: vs.VideoNode, tools=None) -> vs.VideoNode:
     n = core.std.Convolution(clip_y, [5, 5, 5, -3, 0, -3, -3, -3, -3], divisor=3, saturate=False)
     nw = core.std.Convolution(clip_y, [5, 5, -3, 5, 0, -3, -3, -3, -3], divisor=3, saturate=False)
     w = core.std.Convolution(clip_y, [5, -3, -3, 5, 0, -3, 5, -3, -3], divisor=3, saturate=False)
@@ -98,7 +98,7 @@ def kirsch2(clip_y: vs.VideoNode) -> vs.VideoNode:
     se = core.std.Convolution(clip_y, [-3, -3, -3, -3, 0, 5, -3, 5, 5], divisor=3, saturate=False)
     e = core.std.Convolution(clip_y, [-3, -3, 5, -3, 0, 5, -3, -3, 5], divisor=3, saturate=False)
     ne = core.std.Convolution(clip_y, [-3, 5, 5, -3, 0, 5, -3, -3, -3], divisor=3, saturate=False)
-    EXPR = get_expr()
+    EXPR = get_expr(tools)
     return EXPR(
         [n, nw, w, sw, s, se, e, ne],
         ["x y max z max a max b max c max d max e max"],
@@ -108,7 +108,7 @@ def scale8(x, newmax):
         return x * newmax // 0xFF
 
 
-def CartoonEdges(clip, low=0, high=255):
+def CartoonEdges(clip, low=0, high=255, tools=None):
     """Should behave like mt_edge(mode="cartoon")"""
     valuerange = (1 << clip.format.bits_per_sample)
     maxvalue = valuerange - 1
@@ -116,11 +116,11 @@ def CartoonEdges(clip, low=0, high=255):
     low = scale8(low, maxvalue)
     high = scale8(high, maxvalue)
     edges = core.std.Convolution(clip, matrix=[0,-2,1,0,1,0,0,0,0], saturate=True)
-    EXPR = get_expr()
+    EXPR = get_expr(tools)
     return EXPR(edges, ['x {high} >= {maxvalue} x {low} <= 0 x ? ?'
                                  .format(low=low, high=high, maxvalue=maxvalue), ''])
 
-def RobertsEdges(clip, low=0, high=255):
+def RobertsEdges(clip, low=0, high=255, tools=None):
     """Should behave like mt_edge(mode="roberts")"""
     valuerange = (1 << clip.format.bits_per_sample)
     maxvalue = valuerange - 1
@@ -128,26 +128,26 @@ def RobertsEdges(clip, low=0, high=255):
     low = scale8(low, maxvalue)
     high = scale8(high, maxvalue)
     edges = core.std.Convolution(clip, matrix=[0,0,0,0,2,-1,0,-1,0], divisor=2, saturate=False)
-    EXPR = get_expr()
+    EXPR = get_expr(tools)
     return EXPR(edges, ['x {high} >= {maxvalue} x {low} <= 0 x ? ?'
                                  .format(low=low, high=high, maxvalue=maxvalue), ''])
 
 # from https://github.com/dnjulek/jvsfunc/blob/main/jvsfunc/mask.py -> Tcanny
-def dehalo_mask(src: vs.VideoNode, expand: float = 0.5, iterations: int = 2, brz: int = 255, shift: int = 8) -> vs.VideoNode:
+def dehalo_mask(src: vs.VideoNode, expand: float = 0.5, iterations: int = 2, brz: int = 255, shift: int = 8, tools=None) -> vs.VideoNode:
     if not 0 <= brz <= 255:
         raise ValueError("dehalo_mask: brz must be between 0 and 255.")
 
     src8 = Depth(src, 8)
     luma = GetPlane(src8, 0)
 
-    EXPR = get_expr()
+    EXPR = get_expr(tools)
     edge = EXPR([luma, luma.std.Maximum().std.Maximum()], [f"y x - {shift} - 128 *"])
 
-    if hasattr(core, "tcanny"):
+    if pick_tool(tools, 'tcanny', ('tcanny', 'std')) == 'tcanny':
         mask1 = EXPR(edge.tcanny.TCanny(sigma=sqrt(expand * 2), mode=-1), ["x 16 *"])
     else:
         radius = max(1, round(sqrt(expand * 2) * 1.5))
-        mask1 = EXPR(BoxFilter(edge, radius, 3), ["x 16 *"])
+        mask1 = EXPR(BoxFilter(edge, radius, 3, tools=tools), ["x 16 *"])
 
     mask2 = edge
     for _ in range(iterations):
@@ -164,7 +164,7 @@ def dehalo_mask(src: vs.VideoNode, expand: float = 0.5, iterations: int = 2, brz
     return Depth(EXPR([mask1, mask4], ["x y min"]), src.format.bits_per_sample, range=1)
 
 
-def hue_mask(clip: vs.VideoNode, min_hue: Union[float, int], max_hue: Union[float, int]) -> vs.VideoNode:
+def hue_mask(clip: vs.VideoNode, min_hue: Union[float, int], max_hue: Union[float, int], tools=None) -> vs.VideoNode:
     """
     Creates a mask based on a given hue range, supporting all RGB-based color spaces.
     
@@ -187,7 +187,7 @@ def hue_mask(clip: vs.VideoNode, min_hue: Union[float, int], max_hue: Union[floa
     hsl_clip = core.resize.Bicubic(clip, format=vs.YUV444P8, matrix_in_s="709")
     hue = core.std.ShufflePlanes(hsl_clip, planes=0, colorfamily=vs.GRAY)
     
-    EXPR = get_expr()
+    EXPR = get_expr(tools)
     # Build the mask
     mask = EXPR(
         [hue],
@@ -198,7 +198,7 @@ def hue_mask(clip: vs.VideoNode, min_hue: Union[float, int], max_hue: Union[floa
     return core.resize.Bicubic(mask, format=vs.GRAY8)
 
 
-def FinegrainMask(clip: vs.VideoNode, mode: str="RemoveGrain") -> vs.VideoNode:
+def FinegrainMask(clip: vs.VideoNode, mode: str="RemoveGrain", tools=None) -> vs.VideoNode:
     """
     Create a fine detail mask using RemoveGrain for smoothing and difference detection.
 
@@ -223,10 +223,10 @@ def FinegrainMask(clip: vs.VideoNode, mode: str="RemoveGrain") -> vs.VideoNode:
     if mode == "RemoveGrain":
       rgMode = 22
       # Smooth with RemoveGrain
-      smoothed = get_rg(is_float=isFLOAT)(clip=luma, mode=rgMode)
+      smoothed = get_rg(is_float=isFLOAT, tools=tools)(clip=luma, mode=rgMode)
     elif mode == "Bilinear":
       scale = 0.1
-      smoothed = bilinear_denoise(clip=luma, scale=scale, rg=True)
+      smoothed = bilinear_denoise(clip=luma, scale=scale, rg=True, tools=tools)
     elif mode == "mClean":
       import denoise
 
@@ -280,7 +280,7 @@ def FinegrainMask(clip: vs.VideoNode, mode: str="RemoveGrain") -> vs.VideoNode:
           # mClean anwenden
           thresh = 400
           strength = 20
-          clip = denoise.mClean(clip=clip, thSAD=thresh, rn=0, strength=strength)
+          clip = denoise.mClean(clip=clip, thSAD=thresh, rn=0, strength=strength, tools=tools)
 
           if is_rgb:
               clip = core.resize.Bicubic(clip, format=original_format.id, matrix_in=matrix)
@@ -302,7 +302,7 @@ def FinegrainMask(clip: vs.VideoNode, mode: str="RemoveGrain") -> vs.VideoNode:
 
     # Use Expr to compute absolute diff from mid-gray
     expr = f"x {peak/2} - abs" if isinstance(peak, float) else f"x {int(peak)//2} - abs"
-    EXPR = get_expr()
+    EXPR = get_expr(tools)
     mask = EXPR([diff], expr=expr)
     
     return mask
@@ -310,7 +310,8 @@ def FinegrainMask(clip: vs.VideoNode, mode: str="RemoveGrain") -> vs.VideoNode:
 # experimental
 def make_color_mask(clip: vs.VideoNode,
                     target_color: tuple,
-                    tolerance: int = 30) -> vs.VideoNode:
+                    tolerance: int = 30,
+                    tools=None) -> vs.VideoNode:
     """
     Generate a binary mask where pixels close to a given RGB color are white (255), others black.
     Works consistently across float and integer RGB formats.
@@ -326,7 +327,7 @@ def make_color_mask(clip: vs.VideoNode,
     tol = tolerance
 
     # Compute squared color distance in float (but scaled as if in 8-bit space)
-    EXPR = get_expr()
+    EXPR = get_expr(tools)
     dr = EXPR([r], f"x {target_f[0]} - 255 * dup *")  # scale diff to 8-bit range
     dg = EXPR([g], f"x {target_f[1]} - 255 * dup *")
     db = EXPR([b], f"x {target_f[2]} - 255 * dup *")
@@ -340,9 +341,9 @@ def make_color_mask(clip: vs.VideoNode,
     # Output GRAY8
     return core.resize.Bicubic(mask, format=vs.GRAY8)
 
-def MotionMask(clip: vs.VideoNode, planes=None, th1=None, th2=None, tht=10, sc_value=0):
-  
-    if hasattr(core,'motionmask'):
+def MotionMask(clip: vs.VideoNode, planes=None, th1=None, th2=None, tht=10, sc_value=0, tools=None):
+
+    if pick_tool(tools, 'motionmask', ('motionmask', 'std')) == 'motionmask':
       return core.core.motionmask.MotionMask(clip=clip, planes=planes, th1=th1, th2=th2, tht=tht, sc_value=sc_value)
   
     fmt = clip.format
@@ -377,7 +378,7 @@ def MotionMask(clip: vs.VideoNode, planes=None, th1=None, th2=None, tht=10, sc_v
 
     prev = clip[0] + clip[:-1]
 
-    EXPR = get_expr()
+    EXPR = get_expr(tools)
 
     out_planes = []
     for p in range(num_planes):
@@ -401,7 +402,7 @@ def MotionMask(clip: vs.VideoNode, planes=None, th1=None, th2=None, tht=10, sc_v
     )
     diff_clip = core.std.CopyFrameProps(diff_clip, clip)
 
-    sc_clip = misc.SCDetect(clip, threshold=tht / 255)
+    sc_clip = misc.SCDetect(clip, threshold=tht / 255, tools=tools)
     sc_scaled = sc_value * max_val // 255
     blank = core.std.BlankClip(clip, color=[sc_scaled] * num_planes)
 
@@ -410,7 +411,7 @@ def MotionMask(clip: vs.VideoNode, planes=None, th1=None, th2=None, tht=10, sc_v
 
     return core.std.FrameEval(diff_clip, _select, prop_src=sc_clip)
    
-def bilinear_denoise(clip: vs.VideoNode, scale: float = 0.5, rg: bool=False) -> vs.VideoNode:
+def bilinear_denoise(clip: vs.VideoNode, scale: float = 0.5, rg: bool=False, tools=None) -> vs.VideoNode:
     """
     Perform simple bilinear denoising by downscaling and upscaling.
     
@@ -452,7 +453,8 @@ def bilinear_denoise(clip: vs.VideoNode, scale: float = 0.5, rg: bool=False) -> 
     
     if rg:
       rgMode = 17
-      smoothed = get_rg(is_float=isFLOAT)(clip=up, mode=rgMode)
+      isFLOAT = clip.format.sample_type == vs.FLOAT
+      smoothed = get_rg(is_float=isFLOAT, tools=tools)(clip=up, mode=rgMode)
       
 
     return up

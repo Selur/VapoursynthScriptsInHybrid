@@ -3,7 +3,9 @@ from vapoursynth import core
 
 from typing import Any, Dict, Sequence, Union, Optional
 
-from helpers import GetPlane, BoxFilter, DFTTest, get_expr
+from helpers import GetPlane, BoxFilter, DFTTest, get_expr, pick_tool, tool_function, type_error, value_error
+
+TYPEDICT = {vs.VideoNode: 'clip', int: 'int', float: 'float', bool: 'bool', str: 'str', list: 'list', tuple: 'tuple'}
 from misc import mt_expand_multi, mt_inpand_multi
 from color import LimitFilter
 
@@ -123,17 +125,17 @@ Original header:
 def GradFun3(src, thr=None, radius=None, elast=None, mask=None, mode=None, ampo=None,
                 ampn=None, pat=None, dyn=None, staticnoise=None, smode=None, thr_det=None,
                 debug=None, thrc=None, radiusc=None, elastc=None, planes=None, ref=None,
-                yuv444=None, w=None, h=None, resizer=None, b=None, c=None, bits=None):
+                yuv444=None, w=None, h=None, resizer=None, b=None, c=None, bits=None, tools=None):
 
     def smooth_mod(src_16, ref_16, smode, radius, thr, elast, planes):
         if smode == 0:
-            return _GF3_smoothgrad_multistage(src_16, ref_16, radius, thr, elast, planes)
+            return _GF3_smoothgrad_multistage(src_16, ref_16, radius, thr, elast, planes, tools=tools)
         elif smode == 1:
-            return _GF3_dfttest(src_16, ref_16, radius, thr, elast, planes)
+            return _GF3_dfttest(src_16, ref_16, radius, thr, elast, planes, tools=tools)
         elif smode == 2:
             return bilateral(src_16, ref_16, radius, thr, elast, planes)
         elif smode == 3:
-            return _GF3_smoothgrad_multistage_3(src_16, radius, thr, elast, planes)
+            return _GF3_smoothgrad_multistage_3(src_16, radius, thr, elast, planes, tools=tools)
         elif smode == 4:
             return dfttest_mod(src_16, ref_16, radius, thr, elast, planes)
         elif smode == 5:
@@ -144,8 +146,8 @@ def GradFun3(src, thr=None, radius=None, elast=None, mask=None, mode=None, ampo=
     def dfttest_mod(src, ref, radius, thr, elast, planes):
         hrad = max(radius * 3 // 4, 1)
         last = DFTTest(src, sigma=thr * 12, sbsize=hrad * 4,
-                       sosize=hrad * 3, tbsize=1, planes=planes)
-        last = LimitFilter(last, ref, thr=thr, elast=elast, planes=planes)
+                       sosize=hrad * 3, tbsize=1, planes=planes, tools=tools)
+        last = LimitFilter(last, ref, thr=thr, elast=elast, planes=planes, tools=tools)
         return last
 
     def bilateral(src, ref, radius, thr, elast, planes):
@@ -155,7 +157,7 @@ def GradFun3(src, thr=None, radius=None, elast=None, mask=None, mode=None, ampo=
         r2 = max(radius * 2 / 3, 3.0)
         r1 = max(radius * 1 / 3, 2.0)
         last = src
-        if hasattr(core,'vszip'):
+        if pick_tool(tools, 'bilateral', ('vszip', 'bilateral'), lambda name: name == 'bilateral' or hasattr(core, 'vszip')) == 'vszip':
           last = core.vszip.Bilateral(last, ref=ref, sigmaS=r4 / 2, sigmaR=thr_1 / 255, planes=planes, algorithm=0)
         else:
           last = core.bilateral.Bilateral(last, ref=ref, sigmaS=r4 / 2, sigmaR=thr_1 / 255, planes=planes, algorithm=0)
@@ -164,24 +166,23 @@ def GradFun3(src, thr=None, radius=None, elast=None, mask=None, mode=None, ampo=
         #                                planes=planes, algorithm=0)
         #last = core.bilateral.Bilateral(last, ref=ref, sigmaS=r1 / 2, sigmaR=thr_2 / 255,
         #                                planes=planes, algorithm=0)
-        last = LimitFilter(last, src, thr=thr, elast=elast, planes=planes)
+        last = LimitFilter(last, src, thr=thr, elast=elast, planes=planes, tools=tools)
         return last
 
     def bilateral_gpu(src, ref, radius, thr, elast, planes):
         # smode 2 on the GPU: the ports take sigma_color on the same 0-1 scale as sigmaR.
         thr_1 = max(thr * 4.5, 1.25)
         r4 = max(radius * 4 / 3, 4.0)
-        for namespace in ('bilateralgpu_rtc', 'bilateralgpu', 'vszipcl', 'vszipcu'):
-            if hasattr(core, namespace):
-                last = getattr(core, namespace).Bilateral(src, ref=ref, sigma_spatial=r4 / 2, sigma_color=thr_1 / 255)
-                break
-        else:
+        namespace = pick_tool(tools, 'bilateral', ('bilateralgpu_rtc', 'bilateralgpu', 'vszipcl', 'vszipcu'),
+                              lambda name: hasattr(core, name))
+        if namespace is None:
             raise vs.Error(funcname + ': smode=5 needs bilateralgpu_rtc, bilateralgpu, vszipcl or vszipcu')
+        last = getattr(core, namespace).Bilateral(src, ref=ref, sigma_spatial=r4 / 2, sigma_color=thr_1 / 255)
         # The ports filter every plane; the planes not asked for stay untouched, as with smode 2.
         if len(planes) < src.format.num_planes:
             last = core.std.ShufflePlanes([last if p in planes else src for p in range(src.format.num_planes)],
                                           list(range(src.format.num_planes)), src.format.color_family)
-        last = LimitFilter(last, src, thr=thr, elast=elast, planes=planes)
+        last = LimitFilter(last, src, thr=thr, elast=elast, planes=planes, tools=tools)
         return last
 
     funcname = 'GradFun3'
@@ -236,6 +237,8 @@ def GradFun3(src, thr=None, radius=None, elast=None, mask=None, mode=None, ampo=
         resizer = ''
     if yuv444 and not resizer:
         resizer = 'spline36'
+    if yuv444 or (resizer and resizer.lower() != 'none'):
+        raise vs.Error(funcname + ': yuv444/resizer/w/h (the GradFun3mod resizing) are not part of this port')
     if b is None:
         b = 1/3
     if c is None:
@@ -283,12 +286,6 @@ def GradFun3(src, thr=None, radius=None, elast=None, mask=None, mode=None, ampo=
     src_8 = core.fmtc.bitdepth(src, bits=8, dmode=1, planes=[0]) if src.format.bits_per_sample != 8 else src
     ref_16 = core.fmtc.bitdepth(ref, bits=16) if ref.format.bits_per_sample < 16 else ref
 
-    # Do lineart smoothing first for sharper results
-    if resizer.lower() == 'lineart_rpow2':
-        src_16 = ProtectedDebiXAA(src_16, w, h, bicubic=False)
-    elif resizer.lower() == 'lineart_rpow2_bicubic':
-        src_16 = ProtectedDebiXAA(src_16, w, h, bicubic=True, b=b, c=c)
-
     # Main debanding
     chroma_flag = (thrc != thr or radiusc != radius or
                    elastc != elast) and 0 in planes and (1 in planes or 2 in planes)
@@ -315,13 +312,10 @@ def GradFun3(src, thr=None, radius=None, elast=None, mask=None, mode=None, ampo=
 
     if mask > 0:
         dmask = GetPlane(src_8, 0)
-        dmask = _Build_gf3_range_mask(dmask, mask)
-        EXPR = get_expr()
+        dmask = _Build_gf3_range_mask(dmask, mask, tools=tools)
+        EXPR = get_expr(tools)
         dmask = EXPR([dmask], [mexpr])
-        if hasattr(core,'zsmooth'):
-          dmask = core.zsmooth.RemoveGrain(dmask, [22])
-        else:
-          dmask = core.rgvs.RemoveGrain(dmask, [22])
+        dmask = tool_function(tools, 'rg', 'RemoveGrain')(dmask, [22])
         if mask > 1:
             dmask = core.std.Convolution(dmask, matrix=[1,2,1,2,4,2,1,2,1])
             if mask > 2:
@@ -331,34 +325,6 @@ def GradFun3(src, thr=None, radius=None, elast=None, mask=None, mode=None, ampo=
     else:
         res_16 = flt
 
-    # Resizing / colorspace conversion (GradFun3mod)
-    res_16_y = core.std.ShufflePlanes(res_16, planes=0, colorfamily=vs.GRAY)
-    if resizer.lower() == 'debilinear':
-        rkernel = Resize(res_16_y if yuv444 else res_16, w, h, kernel='bilinear', invks=True)
-    elif resizer.lower() == 'debicubic':
-        rkernel = Resize(res_16_y if yuv444 else res_16, w, h, kernel='bicubic', a1=b, a2=c, invks=True)
-    elif resizer.lower() == 'debilinearm':
-        rkernel = DebilinearM(res_16_y if yuv444 else res_16, w, h, chroma=not yuv444)
-    elif resizer.lower() == 'debicubicm':
-        rkernel = DebicubicM(res_16_y if yuv444 else res_16, w, h, b=b, c=c, chroma=not yuv444)
-    elif resizer.lower() in ('lineart_rpow2', 'lineart_rpow2_bicubic'):
-        if yuv444:
-            rkernel = Resize(res_16_y, w, h, kernel='spline36')
-        else:
-            rkernel = res_16
-    elif not resizer:
-        rkernel = res_16
-    else:
-       rkernel = Resize(res_16_y if yuv444 else res_16, w, h, kernel=resizer.lower())
-
-    if yuv444:
-        ly = rkernel
-        lu = core.std.ShufflePlanes(res_16, planes=1, colorfamily=vs.GRAY)
-        lv = core.std.ShufflePlanes(res_16, planes=2, colorfamily=vs.GRAY)
-        lu = Resize(lu, w, h, kernel='spline16', sx=0.25)
-        lv = Resize(lv, w, h, kernel='spline16', sx=0.25)
-        rkernel = core.std.ShufflePlanes([ly,lu,lv], planes=[0,0,0], colorfamily=vs.YUV)
-    res_16 = rkernel
 
     # Dithering
     result = res_16 if bits == 16 else core.fmtc.bitdepth(res_16, bits=bits, planes=planes, dmode=mode, ampo=ampo,
@@ -541,54 +507,54 @@ def _limit_diff_lut(diff, thr, elast, largen_thr, planes):
 ################################################################################################################################
 
 def _GF3_smoothgrad_multistage(src: vs.VideoNode, ref: vs.VideoNode, radius: int,
-                               thr: float, elast: float, planes: Optional[Union[int, Sequence[int]]]
-                               ) -> vs.VideoNode:
+                               thr: float, elast: float, planes: Optional[Union[int, Sequence[int]]],
+                               tools=None) -> vs.VideoNode:
     ela_2 = max(elast * 0.83, 1.0)
     ela_3 = max(elast * 0.67, 1.0)
     r2 = radius * 2 // 3
     r3 = radius * 3 // 3
     r4 = radius * 4 // 4
     last = src
-    last = SmoothGrad(last, radius=r2, thr=thr, elast=elast, ref=ref, planes=planes) if r2 >= 1 else last
-    last = SmoothGrad(last, radius=r3, thr=thr * 0.7, elast=ela_2, ref=ref, planes=planes) if r3 >= 1 else last
-    last = SmoothGrad(last, radius=r4, thr=thr * 0.46, elast=ela_3, ref=ref, planes=planes) if r4 >= 1 else last
+    last = SmoothGrad(last, radius=r2, thr=thr, elast=elast, ref=ref, planes=planes, tools=tools) if r2 >= 1 else last
+    last = SmoothGrad(last, radius=r3, thr=thr * 0.7, elast=ela_2, ref=ref, planes=planes, tools=tools) if r3 >= 1 else last
+    last = SmoothGrad(last, radius=r4, thr=thr * 0.46, elast=ela_3, ref=ref, planes=planes, tools=tools) if r4 >= 1 else last
     return last
 
 
 def _GF3_smoothgrad_multistage_3(src: vs.VideoNode, radius: int, thr: float,
-                                 elast: float, planes: Optional[Union[int, Sequence[int]]]
-                                 ) -> vs.VideoNode:
-    ref = SmoothGrad(src, radius=radius // 3, thr=thr * 0.8, elast=elast)
-    last = BoxFilter(src, radius=radius, planes=planes)
-    last = BoxFilter(last, radius=radius, planes=planes)
-    last = LimitFilter(last, src, thr=thr * 0.6, elast=elast, ref=ref, planes=planes)
+                                 elast: float, planes: Optional[Union[int, Sequence[int]]],
+                                 tools=None) -> vs.VideoNode:
+    ref = SmoothGrad(src, radius=radius // 3, thr=thr * 0.8, elast=elast, tools=tools)
+    last = BoxFilter(src, radius=radius, planes=planes, tools=tools)
+    last = BoxFilter(last, radius=radius, planes=planes, tools=tools)
+    last = LimitFilter(last, src, thr=thr * 0.6, elast=elast, ref=ref, planes=planes, tools=tools)
     return last
 
 
 def _GF3_dfttest(src: vs.VideoNode, ref: vs.VideoNode, radius: int,
-                 thr: float, elast: float, planes: Optional[Union[int, Sequence[int]]]
-                 ) -> vs.VideoNode:
+                 thr: float, elast: float, planes: Optional[Union[int, Sequence[int]]],
+                 tools=None) -> vs.VideoNode:
     hrad = max(radius * 3 // 4, 1)
     last = DFTTest(src, sigma=hrad * thr * thr * 32, sbsize=hrad * 4,
-                   sosize=hrad * 3, tbsize=1, planes=planes)
-    last = LimitFilter(last, ref, thr=thr, elast=elast, planes=planes)
+                   sosize=hrad * 3, tbsize=1, planes=planes, tools=tools)
+    last = LimitFilter(last, ref, thr=thr, elast=elast, planes=planes, tools=tools)
 
     return last
 
 
 def _GF3_bilateral_multistage(src: vs.VideoNode, ref: vs.VideoNode, radius: int,
-                              thr: float, elast: float, planes: Optional[Union[int, Sequence[int]]]
-                              ) -> vs.VideoNode:
+                              thr: float, elast: float, planes: Optional[Union[int, Sequence[int]]],
+                              tools=None) -> vs.VideoNode:
     last = core.bilateral.Bilateral(src, ref=ref, sigmaS=radius / 2, sigmaR=thr / 255, planes=planes, algorithm=0)
 
-    last = LimitFilter(last, src, thr=thr, elast=elast, planes=planes)
+    last = LimitFilter(last, src, thr=thr, elast=elast, planes=planes, tools=tools)
 
     return last
 
 
-def _Build_gf3_range_mask(src: vs.VideoNode, radius: int = 1) -> vs.VideoNode:
+def _Build_gf3_range_mask(src: vs.VideoNode, radius: int = 1, tools=None) -> vs.VideoNode:
     last = src
-    EXPR = get_expr()
+    EXPR = get_expr(tools)
     if radius > 1:
         ma = mt_expand_multi(last, mode='ellipse', planes=[0], sw=radius, sh=radius)
         mi = mt_inpand_multi(last, mode='ellipse', planes=[0], sw=radius, sh=radius)
@@ -608,7 +574,8 @@ def _Build_gf3_range_mask(src: vs.VideoNode, radius: int = 1) -> vs.VideoNode:
 
 def SmoothGrad(input: vs.VideoNode, radius: int = 9, thr: float = 0.25,
                ref: Optional[vs.VideoNode] = None, elast: float = 3.0,
-               planes: Optional[Union[int, Sequence[int]]] = None, **limit_filter_args: Any) -> vs.VideoNode:
+               planes: Optional[Union[int, Sequence[int]]] = None, tools: Optional[Dict[str, str]] = None,
+               **limit_filter_args: Any) -> vs.VideoNode:
     '''Avisynth's SmoothGrad
 
     SmoothGrad smooths the low gradients or flat areas of a 16-bit clip.
@@ -647,6 +614,6 @@ def SmoothGrad(input: vs.VideoNode, radius: int = 9, thr: float = 0.25,
         planes = [planes]
 
     # process
-    smooth = BoxFilter(input, radius, planes=planes)
+    smooth = BoxFilter(input, radius, planes=planes, tools=tools)
 
-    return LimitFilter(smooth, input, ref, thr, elast, planes=planes, **limit_filter_args)
+    return LimitFilter(smooth, input, ref, thr, elast, planes=planes, tools=tools, **limit_filter_args)

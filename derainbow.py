@@ -4,7 +4,7 @@ import vapoursynth as vs
 
 core = vs.core
 
-from helpers import GetPlane, scale, get_expr
+from helpers import GetPlane, scale, get_expr, pick_tool, tool_function
 
 try:
     from color import Tweak as _color_tweak  # type: ignore
@@ -16,19 +16,15 @@ try:
 except ImportError:
     _contra_sharpening = None
 
-from misc import MV, SCDetect
+from misc import get_mv, SCDetect
 
 # ---------------------------------------------------------------------------
 # Plugin wrappers — each wrapper tries the fastest available backend first
 # ---------------------------------------------------------------------------
 
-def _expr(clips: vs.VideoNode | list[vs.VideoNode], expr: str | list[str]) -> vs.VideoNode:
-    """Expr — prefers akarin → cranexpr → std."""
-    if hasattr(core, "akarin"):
-        return core.akarin.Expr(clips, expr)
-    if hasattr(core, "cranexpr"):
-        return core.cranexpr.Expr(clips, expr)
-    return core.std.Expr(clips, expr)
+def _expr(clips: vs.VideoNode | list[vs.VideoNode], expr: str | list[str], tools=None) -> vs.VideoNode:
+    """Expr — tools['expr'], else akarin → cranexpr → std."""
+    return get_expr(tools)(clips, expr)
 
 
 def _box_blur(
@@ -38,44 +34,43 @@ def _box_blur(
     vradius: int = 1,
     vpasses: int = 1,
     planes: list[int] | None = None,
+    tools=None,
 ) -> vs.VideoNode:
-    """BoxBlur — prefers vszip, falls back to std."""
+    """BoxBlur — tools['boxblur'], else vszip, else std."""
     kwargs: dict = dict(hradius=hradius, hpasses=hpasses, vradius=vradius, vpasses=vpasses)
     if planes is not None:
         kwargs["planes"] = planes
-    if hasattr(core, "vszip"):
-        return core.vszip.BoxBlur(clip, **kwargs)
-    return core.std.BoxBlur(clip, **kwargs)
+    return tool_function(tools, 'boxblur', 'BoxBlur')(clip, **kwargs)
 
 
-def _repair(clip: vs.VideoNode, ref: vs.VideoNode, mode: int) -> vs.VideoNode:
-    """Repair — prefers zsmooth, falls back to rgvs.
+def _repair(clip: vs.VideoNode, ref: vs.VideoNode, mode: int, tools=None) -> vs.VideoNode:
+    """Repair — tools['rg'], else zsmooth, else rgvs.
     Note: mode semantics differ slightly between backends; modes 1–3 are
     safe across both. Mode 5 in rgvs ≠ mode 5 in zsmooth — avoid mode 5
     if portability across backends matters.
     """
-    if hasattr(core, "zsmooth"):
-        return core.zsmooth.Repair(clip, ref, mode)
-    return core.rgvs.Repair(clip, ref, mode)
+    return tool_function(tools, 'rg', 'Repair')(clip, ref, mode)
 
 
-def _fft3d(clip: vs.VideoNode, **kwargs) -> vs.VideoNode:
-    """FFT3D — prefers neo_fft3d, falls back to fft3dfilter."""
-    if hasattr(core, "neo_fft3d"):
-        return core.neo_fft3d.FFT3D(clip, **kwargs)
-    return core.fft3dfilter.FFT3DFilter(clip, **kwargs)
+def _fft3d(clip: vs.VideoNode, tools=None, **kwargs) -> vs.VideoNode:
+    """FFT3D — tools['fft3d'], else neo_fft3d, else fft3dfilter."""
+    return tool_function(tools, 'fft3d', 'FFT3D')(clip, **kwargs)
 
 
-def _bilateral(clip: vs.VideoNode, sigmaS: float = 3.0, sigmaR: float = 0.02, gpu: bool | None = None, **kwargs) -> vs.VideoNode:
-    """Bilateral filter — a loaded GPU port (bilateralgpu_rtc, bilateralgpu, vszipcl, vszipcu) unless gpu is False, then vszip, then bilateral."""
+_BILATERAL_PORTS = ("bilateralgpu_rtc", "bilateralgpu", "vszipcl", "vszipcu")
+
+
+def _bilateral(clip: vs.VideoNode, sigmaS: float = 3.0, sigmaR: float = 0.02, gpu: bool | None = None, tools=None,
+               **kwargs) -> vs.VideoNode:
+    """Bilateral filter — tools['bilateral'], else a loaded GPU port (bilateralgpu_rtc, bilateralgpu, vszipcl, vszipcu) unless gpu is False, then vszip, then bilateral."""
+    order = (() if gpu is False else _BILATERAL_PORTS) + ("vszip", "bilateral")
+    namespace = pick_tool(tools, 'bilateral', order, lambda name: hasattr(core, name),
+                          candidates=_BILATERAL_PORTS + ("vszip", "bilateral"))
     # The GPU ports name the sigmas sigma_spatial/sigma_color, on the same scale as sigmaS/sigmaR.
-    for namespace in (() if gpu is False else ("bilateralgpu_rtc", "bilateralgpu", "vszipcl", "vszipcu")):
-        if hasattr(core, namespace):
-            return getattr(core, namespace).Bilateral(clip, sigma_spatial=sigmaS, sigma_color=sigmaR, **kwargs)
-    if hasattr(core, "vszip"):
-        return core.vszip.Bilateral(clip, sigmaS=sigmaS, sigmaR=sigmaR, **kwargs)
-    if hasattr(core, "bilateral"):
-        return core.bilateral.Bilateral(clip, sigmaS=sigmaS, sigmaR=sigmaR, **kwargs)
+    if namespace in _BILATERAL_PORTS:
+        return getattr(core, namespace).Bilateral(clip, sigma_spatial=sigmaS, sigma_color=sigmaR, **kwargs)
+    if namespace is not None:
+        return getattr(core, namespace).Bilateral(clip, sigmaS=sigmaS, sigmaR=sigmaR, **kwargs)
     raise RuntimeError(
         "srfcomb: a bilateral filter plugin is required (vszipcl, vszipcu, bilateralgpu, vszip, or bilateral) — "
         "install one from https://github.com/dnjulek/vapoursynth-zip"
@@ -89,9 +84,10 @@ def _temporal_soften(
     chroma_threshold: int,
     scenechange: int,
     mode: int,
+    tools=None,
 ) -> vs.VideoNode:
-    """TemporalSoften — focus2 or zsmooth as fallback."""
-    if hasattr(core, "focus2"):
+    """TemporalSoften — tools['temporalsoften'], else focus2, else zsmooth."""
+    if pick_tool(tools, 'temporalsoften', ('focus2', 'zsmooth'), lambda name: name == 'zsmooth' or hasattr(core, 'focus2')) == 'focus2':
         return core.focus2.TemporalSoften2(
             clip, radius, luma_threshold, chroma_threshold, scenechange, mode
         )
@@ -113,14 +109,14 @@ def _weave_fields(clip: vs.VideoNode) -> vs.VideoNode:
     return core.std.DoubleWeave(clip)[::2]
 
 
-def _mt_logic(a: vs.VideoNode, b: vs.VideoNode, mode: str = "min") -> vs.VideoNode:
+def _mt_logic(a: vs.VideoNode, b: vs.VideoNode, mode: str = "min", tools=None) -> vs.VideoNode:
     op = "x y min" if mode == "min" else "x y max"
-    return _expr([a, b], op)
+    return _expr([a, b], op, tools=tools)
 
 
-def _mt_binarize(clip: vs.VideoNode, threshold: int) -> vs.VideoNode:
+def _mt_binarize(clip: vs.VideoNode, threshold: int, tools=None) -> vs.VideoNode:
     peak = (1 << clip.format.bits_per_sample) - 1
-    return _expr([clip], f"x {threshold} > {peak} 0 ?")
+    return _expr([clip], f"x {threshold} > {peak} 0 ?", tools=tools)
 
 
 def _mt_expand(clip: vs.VideoNode, n: int = 1) -> vs.VideoNode:
@@ -163,6 +159,7 @@ def LUTDeRainbow(
     y: bool = True,
     linkUV: bool = True,
     mask: bool = False,
+    tools=None,
 ) -> vs.VideoNode:
     """
     LUTDeRainbow — frame-based derainbowing by Scintilla.
@@ -214,22 +211,22 @@ def LUTDeRainbow(
     average_y = _expr(
         [input_minus_y, input_plus_y],
         f'x y - abs {ythresh_scaled} < {peak} 0 ?',
-    ).resize.Bilinear(input_u.width, input_u.height)
+    tools=tools).resize.Bilinear(input_u.width, input_u.height)
 
     average_u = _expr(
         [input_minus_u, input_plus_u],
         f'x y - abs {cthresh_scaled} < x y + 2 / 0 ?',
-    )
+    tools=tools)
     average_v = _expr(
         [input_minus_v, input_plus_v],
         f'x y - abs {cthresh_scaled} < x y + 2 / 0 ?',
-    )
+    tools=tools)
 
     umask = average_u.std.Binarize(threshold=21 << shift)
     vmask = average_v.std.Binarize(threshold=21 << shift)
 
     if useExpr:
-        themask = _expr([umask, vmask], f'x y + {peak + 1} < 0 {peak} ?')
+        themask = _expr([umask, vmask], f'x y + {peak + 1} < 0 {peak} ?', tools=tools)
         if y:
             umask   = core.std.MaskedMerge(core.std.BlankClip(average_y), average_y, umask)
             vmask   = core.std.MaskedMerge(core.std.BlankClip(average_y), average_y, vmask)
@@ -267,6 +264,7 @@ def SRFComb(
     RainbowThSAD: int = 500,
     SpatialDeDotCraw: bool = True,
     tff: bool | None = None,
+    tools=None,
 ) -> vs.VideoNode:
     """
     SRFComb by real.finder — field-space version.
@@ -325,24 +323,24 @@ def SRFComb(
         sep_y = core.std.ShufflePlanes(separated, 0, vs.GRAY)
         sep_u = core.std.ShufflePlanes(separated, 1, vs.GRAY)
         sep_v = core.std.ShufflePlanes(separated, 2, vs.GRAY)
-        blurred          = _box_blur(sep_y, hradius=1, hpasses=3, vradius=0, vpasses=0)
+        blurred          = _box_blur(sep_y, hradius=1, hpasses=3, vradius=0, vpasses=0, tools=tools)
         sharpened        = core.std.Convolution(blurred, [0, -1, 0, -1, 5, -1, 0, -1, 0])
         luma_dedc        = core.std.ShufflePlanes([sharpened, sep_u, sep_v], [0, 0, 0], vs.YUV)
-        LumaSpatialDeDot = _repair(luma_dedc, separated, 5)
+        LumaSpatialDeDot = _repair(luma_dedc, separated, 5, tools=tools)
     else:
         LumaSpatialDeDot = separated
 
     # --- pre: luma processing chain (frame-space, then separated) ---
     ogy    = core.std.ShufflePlanes(clip, 0, vs.GRAY)
-    dedc   = _repair(ogy, _box_blur(ogy, hradius=1, hpasses=1, vradius=1, vpasses=1), 1)
-    tr1    = _repair(dedc, ogy, 3)
+    dedc   = _repair(ogy, _box_blur(ogy, hradius=1, hpasses=1, vradius=1, vpasses=1, tools=tools), 1, tools=tools)
+    tr1    = _repair(dedc, ogy, 3, tools=tools)
     # Checkmate: suppress residual interlacing artefacts if vszip present
-    cm     = core.vszip.Checkmate(tr1) if hasattr(core, "vszip") else tr1
-    tr2    = _repair(cm, ogy, 3)
-    rep    = _repair(tr2, ogy, 1)
+    cm     = core.vszip.Checkmate(tr1) if hasattr(getattr(core, "vszip", None), "Checkmate") else tr1
+    tr2    = _repair(cm, ogy, 3, tools=tools)
+    rep    = _repair(tr2, ogy, 1, tools=tools)
     rep_sf   = core.std.SeparateFields(rep, tff=tff)
-    ablurred = _box_blur(rep_sf,   hradius=1, hpasses=1, vradius=0, vpasses=0)
-    blurred2 = _box_blur(ablurred, hradius=1, hpasses=3, vradius=0, vpasses=0)
+    ablurred = _box_blur(rep_sf,   hradius=1, hpasses=1, vradius=0, vpasses=0, tools=tools)
+    blurred2 = _box_blur(ablurred, hradius=1, hpasses=3, vradius=0, vpasses=0, tools=tools)
     pre_y    = core.std.Convolution(blurred2, [0, -1, 0, -1, 5, -1, 0, -1, 0])
 
     pre = core.std.ShufflePlanes(
@@ -354,19 +352,19 @@ def SRFComb(
 
     # --- preymask: horizontal edge mask on separated luma ---
     ogy_sf    = core.std.SeparateFields(ogy, tff=tff)
-    ogy_vblur = _box_blur(ogy_sf, vradius=1, vpasses=3, hradius=0, hpasses=0)
+    ogy_vblur = _box_blur(ogy_sf, vradius=1, vpasses=3, hradius=0, hpasses=0, tools=tools)
     ogy_vshrp = core.std.Convolution(ogy_vblur, [0, -1, 0, -1, 5, -1, 0, -1, 0])
     preymask  = core.std.Convolution(ogy_vshrp, [0, 0, 0, -1, 0, 1, 0, 0, 0])
-    preymask  = _expr(preymask, f"x {4*scale} < 0 x {8*scale} > {peak} x ? ?")
+    preymask  = _expr(preymask, f"x {4*scale} < 0 x {8*scale} > {peak} x ? ?", tools=tools)
 
     # --- precmask: horizontal edge mask on pre_y ---
     pre_y_edge = core.std.Convolution(pre_y, [0, 0, 0, -1, 0, 1, 0, 0, 0])
-    precmask   = _expr(pre_y_edge, f"x {round(scale)} < 0 x {round(3*scale)} > {peak} x ? ?")
+    precmask   = _expr(pre_y_edge, f"x {round(scale)} < 0 x {round(3*scale)} > {peak} x ? ?", tools=tools)
 
     # --- cuvmask: chroma activity mask ---
     if _color_tweak is not None:
-        sat0  = _color_tweak(ogs, sat=0.0,  coring=False)
-        sat10 = _color_tweak(ogs, sat=10.0, coring=False)
+        sat0  = _color_tweak(ogs, sat=0.0,  coring=False, tools=tools)
+        sat10 = _color_tweak(ogs, sat=10.0, coring=False, tools=tools)
     else:
         # Fallback approximation when color.py is unavailable.
         # sat=0 → U and V set to mid-grey (half), luma preserved.
@@ -389,7 +387,7 @@ def SRFComb(
         core.std.ShufflePlanes(sat10, 2, vs.GRAY),
     )
     lut_expr = f"x {half} = 0 x {half} - abs {peak} * {half} / ?"
-    cuvmask  = _expr([_expr(diff_u, lut_expr), _expr(diff_v, lut_expr)], "x y max")
+    cuvmask  = _expr([_expr(diff_u, lut_expr, tools=tools), _expr(diff_v, lut_expr, tools=tools)], "x y max", tools=tools)
 
     # Upscale cuvmask to full luma field dimensions
     field_w = ogs.width
@@ -405,12 +403,12 @@ def SRFComb(
     cuvmaskf = core.resize.Bilinear(cuvmask, field_w, field_h, src_left=shift_val)
 
     # --- premask: intersection of chroma activity and pre edge ---
-    premask = _expr([cuvmaskf, precmask], "x y min")
+    premask = _expr([cuvmaskf, precmask], "x y min", tools=tools)
     premask = core.std.Maximum(premask, coordinates=[0, 0, 0, 1, 1, 0, 0, 0])
     premask = core.std.Inflate(premask)
 
     # --- ycombmask: intersection of chroma activity and luma edge ---
-    ycombmask = _expr([cuvmaskf, preymask], "x y min")
+    ycombmask = _expr([cuvmaskf, preymask], "x y min", tools=tools)
     ycombmask = core.std.Maximum(ycombmask, coordinates=[0, 0, 0, 1, 1, 0, 0, 0])
     ycombmask = core.std.Maximum(ycombmask, coordinates=[0, 0, 0, 1, 1, 0, 0, 0])
     ycombmask = core.std.Inflate(ycombmask)
@@ -430,9 +428,10 @@ def SRFComb(
 
     # --- pre2: blend pre into ogs on luma using premask ---
     pre2 = core.std.MaskedMerge(ogs, pre, premask, planes=[0])
-    pre2 = core.std.Merge(pre2, _repair(pre2, ogs, 1))
+    pre2 = core.std.Merge(pre2, _repair(pre2, ogs, 1, tools=tools))
 
     # --- MVTools motion analysis ---
+    MV = get_mv(tools)
     super_search = MV.Super(pre2, pel=4, rfilter=4, blksize=8, overlap=2)
     bv1 = MV.Analyse(super_search, blksize=8, isb=True,  delta=2, overlap=2, dct=8)
     fv1 = MV.Analyse(super_search, blksize=8, isb=False, delta=2, overlap=2, dct=8)
@@ -494,6 +493,7 @@ def SRFComb2(
     progressive: bool | None = None,
     contrasharp: bool = True,
     bilateral_gpu: bool | None = None,
+    tools=None,
 ) -> vs.VideoNode:
     """
     SRFComb2 — spatial + temporal dot-crawl and rainbow artefact reduction.
@@ -582,8 +582,8 @@ def SRFComb2(
     e_h = core.std.Convolution(oY, [0, 0, 0, -16, 0, 16, 0, 0, 0], saturate=False)
     e_v = core.std.Convolution(oY, [0,  0,  0,  0, 2, -2, 0, 0, 0], saturate=False)
 
-    luma_edge = _mt_logic(e_h, e_v, "min")
-    luma_mask = _mt_logic(luma_edge, core.std.Invert(oY), "min")
+    luma_edge = _mt_logic(e_h, e_v, "min", tools=tools)
+    luma_mask = _mt_logic(luma_edge, core.std.Invert(oY), "min", tools=tools)
 
     # AviSynth uses horizontal-only expand for PAL; vertical+horizontal for NTSC
     if pal:
@@ -606,27 +606,27 @@ def SRFComb2(
 
     if _color_tweak is not None:
         # Accurate path — uses color.Tweak
-        tweak_zero  = _color_tweak(fields, sat=0)
-        tweak_boost = _color_tweak(fields, sat=20 if pal else 10)
+        tweak_zero  = _color_tweak(fields, sat=0, tools=tools)
+        tweak_boost = _color_tweak(fields, sat=20 if pal else 10, tools=tools)
         chroma_diff = core.std.MakeDiff(tweak_zero, tweak_boost)
         u_diff_raw  = core.std.ShufflePlanes(chroma_diff, 1, vs.GRAY)
         v_diff_raw  = core.std.ShufflePlanes(chroma_diff, 2, vs.GRAY)
         uv_diff     = core.std.Interleave([u_diff_raw, v_diff_raw])
-        uv_mapped   = _expr([uv_diff], f"x {mid} = 0 {mid} x - abs 2.28 * ?")
+        uv_mapped   = _expr([uv_diff], f"x {mid} = 0 {mid} x - abs 2.28 * ?", tools=tools)
         ouvm_u      = core.std.SelectEvery(uv_mapped, 2, [0])
         ouvm_v      = core.std.SelectEvery(uv_mapped, 2, [1])
-        ouvm_sub    = _mt_logic(ouvm_u, ouvm_v, "max")
+        ouvm_sub    = _mt_logic(ouvm_u, ouvm_v, "max", tools=tools)
     else:
         # Fallback — raw plane deviation from mid-grey
         u_plane  = core.std.ShufflePlanes(fields, 1, vs.GRAY)
         v_plane  = core.std.ShufflePlanes(fields, 2, vs.GRAY)
-        u_dev    = _expr([u_plane], f"x {mid} - abs 2.28 *")
-        v_dev    = _expr([v_plane], f"x {mid} - abs 2.28 *")
-        ouvm_sub = _mt_logic(u_dev, v_dev, "max")
+        u_dev    = _expr([u_plane], f"x {mid} - abs 2.28 *", tools=tools)
+        v_dev    = _expr([v_plane], f"x {mid} - abs 2.28 *", tools=tools)
+        ouvm_sub = _mt_logic(u_dev, v_dev, "max", tools=tools)
 
     # Resize ouvm to luma dimensions for mask combination
     ouvm      = _scale_chroma_mask(ouvm_sub, oY.width, oY.height, is_sub)
-    luma_mask = _mt_logic(luma_mask, _mt_binarize(ouvm, 30), "min")
+    luma_mask = _mt_logic(luma_mask, _mt_binarize(ouvm, 30, tools=tools), "min", tools=tools)
 
     # ------------------------------------------------------------------
     # Luma denoise (FFT3D)
@@ -638,12 +638,12 @@ def SRFComb2(
         sigma3=10 if progressive else 22,
         sigma4=0,
         bt=1,
-    )
+    tools=tools)
 
     if progressive:
-        blur   = _box_blur(oY, hradius=1, vradius=1)
+        blur   = _box_blur(oY, hradius=1, vradius=1, tools=tools)
         detail = core.std.MakeDiff(oY, blur)
-        cle_y  = core.std.MergeDiff(cle_y, _expr([detail], "x 0.25 *"))
+        cle_y  = core.std.MergeDiff(cle_y, _expr([detail], "x 0.25 *", tools=tools))
     else:
         # ABlur(blur=2) ≈ horizontal-only blur
         cle_y = core.std.Merge(cle_y, core.warp.ABlur(oY, blur=2))
@@ -662,7 +662,7 @@ def SRFComb2(
         cle_y_rep = core.zsmooth.TemporalRepair(cle_y_rep, oY, mode=3)
 
         # Repair: constrain spatially to original luma
-        cle_y_rep = _repair(cle_y_rep, oY, mode=3)
+        cle_y_rep = _repair(cle_y_rep, oY, mode=3, tools=tools)
 
         cle_y_woven = cle_y_rep  # no weave needed for progressive
     else:
@@ -677,7 +677,7 @@ def SRFComb2(
 
         # Repair at field level: re-separate so dimensions match cle_y, then re-weave
         cle_y_sep   = core.std.SeparateFields(cle_y_woven)
-        cle_y_woven = _repair(cle_y_sep, cle_y, mode=3)
+        cle_y_woven = _repair(cle_y_sep, cle_y, mode=3, tools=tools)
         cle_y_woven = _weave_fields(cle_y_woven)
 
     # Replace luma in fields clip with repaired luma, then apply luma mask
@@ -692,8 +692,8 @@ def SRFComb2(
     chm_h = core.std.Convolution(oY, [0, 0, 0, -1, 0, 1, 0, 0, 0], saturate=False)
     chm_v = core.std.Convolution(oY, [0,  0,  0,  0, 2, -2, 0, 0, 0], saturate=False)
 
-    chm = _mt_logic(chm_h, chm_v, "min")
-    chm = _mt_logic(chm, _mt_binarize(core.std.Invert(oY), 50), "min")
+    chm = _mt_logic(chm_h, chm_v, "min", tools=tools)
+    chm = _mt_logic(chm, _mt_binarize(core.std.Invert(oY), 50, tools=tools), "min", tools=tools)
     chm = _mt_expand_horizontal(chm)
     chm = _mt_inflate(chm)
 
@@ -707,7 +707,7 @@ def SRFComb2(
         sigma3= 5 if progressive else 11,
         sigma4=22 if progressive else 44,
         bt=1,
-    )
+    tools=tools)
     spati_comb_c = core.std.MaskedMerge(luma_merged, chroma_clean, chm)
 
     # ------------------------------------------------------------------
@@ -716,7 +716,7 @@ def SRFComb2(
     u_in = core.std.ShufflePlanes(spati_comb_c, 1, vs.GRAY)
     v_in = core.std.ShufflePlanes(spati_comb_c, 2, vs.GRAY)
     uv_interleaved = core.std.Interleave([u_in, v_in])
-    uv_filtered    = _bilateral(uv_interleaved, sigmaS=1.4, sigmaR=0.028, gpu=bilateral_gpu)
+    uv_filtered    = _bilateral(uv_interleaved, sigmaS=1.4, sigmaR=0.028, gpu=bilateral_gpu, tools=tools)
     u_filtered     = core.std.SelectEvery(uv_filtered, 2, [0])
     v_filtered     = core.std.SelectEvery(uv_filtered, 2, [1])
     spati_comb_c   = core.std.ShufflePlanes(
@@ -726,11 +726,11 @@ def SRFComb2(
     # ------------------------------------------------------------------
     # aWarpSharp2 chroma sharpening
     # ------------------------------------------------------------------
-    if hasattr(core, 'warp'):
+    if pick_tool(tools, 'warp', ('warp', 'awarp')) == 'warp':
         spati_comb_c = core.warp.AWarpSharp2(spati_comb_c, depth=[16, 8, 8], chroma=1, planes=[1, 2])
     else:
         import sharpen
-        spati_comb_c = sharpen.AWarpSharp2(spati_comb_c, depth=[16, 8, 8], chroma=1, planes=[1, 2])
+        spati_comb_c = sharpen.AWarpSharp2(spati_comb_c, depth=[16, 8, 8], chroma=1, planes=[1, 2], tools=tools)
 
     # Combined luma+chroma combmask for the final merge
     chm_uv_resized = _scale_chroma_mask(chm, ouvm_sub.width, ouvm_sub.height, is_sub)
@@ -741,6 +741,7 @@ def SRFComb2(
     # ------------------------------------------------------------------
     # Motion compensation — separate search super and degrain super
     # ------------------------------------------------------------------
+    MV = get_mv(tools)
     if progressive:
         super_search  = MV.Super(spati_comb_c, rfilter=4, blksize=8, overlap=2)
         super_degrain = MV.Super(fields, levels=1, blksize=8, overlap=2)
@@ -777,26 +778,26 @@ def SRFComb2(
         if progressive:
             mmask_bv    = MV.Mask(fields, bv, kind=0, ml=1, ysc=255)
             mmask_fv    = MV.Mask(fields, fv, kind=0, ml=1, ysc=255)
-            motion_mask = _mt_logic(mmask_bv, mmask_fv, "max")
+            motion_mask = _mt_logic(mmask_bv, mmask_fv, "max", tools=tools)
         else:
             mmask_bv_e  = MV.Mask(even_o, bv_e, kind=0, ml=1, ysc=255)
             mmask_fv_e  = MV.Mask(even_o, fv_e, kind=0, ml=1, ysc=255)
             mmask_bv_o  = MV.Mask(odd_o,  bv_o, kind=0, ml=1, ysc=255)
             mmask_fv_o  = MV.Mask(odd_o,  fv_o, kind=0, ml=1, ysc=255)
-            mmask_e     = _mt_logic(mmask_bv_e, mmask_fv_e, "max")
-            mmask_o     = _mt_logic(mmask_bv_o, mmask_fv_o, "max")
+            mmask_e     = _mt_logic(mmask_bv_e, mmask_fv_e, "max", tools=tools)
+            mmask_o     = _mt_logic(mmask_bv_o, mmask_fv_o, "max", tools=tools)
             motion_mask = core.std.Interleave([mmask_e, mmask_o])
 
         # TemporalSoften + expand to smooth and widen the motion mask
-        ts          = _temporal_soften(motion_mask, 2, 255, 255, 0, 2)
-        motion_mask = _mt_logic(motion_mask, _mt_expand(ts, 1), "max")
+        ts          = _temporal_soften(motion_mask, 2, 255, 255, 0, 2, tools=tools)
+        motion_mask = _mt_logic(motion_mask, _mt_expand(ts, 1), "max", tools=tools)
         motion_mask = _mt_expand(motion_mask, 1)
         motion_mask = _mt_expand_horizontal(motion_mask)
         motion_mask = _mt_inflate(motion_mask)
 
         # ContraSharpening on the spatial clean to recover detail after degrain
         if contrasharp and _contra_sharpening is not None:
-            sharp = _contra_sharpening(spati_comb_c, degrain)
+            sharp = _contra_sharpening(spati_comb_c, degrain, tools=tools)
         else:
             sharp = spati_comb_c
 
@@ -833,7 +834,7 @@ def SRFComb2(
 #   scenechange: https://github.com/Tatsh/scenechange            (feeds the scene-change props
 #            that Cnr4 and TemporalSoften consume; without it misc.SCDetect steps in, which
 #            needs no plugin at all)
-def ChubbyRain2(c, th=10, radius=10, show=False, sft=10, interlaced=False):
+def ChubbyRain2(c, th=10, radius=10, show=False, sft=10, interlaced=False, tools=None):
     if interlaced:
         c = core.std.SeparateFields(c)
 
@@ -852,16 +853,16 @@ def ChubbyRain2(c, th=10, radius=10, show=False, sft=10, interlaced=False):
     cc = core.std.Convolution(c, matrix=[1, 2, 1], mode="v", divisor=4, planes=[0, 1, 2])
     cc = core.bifrost.Bifrost(cc, interlaced=False)
 
-    if hasattr(core, 'zsmooth'):
+    if pick_tool(tools, 'cnr', ('zsmooth', 'cnr2'), lambda name: name == 'cnr2' or hasattr(core, 'zsmooth')) == 'zsmooth':
         # Cnr4 and the TemporalSoften below both consume _SceneChangePrev/Next; Cnr2 did
         # the detection internally via scdthr=10.0, so reproduce that ~10% threshold here.
-        if hasattr(core, 'scd') and not is_float:
+        if pick_tool(tools, 'scd', ('scd', 'misc', 'std'), lambda name: name != 'scd' or (hasattr(core, 'scd') and not is_float)) == 'scd':
             # scd.Detect's thresh is an absolute 0-254 (x2^(bits-8)) luma-diff value, not a
             # percentage, so scale the 10% onto that range.
             thresh = max(1, round(0.10 * 254 * (1 << max(bits - 8, 0))))
             cc = core.scd.Detect(clip=cc, thresh=thresh)
         else:
-            cc = SCDetect(clip=cc, threshold=0.10)
+            cc = SCDetect(clip=cc, threshold=0.10, tools=tools)
 
         # mode/tmode/radius/sense/str below reproduce Cnr2's defaults
         # (mode="oxx", scdthr=10.0, ln/un/vn=35/47/47, lm/um/vm=192/255/255)
@@ -869,7 +870,7 @@ def ChubbyRain2(c, th=10, radius=10, show=False, sft=10, interlaced=False):
     else:
         cc = core.cnr2.Cnr2(cc)  # defaults: mode="oxx", scdthr=10.0, ln=35, lm=192, un=47, um=255, vn=47, vm=255
 
-    if hasattr(core, 'zsmooth'):
+    if pick_tool(tools, 'temporalsoften', ('zsmooth', 'focus'), lambda name: name == 'focus' or hasattr(core, 'zsmooth')) == 'zsmooth':
         # zsmooth takes one threshold per plane and scales it itself (scalep=True)
         # scenechange=-1 consumes the props set above; any positive value makes zsmooth
         # demand the miscfilters plugin so it can detect scene changes itself
@@ -879,7 +880,7 @@ def ChubbyRain2(c, th=10, radius=10, show=False, sft=10, interlaced=False):
         cc = core.focus.TemporalSoften(cc, radius=radius, luma_threshold=0, chroma_threshold=sft, scenechange=2, mode=2)
 
     expr = f"x y + {th_scaled} > {peak} 0 ?"
-    rainbow = core.akarin.Expr([uc, vc], expr) if hasattr(core, 'akarin') else core.std.Expr([uc, vc], expr)
+    rainbow = getattr(core, pick_tool(tools, 'expr', ('akarin', 'std'))).Expr([uc, vc], expr)
     rainbow = core.resize.Point(rainbow, width=c.width, height=c.height)
 
     for _ in range(3):

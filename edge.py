@@ -7,7 +7,7 @@ from helpers import scale, get_expr
 
 # Taken from old havsfunc
 # a.k.a. BalanceBordersMod
-def bbmod(c, cTop, cBottom, cLeft, cRight, thresh=128, blur=999):
+def bbmod(c, cTop, cBottom, cLeft, cRight, thresh=128, blur=999, tools=None):
     if not isinstance(c, vs.VideoNode):
         raise vs.Error('bbmod: this is not a clip')
 
@@ -35,7 +35,7 @@ def bbmod(c, cTop, cBottom, cLeft, cRight, thresh=128, blur=999):
 
         last = c2.std.CropAbs(width=cWidth * 2, height=2, top=cTop * 2)
         last = last.resize.Point(cWidth * 2, cTop * 2)
-        EXPR = get_expr()
+        EXPR = get_expr(tools)
         referenceBlurChroma = BicubicResize(BicubicResize(EXPR(last, expr=[f'x {neutral} - abs 2 *', '']), blurWidth * 2, cTop * 2), cWidth * 2, cTop * 2)
         referenceBlur = BicubicResize(BicubicResize(last, blurWidth * 2, cTop * 2), cWidth * 2, cTop * 2)
 

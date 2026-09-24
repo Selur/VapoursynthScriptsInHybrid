@@ -2,30 +2,29 @@ import vapoursynth as vs
 from vapoursynth import core
 from typing import List
 
-from helpers import Depth, GetPlane, NNEDI3, get_expr
+from helpers import Depth, GetPlane, NNEDI3, get_expr, pick_tool
 import masked
 
 
-def RainbowSmooth(clip, radius=3, lthresh=0, hthresh=220, mask="original"):
+def RainbowSmooth(clip, radius=3, lthresh=0, hthresh=220, mask="original", tools=None):
     if isinstance(mask, str):
         if mask == "original":
-            EXPR = get_expr()
+            EXPR = get_expr(tools)
             mask = EXPR(clips=[clip.std.Maximum(planes=0), clip.std.Minimum(planes=0)], expr=["x y - 90 > 255 x y - 255 90 / * ?", "", ""])
         elif mask == "prewitt":
-            PREWITT = core.edgemasks.ExPrewitt if hasattr(core,"edgemasks") else core.std.Prewitt
+            PREWITT = core.edgemasks.ExPrewitt if pick_tool(tools, 'edgemasks', ('edgemasks', 'std')) == 'edgemasks' else core.std.Prewitt
             mask = PREWITT(clip, planes=0)
         elif mask == "sobel":
-            SOBEL = core.edgemasks.Sobel if hasattr(core,"edgemasks") else core.std.Sobel
+            SOBEL = core.edgemasks.Sobel if pick_tool(tools, 'edgemasks', ('edgemasks', 'std')) == 'edgemasks' else core.std.Sobel
             mask = SOBEL(clip, planes=0)
         elif mask == "tcanny":
             mask = core.tcanny.TCanny(clip)
         elif mask == "fast_sobel":
-            mask = masked.fast_sobel(clip)
+            mask = masked.fast_sobel(clip, tools=tools)
         elif mask == "kirsch":
-            KIRSCH = core.edgemasks.Kirsch if hasattr(core,"edgemasks") else masked.kirsch
-            mask = KIRSCH(clip)
+            mask = core.edgemasks.Kirsch(clip) if pick_tool(tools, 'edgemasks', ('edgemasks', 'std')) == 'edgemasks' else masked.kirsch(clip, tools=tools)
         elif mask == "retinex_edgemask":
-            mask = Depth(masked.retinex_edgemask(clip), clip.format.bits_per_sample)
+            mask = Depth(masked.retinex_edgemask(clip, tools=tools), clip.format.bits_per_sample)
 
     lderain = clip
 
@@ -40,8 +39,8 @@ def RainbowSmooth(clip, radius=3, lthresh=0, hthresh=220, mask="original"):
     return lderain
 
 
-def derainbow(clip: vs.VideoNode) -> vs.VideoNode:
-    EXPR = get_expr()
+def derainbow(clip: vs.VideoNode, tools=None) -> vs.VideoNode:
+    EXPR = get_expr(tools)
 
     pre = clip[0] + clip[:-1]
     post = clip[1:] + clip[-1]
@@ -57,11 +56,11 @@ def derainbow(clip: vs.VideoNode) -> vs.VideoNode:
 
     rainbowmask = core.std.MaskedMerge(core.std.BlankClip(rainbowmask), rainbowmask, linemask)
 
-    derainbow = RainbowSmooth(clip, mask=rainbowmask, radius=4, lthresh=0, hthresh=90)
+    derainbow = RainbowSmooth(clip, mask=rainbowmask, radius=4, lthresh=0, hthresh=90, tools=tools)
 
-    nnedi3 = NNEDI3(derainbow, field=2, nsize=4, nns=0, planes=[1, 2])
+    nnedi3 = NNEDI3(derainbow, field=2, nsize=4, nns=0, planes=[1, 2], tools=tools)
 
-    nnedi3_c = core.artyfox.Mean([nnedi3[::2], nnedi3[1::2]]) if hasattr(core, "artyfox") else core.average.Mean([nnedi3[::2], nnedi3[1::2]])
+    nnedi3_c = core.artyfox.Mean([nnedi3[::2], nnedi3[1::2]]) if pick_tool(tools, 'average', ('artyfox', 'average')) == 'artyfox' else core.average.Mean([nnedi3[::2], nnedi3[1::2]])
 
     return core.std.ShufflePlanes([derainbow, nnedi3_c], [0, 1, 2], vs.YUV)
 

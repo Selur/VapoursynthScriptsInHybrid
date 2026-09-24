@@ -4,58 +4,50 @@
 import re
 import math
 import vapoursynth as vs
+from helpers import pick_tool, tool_function
 
 core = vs.core
 
 
-def temporal_median(clip, radius=1, planes=None):
+def temporal_median(clip, radius=1, planes=None, tools=None):
     # fallback plugin because zsmooth does not support non AVX2 CPUs
-    if hasattr(core, "zsmooth"):
-        return core.zsmooth.TemporalMedian(clip, radius=radius, planes=planes)
-    else:
-        return core.tmedian.TemporalMedian(clip, radius=radius, planes=planes)
+    return tool_function(tools, 'tmedian', 'TemporalMedian')(clip, radius=radius, planes=planes)
 
 
-def repair(clip, repairclip, mode=[1]):
+def repair(clip, repairclip, mode=[1], tools=None):
     # fallback plugin because zsmooth does not support non AVX2 CPUs
-    if hasattr(core, "zsmooth"):
-        return core.zsmooth.Repair(clip, repairclip, mode=mode)
-    else:
-        return core.rgvs.Repair(clip, repairclip, mode=mode)
+    return tool_function(tools, 'rg', 'Repair')(clip, repairclip, mode=mode)
 
 
-def median(clip, radius=1, planes=None):
+def median(clip, radius=1, planes=None, tools=None):
     # fallback plugin because zsmooth does not support non AVX2 CPUs
-    if hasattr(core, "zsmooth"):
+    usable = {'zsmooth': hasattr(core, 'zsmooth'), 'std': radius == 1, 'ctmf': True}
+    median = pick_tool(tools, 'median', ('zsmooth', 'std', 'ctmf'), usable.get)
+    if median == 'zsmooth':
         return core.zsmooth.Median(clip, radius=radius, planes=planes)
-    elif radius == 1:
+    elif median == 'std':
         return core.std.Median(clip, planes=planes)
     else:
         return core.ctmf.CTMF(clip, radius=radius, planes=planes)
 
 
-def basic_expr(clips, expr, format=None):
+def basic_expr(clips, expr, format=None, tools=None):
     # backend for basic exprs supported by std.Expr
-    if hasattr(core, "akarin"):
-        return core.akarin.Expr(clips, expr, format=format)
-    else:
-        return core.std.Expr(clips, expr, format=format)
+    return getattr(core, pick_tool(tools, 'expr', ('akarin', 'std'))).Expr(clips, expr, format=format)
 
 
-def advanced_expr(clips, expr, format=None):
-    # backend for advanced exprs not possible with std.Expr
+def advanced_expr(clips, expr, format=None, tools=None):
+    # backend for advanced exprs not possible with std.Expr; akarin is the only one, other tools['expr'] values warn
+    pick_tool(tools, 'expr', ('akarin',), lambda name: True)
     return core.akarin.Expr(clips, expr, format=format)
 
 
-def box_blur(clip, planes=None, hradius=1, hpasses=1, vradius=1, vpasses=1):
+def box_blur(clip, planes=None, hradius=1, hpasses=1, vradius=1, vpasses=1, tools=None):
     # optional plugin for slight speed boost
-    if hasattr(core, "vszip"):
-        return core.vszip.BoxBlur(clip, planes=planes, hradius=hradius, hpasses=hpasses, vradius=vradius, vpasses=vpasses)
-    else:
-        return core.std.BoxBlur(clip, planes=planes, hradius=hradius, hpasses=hpasses, vradius=vradius, vpasses=vpasses)
+    return tool_function(tools, 'boxblur', 'BoxBlur')(clip, planes=planes, hradius=hradius, hpasses=hpasses, vradius=vradius, vpasses=vpasses)
 
 
-def min_blur(clip, planes=[0, 1, 2]):
+def min_blur(clip, planes=[0, 1, 2], tools=None):
     # simplified function from G41Fun https://github.com/Vapoursynth-Plugins-Gitify/G41Fun
     # original avisynth function by Didée https://avisynth.nl/index.php/MinBlur
 
@@ -67,20 +59,20 @@ def min_blur(clip, planes=[0, 1, 2]):
     mat1 = [1, 2, 1, 2, 4, 2, 1, 2, 1]
     mat2 = [1, 1, 1, 1, 1, 1, 1, 1, 1]
     RG11 = core.std.Convolution(clip, matrix=mat1, planes=planes).std.Convolution(matrix=mat2, planes=planes)
-    RG4  = median(clip, radius=2, planes=planes)
+    RG4  = median(clip, radius=2, planes=planes, tools=tools)
     expr = "x y - x z - * 0 < x dup y - abs x z - abs < y z ? ?"
-    return basic_expr([clip, RG11, RG4], [expr if i in planes else "" for i in range(clip.format.num_planes)])
+    return basic_expr([clip, RG11, RG4], [expr if i in planes else "" for i in range(clip.format.num_planes)], tools=tools)
 
 
-def average_color_fix(clip, ref, radius=4, passes=4):
+def average_color_fix(clip, ref, radius=4, passes=4, tools=None):
     # simplified from https://github.com/pifroggi/vs_colorfix
-    blurred_reference = box_blur(ref, hradius=radius, hpasses=passes, vradius=radius, vpasses=passes)
-    blurred_clip = box_blur(clip, hradius=radius, hpasses=passes, vradius=radius, vpasses=passes)
+    blurred_reference = box_blur(ref, hradius=radius, hpasses=passes, vradius=radius, vpasses=passes, tools=tools)
+    blurred_clip = box_blur(clip, hradius=radius, hpasses=passes, vradius=radius, vpasses=passes, tools=tools)
     diff_clip = core.std.MakeDiff(blurred_reference, blurred_clip)
     return core.std.MergeDiff(clip, diff_clip)
 
 
-def average_color_fix_fast(clip, ref, downscale_factor=8):
+def average_color_fix_fast(clip, ref, downscale_factor=8, tools=None):
     # faster but faint blocky artifacts
     width  = int(clip.width  / downscale_factor) >> clip.format.subsampling_w << clip.format.subsampling_w
     height = int(clip.height / downscale_factor) >> clip.format.subsampling_h << clip.format.subsampling_h
@@ -91,15 +83,15 @@ def average_color_fix_fast(clip, ref, downscale_factor=8):
     return core.std.MergeDiff(clip, diff_clip)
 
 
-def frequency_merge(low, high, radius=40, passes=3):
+def frequency_merge(low, high, radius=40, passes=3, tools=None):
     # merges low freqs of one clip with high freqs of another clip
-    low_remaining  = box_blur(low,  hradius=radius, hpasses=passes, vradius=radius, vpasses=passes)
-    high_removed   = box_blur(high, hradius=radius, hpasses=passes, vradius=radius, vpasses=passes)
+    low_remaining  = box_blur(low,  hradius=radius, hpasses=passes, vradius=radius, vpasses=passes, tools=tools)
+    high_removed   = box_blur(high, hradius=radius, hpasses=passes, vradius=radius, vpasses=passes, tools=tools)
     high_remaining = core.std.MakeDiff(high, high_removed)
     return core.std.MergeDiff(low_remaining, high_remaining)
 
 
-def tweak_darks(src, strength=2.5, amp=0.2):
+def tweak_darks(src, strength=2.5, amp=0.2, tools=None):
     # simplified DitherLumaRebuild function that works on full range
     # DitherLumaRebuild function from G41Fun https://github.com/Vapoursynth-Plugins-Gitify/G41Fun
     # originally created by cretindesalpes https://forum.doom9.org/showthread.php?p=1548318
@@ -111,10 +103,10 @@ def tweak_darks(src, strength=2.5, amp=0.2):
     k = (strength - 1) * amp
     e = f"{k} {1 + amp} {(1 + amp) * amp} {t} {amp} + / - * {t} {1 - k} * + {1 << bd} *"
     expr = [e] + [""] * (src.format.num_planes - 1)
-    return basic_expr([src], expr)
+    return basic_expr([src], expr, tools=tools)
 
 
-def contrasharp(clip, src, rep=24, planes=[0, 1, 2]):
+def contrasharp(clip, src, rep=24, planes=[0, 1, 2], tools=None):
     # simplified function from G41Fun https://github.com/Vapoursynth-Plugins-Gitify/G41Fun
     # original avisynth function by Didée at the VERY GRAINY thread https://forum.doom9.org/showthread.php?p=1076491
 
@@ -129,13 +121,13 @@ def contrasharp(clip, src, rep=24, planes=[0, 1, 2]):
     mid  = 1 << (bd - 1)
     num  = clip.format.num_planes
 
-    s    = min_blur(clip, planes)  # damp down remaining spots of the denoised clip
+    s    = min_blur(clip, planes, tools=tools)  # damp down remaining spots of the denoised clip
     RG11 = core.std.Convolution(s, matrix=mat1, planes=planes).std.Convolution(matrix=mat2, planes=planes)
     ssD  = core.std.MakeDiff(s, RG11, planes)  # the difference of a simple kernel blur
     allD = core.std.MakeDiff(src, clip, planes)  # the difference achieved by the denoising
-    ssDD = repair(ssD, allD, [rep if i in planes else 0 for i in range(num)])  # limit the difference to the max of what the denoising removed locally
+    ssDD = repair(ssD, allD, [rep if i in planes else 0 for i in range(num)], tools=tools)  # limit the difference to the max of what the denoising removed locally
     expr = "x {} - abs y {} - abs < x y ?".format(mid, mid)  # abs(diff) after limiting may not be bigger than before
-    ssDD = basic_expr([ssDD, ssD], [expr if i in planes else "" for i in range(num)])
+    ssDD = basic_expr([ssDD, ssD], [expr if i in planes else "" for i in range(num)], tools=tools)
     return core.std.MergeDiff(clip, ssDD, planes)  # apply the limited difference (sharpening is just inverse blurring)
 
 
@@ -172,7 +164,7 @@ def exclude_regions(clip, replacement, exclude=None):
     return clip.vszip.RFS(replacement, frames=replace_frames)
 
 
-def lowfreq_denoise(low, high, motionmask, thsad=200, tr=6):
+def lowfreq_denoise(low, high, motionmask, thsad=200, tr=6, tools=None):
     # temporally denoise low frequencies only
 
     bs  = 8
@@ -185,7 +177,7 @@ def lowfreq_denoise(low, high, motionmask, thsad=200, tr=6):
     low_down   = core.resize.Bicubic(low,      width=width, height=height)
     motionmask = core.resize.Point(motionmask, width=width, height=height)
     motionmask = core.std.Maximum(motionmask)                  # expand mask
-    prefilter  = tweak_darks(low_down, strength=2.5, amp=0.2)  # brighten darks
+    prefilter  = tweak_darks(low_down, strength=2.5, amp=0.2, tools=tools)  # brighten darks
 
     # create superclips
     pref_sup = core.mvu.Super(prefilter, blksize=bs, overlap=bs // 2, pel=pel, sharp=1, rfilter=2)
@@ -198,7 +190,7 @@ def lowfreq_denoise(low, high, motionmask, thsad=200, tr=6):
     # merge
     low_degr = core.std.MaskedMerge(low_degr, low_down, motionmask)               # reduce blending/ghosting
     low_degr = core.resize.Bicubic(low_degr, width=low.width, height=low.height)  # resize back to original res
-    return frequency_merge(low_degr, high, 10, 3)                                 # merge low freqs with original high freqs
+    return frequency_merge(low_degr, high, 10, 3, tools=tools)                                 # merge low freqs with original high freqs
 
 
 def gen_shifts(clip, radius):

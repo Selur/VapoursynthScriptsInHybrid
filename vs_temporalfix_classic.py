@@ -10,7 +10,7 @@ from vs_temporalfix_utils import temporal_median, median, basic_expr, advanced_e
 core = vs.core
 
 
-def _motion_search_prefilter(clip, thsad=250, tr=6):
+def _motion_search_prefilter(clip, thsad=250, tr=6, tools=None):
     # creates a temporally extremely stable reference for better motion vector estimation, but with lots of ghosting
     # based on SpotLess function from G41Fun https://github.com/Vapoursynth-Plugins-Gitify/G41Fun
     # which was modified from lostfunc https://github.com/theChaosCoder/lostfunc/blob/v1/lostfunc.py#L10
@@ -25,7 +25,7 @@ def _motion_search_prefilter(clip, thsad=250, tr=6):
     bc1  = core.mvu.Compensate(clip, sup, bv1, thscd1=400, thscd2=51)
     fc1  = core.mvu.Compensate(clip, sup, fv1, thscd1=400, thscd2=51)
     fcb  = core.std.Interleave([fc1, clip, bc1])
-    clip = temporal_median(fcb, radius=1, planes=0)[1::3]
+    clip = temporal_median(fcb, radius=1, planes=0, tools=tools)[1::3]
 
     # second pass with degrain and a wide radius (improves pans, zooms and similar, reduces warping)
     bs  = 128  # large blocksize to reduce warping
@@ -36,7 +36,7 @@ def _motion_search_prefilter(clip, thsad=250, tr=6):
     return core.mvu.Degrain(clip, sup, vecs, thsad=[thsad, thsad], planes=[0])
 
 
-def _non_global_motion_mask(clip, downscale=320):
+def _non_global_motion_mask(clip, downscale=320, tools=None):
     # masks pixels that don't follow global motion and adds temporal smoothing
 
     # convert to faster format
@@ -50,15 +50,15 @@ def _non_global_motion_mask(clip, downscale=320):
     
     # make textures and their motion more detectable
     window = core.resize.Bicubic(window, width=(window.width / window.height) * downscale, height=downscale)  # downscale so that small spatial changes are not in the mask, only larger changes
-    blur   = box_blur(window, hradius=window.width // 55, vradius=window.width // 55, hpasses=3, vpasses=3)
-    window = basic_expr([window, blur], "y 0 <= 1 x y / 1 + ? log 0 max 1 min", format=vs.GRAYS)  # retinex approximation with box blur instead of gauss
+    blur   = box_blur(window, hradius=window.width // 55, vradius=window.width // 55, hpasses=3, vpasses=3, tools=tools)
+    window = basic_expr([window, blur], "y 0 <= 1 x y / 1 + ? log 0 max 1 min", format=vs.GRAYS, tools=tools)  # retinex approximation with box blur instead of gauss
     window = core.vszip.PlaneMinMax(window, minthr=0.011, maxthr=0.011, prop="temporalfix_")
-    window = advanced_expr(window, "x.temporalfix_Max x.temporalfix_Min - 0 <= x x x.temporalfix_Min - x.temporalfix_Max x.temporalfix_Min - / 255 * 0.5 + 0 255 clamp ?", format=vs.GRAY8)  # retinex like floor/ceil clipping
+    window = advanced_expr(window, "x.temporalfix_Max x.temporalfix_Min - 0 <= x x x.temporalfix_Min - x.temporalfix_Max x.temporalfix_Min - / 255 * 0.5 + 0 255 clamp ?", format=vs.GRAY8, tools=tools)  # retinex like floor/ceil clipping
     
     # create motionmask to protect large motions
     prev   = window[:1] + window[:-1]  # previous frame
     stats  = core.std.PlaneStats(window, prev, prop="temporalfix_")  # compare previous to current frame
-    window = advanced_expr([window, prev, stats], ["z.temporalfix_Diff 255 * 33 > 255 x y - abs 40 > 255 0 ? ?"])  # motionmask replacement, mask large changes and rudimentary scene change detection
+    window = advanced_expr([window, prev, stats], ["z.temporalfix_Diff 255 * 33 > 255 x y - abs 40 > 255 0 ? ?"], tools=tools)  # motionmask replacement, mask large changes and rudimentary scene change detection
     mask = core.std.SelectEvery(window, cycle=2, offsets=1)
 
     # further process motionmask
@@ -68,13 +68,13 @@ def _non_global_motion_mask(clip, downscale=320):
     m3 = mask[3:] + mask[-3:]  # shift - 3    frame as well, so that it is on both sides of the change. The following two 
     p1 = mask[:1] + mask[:-1]  # shift + 1    shifts backwards and forwards are used to fade in/out the mask to hide ghosting.
     p2 = mask[:2] + mask[:-2]  # shift + 2
-    mask = basic_expr([mask, m1, m2, m3, p1, p2], expr=["x y + z 0.75 * + a 0.5 * + b 0.75 * + c 0.5 * +"])
-    mask = median(mask, radius=1)  # median mask
+    mask = basic_expr([mask, m1, m2, m3, p1, p2], expr=["x y + z 0.75 * + a 0.5 * + b 0.75 * + c 0.5 * +"], tools=tools)
+    mask = median(mask, radius=1, tools=tools)  # median mask
     mask = core.resize.Point(mask, width=clip.width, height=clip.height)
-    return box_blur(mask, hradius=4, vradius=4, hpasses=2, vpasses=2)  # feather mask
+    return box_blur(mask, hradius=4, vradius=4, hpasses=2, vpasses=2, tools=tools)  # feather mask
 
 
-def classic(clip, strength=500, tr=6, denoise=False, exclude=None, debug=False):
+def classic(clip, strength=500, tr=6, denoise=False, exclude=None, debug=False, tools=None):
     """Add temporal coherence to single image AI upscaling models. Also known as temporal consistency, line wiggle fix, stabilization, deshimmering. 
     This is the original CPU based version. It can run on any CPU, but is harder to tune, may miss some areas, and only works well for 2D animation. Check the 
     tips at the bottom for important usage information!
@@ -163,7 +163,7 @@ def classic(clip, strength=500, tr=6, denoise=False, exclude=None, debug=False):
     ##### prefilter #####
     
     # mask things that do not follow global motion
-    motionmask = _non_global_motion_mask(ref, downscale=320)
+    motionmask = _non_global_motion_mask(ref, downscale=320, tools=tools)
     
     # resize clips if needed, convert to low bit depth for faster motion vector search
     if pel > 1:
@@ -175,10 +175,10 @@ def classic(clip, strength=500, tr=6, denoise=False, exclude=None, debug=False):
     
     # prefilter
     pref_ref = pref
-    pref = _motion_search_prefilter(pref, strength // 2, min(tr, 6))  # main prefilter step to help motion vector search
-    pref = average_color_fix_fast(pref, pref_ref, 32)                 # fix low freqs
+    pref = _motion_search_prefilter(pref, strength // 2, min(tr, 6), tools=tools)  # main prefilter step to help motion vector search
+    pref = average_color_fix_fast(pref, pref_ref, 32, tools=tools)                 # fix low freqs
     pref = core.std.MaskedMerge(pref, pref_ref, mm_pel)               # fix blending/ghosting
-    pref = tweak_darks(pref, strength=dark_str, amp=dark_amp)         # brighten darks
+    pref = tweak_darks(pref, strength=dark_str, amp=dark_amp, tools=tools)         # brighten darks
 
 
     ##### degrain #####
@@ -201,15 +201,15 @@ def classic(clip, strength=500, tr=6, denoise=False, exclude=None, debug=False):
     ##### recover details #####
 
     # colorfix to counter denoising sometimes changing local brightness
-    clip = average_color_fix(clip, ref, 4, 4)
+    clip = average_color_fix(clip, ref, 4, 4, tools=tools)
 
     # contrasharp to counter slight blur
-    clip = contrasharp(clip, ref, rep=24, planes=[0])
+    clip = contrasharp(clip, ref, rep=24, planes=[0], tools=tools)
 
     # mask to find areas where temporalfix may have removed some texture
     flatmask_post = core.std.ShufflePlanes(clip, 0, vs.GRAY) if clip.format.color_family != vs.GRAY else clip
     flatmask_post = core.edgemasks.Scharr(flatmask_post, scale=15.0)  # mask textures post temporalfix
-    flatmask_post = median(flatmask_post, radius=1)
+    flatmask_post = median(flatmask_post, radius=1, tools=tools)
     flatmask_post = core.std.Invert(flatmask_post)  # invert for flat areas instead
 
     # overlay original on top of flat areas as these areas may have had texture before, but don't do if denoise as this will bring back light grain
@@ -219,8 +219,8 @@ def classic(clip, strength=500, tr=6, denoise=False, exclude=None, debug=False):
     # mask flat areas with block matching artifacts/wrong motion and overlay original
     flatmask_pre  = core.std.ShufflePlanes(ref, 0, vs.GRAY) if clip.format.color_family != vs.GRAY else ref
     flatmask_pre  = core.edgemasks.Scharr(flatmask_pre, scale=15.0)  # mask textures pre temporalfix
-    flatmask_pre  = median(flatmask_pre, radius=1)
-    flatmask_diff = basic_expr([flatmask_post, flatmask_pre], expr=f"{peak} x y + {peak // 2} - 2 * -")  # compare masks to check if there is now more texture than before, which suggests artifacts, then only use part of mask were textures increased
+    flatmask_pre  = median(flatmask_pre, radius=1, tools=tools)
+    flatmask_diff = basic_expr([flatmask_post, flatmask_pre], expr=f"{peak} x y + {peak // 2} - 2 * -", tools=tools)  # compare masks to check if there is now more texture than before, which suggests artifacts, then only use part of mask were textures increased
     clip = core.std.MaskedMerge(clip, ref, flatmask_diff, planes=0)  # use mask to overlay original
 
     # overlay original in areas with large motion to fix blending/ghosting/warping
@@ -229,7 +229,7 @@ def classic(clip, strength=500, tr=6, denoise=False, exclude=None, debug=False):
 
     # denoise low frequencies
     if denoise:
-        clip = lowfreq_denoise(ref, clip, motionmask, strength // 2, min(tr, 6))
+        clip = lowfreq_denoise(ref, clip, motionmask, strength // 2, min(tr, 6), tools=tools)
 
     # overlay debug output
     if debug:

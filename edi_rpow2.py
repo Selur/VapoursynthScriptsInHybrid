@@ -84,9 +84,9 @@ def correct_edi_shift(clip, rfactor, plugin):
 def nnedi3_rpow2(clip, rfactor, correct_shift="fmtconv",
                  nsize=0, nns=3, qual=None, etype=None,
                  pscrn=None, opt=None,
-                 int16_prescreener=None, int16_predictor=None, exp=None, device=None):
+                 int16_prescreener=None, int16_predictor=None, exp=None, device=None, tools=None):
     """
-    Scales using nnedi3 or znedi3 if available.
+    Scales using nnedi3 or znedi3 if available; tools['nnedi3'] picks the implementation.
     """
 
     def edi_func(c, field, dh):
@@ -94,14 +94,14 @@ def nnedi3_rpow2(clip, rfactor, correct_shift="fmtconv",
             c, field=field, dh=dh, gpu=False, device=device, nsize=nsize, nns=nns,
             qual=qual, etype=etype, pscrn=pscrn, opt=opt,
             int16_prescreener=int16_prescreener,
-            int16_predictor=int16_predictor, exp=exp
+            int16_predictor=int16_predictor, exp=exp, tools=tools
         )
 
     return edi_rpow2(clip, rfactor, correct_shift, edi_func)
 
 
 def nnedi3cl_rpow2(clip, rfactor, correct_shift="fmtconv",
-                   nsize=0, nns=3, qual=None, etype=None, pscrn=None, device=None):
+                   nsize=0, nns=3, qual=None, etype=None, pscrn=None, device=None, tools=None):
     """
     Kept for callers that ask for the GPU variant by name. Which implementation actually runs is
     decided by NNEDI3() from whatever is loaded; this only says that a GPU one is preferred.
@@ -111,7 +111,7 @@ def nnedi3cl_rpow2(clip, rfactor, correct_shift="fmtconv",
         return NNEDI3(
             c, field=field, dh=dh, gpu=True, device=device,
             nsize=nsize, nns=nns, qual=qual,
-            etype=etype, pscrn=pscrn
+            etype=etype, pscrn=pscrn, tools=tools
         )
 
     return edi_rpow2(clip, rfactor, correct_shift, edi_func)

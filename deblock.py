@@ -5,10 +5,11 @@ from typing import Optional, List
 import math
 from functools import partial
 
-from helpers import DFTTest, get_expr, get_rg
+from helpers import DFTTest, get_expr, get_rg, pick_tool, tool_function
 
 def Deblock_QED(
-    clp: vs.VideoNode, quant1: int = 24, quant2: int = 26, aOff1: int = 1, bOff1: int = 2, aOff2: int = 1, bOff2: int = 2, uv: int = 3
+    clp: vs.VideoNode, quant1: int = 24, quant2: int = 26, aOff1: int = 1, bOff1: int = 2, aOff2: int = 1, bOff2: int = 2, uv: int = 3,
+    tools=None
 ) -> vs.VideoNode:
     '''
     A postprocessed Deblock: Uses full frequencies of Deblock's changes on block borders, but DCT-lowpassed changes on block interiours.
@@ -76,7 +77,7 @@ def Deblock_QED(
 
     # separate border values of the difference maps, and set the interiours to '128'
     expr = f'y {peak} = x {neutral} ?'
-    EXPR = get_expr()
+    EXPR = get_expr(tools)
     normalD2 = EXPR([normalD, block], expr=expr if uv > 2 or is_gray else [expr, ''])
     strongD2 = EXPR([strongD, block], expr=expr if uv > 2 or is_gray else [expr, ''])
 
@@ -90,7 +91,7 @@ def Deblock_QED(
     if remX or remY:
         strongD2 = strongD2.resize.Point(sw + remX, sh + remY, src_width=sw + remX, src_height=sh + remY)
     expr = f'x {neutral} - 1.01 * {neutral} +'
-    DCTFILTER = core.oxidctf.DCTFilter if hasattr(core,'oxidctf') else core.zsmooth.DCTFilter if hasattr(core,'zsmooth') else core.dctf.DCTFilter
+    DCTFILTER = tool_function(tools, 'dctfilter', 'DCTFilter')
     ex = EXPR(strongD2, expr=expr if uv > 2 or is_gray else [expr, ''])
     strongD3 = DCTFILTER(ex, factors=[1, 1, 0, 0, 0, 0, 0, 0], planes=planes).std.Crop(right=remX, bottom=remY)
 
@@ -121,7 +122,8 @@ Supports 8..16 bit integer YUV formats
 
 Adjusted by Selur to use faster libraries for speed
 """
-def AutoDeblock(src: vs.VideoNode, edgevalue: int = 24, db1: int = 1, db2: int = 6, db3: int = 15, deblocky: bool = True, deblockuv: bool = True, debug: bool = False, redfix: bool = False, fastdeblock: bool = False, adb1: int = 3, adb2: int = 4, adb3: int = 8, adb1d: int = 2, adb2d: int = 7, adb3d: int = 11, planes: Optional[List[int]] = None) -> vs.VideoNode:
+def AutoDeblock(src: vs.VideoNode, edgevalue: int = 24, db1: int = 1, db2: int = 6, db3: int = 15, deblocky: bool = True, deblockuv: bool = True, debug: bool = False, redfix: bool = False, fastdeblock: bool = False, adb1: int = 3, adb2: int = 4, adb3: int = 8, adb1d: int = 2, adb2d: int = 7, adb3d: int = 11, planes: Optional[List[int]] = None,
+                tools=None) -> vs.VideoNode:
     """
     Automatically deblocks a YUV clip using adaptive thresholds and optional red-area correction.
 
@@ -199,13 +201,13 @@ def AutoDeblock(src: vs.VideoNode, edgevalue: int = 24, db1: int = 1, db2: int =
         if deblocky: planes.append(0)
         if deblockuv: planes.extend([1, 2])
 
-    PREWITT = core.edgemasks.ExPrewitt if hasattr(core,"edgemasks") else core.std.Prewitt
+    PREWITT = core.edgemasks.ExPrewitt if pick_tool(tools, 'edgemasks', ('edgemasks', 'std')) == 'edgemasks' else core.std.Prewitt
     orig = PREWITT(src)
-    EXPR = get_expr()
+    EXPR = get_expr(tools)
     orig = EXPR(orig, f"x {edgevalue} >= {maxvalue} x ?")
 
     isFLOAT = src.format.sample_type == vs.FLOAT
-    RG = get_rg(is_float=isFLOAT)
+    RG = get_rg(is_float=isFLOAT, tools=tools)
 
     orig_d = RG(orig, 4)
     orig_d = RG(orig_d, 4)
@@ -213,12 +215,12 @@ def AutoDeblock(src: vs.VideoNode, edgevalue: int = 24, db1: int = 1, db2: int =
     src_d = RG(src_d, 2)
 
     unfiltered = src
-    predeblock = Deblock_QED(src_d)
+    predeblock = Deblock_QED(src_d, tools=tools)
 
-    fast = DFTTest(predeblock, tbsize=1)
-    weakdeblock = DFTTest(predeblock, sigma=db1, tbsize=1, planes=planes)
-    mediumdeblock = DFTTest(predeblock, sigma=db2, tbsize=1, planes=planes)
-    strongdeblock = DFTTest(predeblock, sigma=db3, tbsize=1, planes=planes)
+    fast = DFTTest(predeblock, tbsize=1, tools=tools)
+    weakdeblock = DFTTest(predeblock, sigma=db1, tbsize=1, planes=planes, tools=tools)
+    mediumdeblock = DFTTest(predeblock, sigma=db2, tbsize=1, planes=planes, tools=tools)
+    strongdeblock = DFTTest(predeblock, sigma=db3, tbsize=1, planes=planes, tools=tools)
 
     difforig = core.std.PlaneStats(orig, orig_d, prop='Orig')
     diffnext = core.std.PlaneStats(src, src.std.DeleteFrames([0]), prop='YNext')

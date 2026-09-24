@@ -6,7 +6,7 @@
 
 import vapoursynth as vs
 import warnings
-from helpers import get_expr
+from helpers import get_expr, tool_function
 
 core = vs.core
 
@@ -104,7 +104,7 @@ def wavelet(clip, ref, wavelets=5, planes=None, device="cuda"):
     return core.std.ModifyFrame(clip=clip, clips=[ref, clip], selector=wavelet_color_fix)
 
 
-def average(clip, ref, radius=10, planes=None, fast=False):
+def average(clip, ref, radius=10, planes=None, fast=False, tools=None):
     num_planes = clip.format.num_planes
     if clip.format.id != ref.format.id:
         raise ValueError("vs_colorfix: Clip and ref must have the same format. 16 bit input is recommended to avoid banding.")
@@ -117,7 +117,7 @@ def average(clip, ref, radius=10, planes=None, fast=False):
         planes = [planes]
     if num_planes == 1:
         planes = [0]
-    BOXBLUR = core.vszip.BoxBlur if hasattr(core,"vszip") else core.std.BoxBlur
+    BOXBLUR = tool_function(tools, 'boxblur', 'BoxBlur')
 
     # downscale both clips, calculate difference (faster but faint blocky artifacts)
     if fast:

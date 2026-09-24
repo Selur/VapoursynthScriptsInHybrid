@@ -5,15 +5,14 @@ from vapoursynth import core
 import math
 
 from typing import Sequence, Union, Optional
-from helpers import scale_value, cround, m4, DitherLumaRebuild, KNLMeansCL, NLMeans, DFTTest, get_expr, get_rg
-from misc import MV, MinBlur
+from helpers import scale_value, cround, m4, DitherLumaRebuild, KNLMeansCL, NLMeans, DFTTest, get_expr, get_rg, pick_tool, tool_function
+from misc import get_mv, MinBlur
 from color import LimitFilter
 from sharpen import ContraSharpening
 
-def _boxblur_fn():
-    """Pick the best available BoxBlur."""
-    if hasattr(core, 'vszip'): return core.vszip.BoxBlur
-    return core.std.BoxBlur
+def _boxblur_fn(tools=None):
+    """Pick the BoxBlur: tools['boxblur'], else vszip, else std."""
+    return tool_function(tools, 'boxblur', 'BoxBlur')
     
 
 def STPresso(
@@ -27,6 +26,7 @@ def STPresso(
     tbias: int = 49,
     back: int = 1,
     planes: Optional[Union[int, Sequence[int]]] = None,
+    tools=None,
 ) -> vs.VideoNode:
     """
     Dampen the grain just a little, to keep the original look.
@@ -61,6 +61,7 @@ def STPresso(
         planes = [planes]
 
     bits = clp.format.bits_per_sample
+    isFLOAT = clp.format.sample_type == vs.FLOAT
     limit = scale_value(limit, 8, bits)
     tthr = scale_value(tthr, 8, bits)
     tlimit = scale_value(tlimit, 8, bits)
@@ -82,7 +83,7 @@ def STPresso(
         bzz = RGmode
     else:
         if RGmode == 4:
-          if hasattr(core,'zsmooth'):
+          if pick_tool(tools, 'median', ('zsmooth', 'std')) == 'zsmooth':
             bzz = clp.zsmooth.Median(planes=planes)
           else:
             bzz = clp.std.Median(planes=planes)
@@ -93,14 +94,15 @@ def STPresso(
         elif RGmode == 20:
             bzz = clp.std.Convolution(matrix=[1, 1, 1, 1, 1, 1, 1, 1, 1], planes=planes)
         else:
-            RG = get_rg(is_float=isFLOAT)
+            RG = get_rg(is_float=isFLOAT, tools=tools)
             bzz = RG(clp, mode=RGmode)
-    EXPR = get_expr()
+    EXPR = get_expr(tools)
     last = EXPR([clp, bzz], expr=[expr if i in planes else '' for i in plane_range])
 
     if tthr > 0:
         analyse_args = dict(truemotion=False, delta=1, blksize=16, overlap=8)
 
+        MV = get_mv(tools)
         mvSuper = MV.Super(bzz, sharp=1, blksize=16, overlap=8)
         bv1 = MV.Analyse(mvSuper, isb=True, **analyse_args)
         fv1 = MV.Analyse(mvSuper, isb=False, **analyse_args)
@@ -108,7 +110,7 @@ def STPresso(
         fc1 = MV.Compensate(bzz, mvSuper, fv1)
 
         interleave = core.std.Interleave([fc1, bzz, bc1])
-        FX = core.zsmooth.FluxSmoothT if hasattr(core,'zsmooth') else core.flux.SmoothT
+        FX = tool_function(tools, 'fluxsmooth', 'FluxSmoothT')
         smooth = FX(interleave, temporal_threshold=tthr, planes=planes)
         smooth = smooth.std.SelectEvery(cycle=3, offsets=1)
 
@@ -192,6 +194,7 @@ def TemporalDegrain(          \
     , thrDegrain1   = 400     \
     , thrDegrain2   = 300     \
     , HQ            = 1       \
+    , tools         = None    \
 ) :
 
     if int(degrain) != degrain or degrain < 1 or degrain > 3:
@@ -223,7 +226,7 @@ def TemporalDegrain(          \
 
     # Taking care of a missing denoising clip and use of fft3d to determine it
     if denoiseClip is None:
-        if hasattr(core, 'neo_fft3d'):
+        if pick_tool(tools, 'fft3d', ('neo_fft3d', 'fft3dfilter')) == 'neo_fft3d':
           denoiseClip = inpClip.neo_fft3d.FFT3D(sigma=sigma\
               , sigma2=sigma2, sigma3=sigma3, sigma4=sigma4, bw=blockWidth\
               , bh=blockHeight, ow=overlapWidth, oh=overlapHeight)
@@ -245,6 +248,7 @@ def TemporalDegrain(          \
 
     # Motion vector search (With very basic parameters. Add your own parameters
     # as needed.)
+    MV = get_mv(tools)
     srchSuper = MV.Super(filterClip, pel=pel, blksize=blockSize, overlap=overlapValue)
 
     if degrain == 3:
@@ -279,7 +283,7 @@ def TemporalDegrain(          \
     nr1Diff = core.std.MakeDiff(inpClip, nr1)
 
     # Limit NR1 to not do more than what "spat" would do.
-    EXPR = get_expr()
+    EXPR = get_expr(tools)
     dd = EXPR([spatD, nr1Diff], expr=[f'x {neutral} - abs y {neutral} - abs < x y ?'])
     nr1X = core.std.MakeDiff(inpClip, dd, planes=0)
 
@@ -304,9 +308,9 @@ def TemporalDegrain(          \
     # what was removed previously.
     # Here: A simple area-based version with relaxed restriction. The full
     # version is more complicated.
-    return ContraSharpening(nr2, inpClip)
+    return ContraSharpening(nr2, inpClip, tools=tools)
 
-def MLDegrain(clip, scale1=1.5, scale2=2, thSAD=400, tr=3, rec=False, chroma=True, soft=[0]*3):
+def MLDegrain(clip, scale1=1.5, scale2=2, thSAD=400, tr=3, rec=False, chroma=True, soft=[0]*3, tools=None):
     """
     Multi-Level MDegrain
     Multi level in the sense of using multiple scalings.
@@ -345,18 +349,18 @@ def MLDegrain(clip, scale1=1.5, scale2=2, thSAD=400, tr=3, rec=False, chroma=Tru
     sm2 = sm1.resize.Bicubic(w2, h2)  # small scale
     D12 = core.std.MakeDiff(sm2.resize.Bicubic(w1, h1), sm1) # residual of (small)<>(medium)
     D10 = core.std.MakeDiff(sm1.resize.Bicubic(w, h), clip)  # residual of (medium)<>(original)
-    lev2 = MLD_helper(sm2, sm2, tr, thSAD, rec, chroma, soft[0]) # Filter on smalle scale
+    lev2 = MLD_helper(sm2, sm2, tr, thSAD, rec, chroma, soft[0], tools=tools) # Filter on smalle scale
     up1 = lev2.resize.Bicubic(w1, h1)
     up2 = up1.resize.Bicubic(w, h)
-    M1 = MLD_helper(D12, up1, tr, thSAD, rec, chroma, soft[1])   # Filter on medium scale
+    M1 = MLD_helper(D12, up1, tr, thSAD, rec, chroma, soft[1], tools=tools)   # Filter on medium scale
     lev1 = core.std.MakeDiff(up1, M1)
     up3 = lev1.resize.Bicubic(w, h)
-    M2 = MLD_helper(D10, up2, tr, thSAD, rec, chroma, soft[2])   # Filter on original scale
+    M2 = MLD_helper(D10, up2, tr, thSAD, rec, chroma, soft[2], tools=tools)   # Filter on original scale
 
     return core.std.MakeDiff(up3, M2)
 
 
-def MLD_helper(clip, srch, tr, thSAD, rec, chroma, soft):
+def MLD_helper(clip, srch, tr, thSAD, rec, chroma, soft, tools=None):
     """ Helper function used in Multi-Level MDegrain"""
 
     if not isinstance(clip, vs.VideoNode) or clip.format.color_family not in [vs.GRAY, vs.YUV]:
@@ -364,6 +368,7 @@ def MLD_helper(clip, srch, tr, thSAD, rec, chroma, soft):
     
     isFLOAT = clip.format.sample_type == vs.FLOAT
     isGRAY = clip.format.color_family == vs.GRAY
+    MV = get_mv(tools)
     S = MV.Super
     bs = 32 if clip.width > 2400 else 16 if clip.width > 960 else 8
     pel = 1 if clip.width > 960 else 2
@@ -374,7 +379,7 @@ def MLD_helper(clip, srch, tr, thSAD, rec, chroma, soft):
 
     analyse_args = dict(blksize=bs, overlap=bs//2, search=5, chroma=chroma, truemotion=truemotion)
     recalculate_args = dict(blksize=bs//2, overlap=bs//4, search=5, chroma=chroma, truemotion=truemotion)
-    sup1 = S(DitherLumaRebuild(srch, 1), hpad=bs, vpad=bs, pel=pel, sharp=1, rfilter=4,blksize=bs, overlap=bs//2)
+    sup1 = S(DitherLumaRebuild(srch, 1, tools=tools), hpad=bs, vpad=bs, pel=pel, sharp=1, rfilter=4,blksize=bs, overlap=bs//2)
 
     if soft > 0:
         if clip.width > 1280:
@@ -382,9 +387,9 @@ def MLD_helper(clip, srch, tr, thSAD, rec, chroma, soft):
         elif clip.width > 640:
             RG = core.std.Convolution(clip, matrix=[1, 2, 1, 2, 4, 2, 1, 2, 1], planes=planes)
         else:
-            RG = MinBlur(clip, 1, planes)
+            RG = MinBlur(clip, 1, planes, tools=tools)
         RG = core.std.Merge(clip, RG, [soft] if chroma or isGRAY else [soft, 0]) if soft < 1 else RG
-        EXPR = get_expr()
+        EXPR = get_expr(tools)
         sup2 = S(EXPR([clip, RG], ['x dup y - +'] if chroma or isGRAY else ['x dup y - +', '']), hpad=bs, vpad=bs, pel=pel, levels=1, rfilter=1, blksize=bs, overlap=bs//2)
     else:
         RG = clip
@@ -401,7 +406,8 @@ def MLD_helper(clip, srch, tr, thSAD, rec, chroma, soft):
 
 def TemporalDegrain2(clip, degrainTR=1, degrainPlane=4, grainLevel=2, grainLevelSetup=False, meAlg=4, meAlgPar=None, meSubpel=None, meBlksz=None, meTM=False,
     limitSigma=None, limitBlksz=None, fftThreads=None, postFFT=0, postTR=1, postSigma=1, postMix=0, postBlkSize=None, knlDevId=0, ppSAD1=None, ppSAD2=None, 
-    ppSCD1=None, thSCD2=128, DCT=0, SubPelInterp=2, SrchClipPP=None, GlobalMotion=True, ChromaMotion=True, rec=False, extraSharp=False, outputStage=2, neo=True):
+    ppSCD1=None, thSCD2=128, DCT=0, SubPelInterp=2, SrchClipPP=None, GlobalMotion=True, ChromaMotion=True, rec=False, extraSharp=False, outputStage=2, neo=True,
+    tools=None):
     """
     Temporal Degrain Updated by ErazorTT                               
                                                                           
@@ -502,10 +508,11 @@ def TemporalDegrain2(clip, degrainTR=1, degrainPlane=4, grainLevel=2, grainLevel
     # Seems to be used for some kind of bit depth scaling...
     bitDepthMultiplier = 0.00392 if isFLOAT else 1 << (bd - 8)
     mid = 0.5 if isFLOAT else 1 << (bd - 1)
+    MV = get_mv(tools)
     S = MV.Super
     C = MV.Compensate
-    
-    RG = get_rg(is_float=isFLOAT)
+
+    RG = get_rg(is_float=isFLOAT, tools=tools)
 
     if meAlgPar is None:
         # radius/range parameter for the motion estimation algorithms
@@ -609,16 +616,16 @@ def TemporalDegrain2(clip, degrainTR=1, degrainPlane=4, grainLevel=2, grainLevel
     
     if maxTR > 3 and not isFLOAT:
         raise ValueError("TemporalDegrain2: maxTR > 3 requires input of float sample type")
-    
-    EXPR = get_expr()
+
+    EXPR = get_expr(tools)
     
     if SrchClipPP == 1:
         spatialBlur = core.resize.Bilinear(clip, m4(w/2), m4(h/2)).std.Convolution(matrix=mat, planes=CMplanes).resize.Bilinear(w, h)
     elif SrchClipPP > 1:
-        if hasattr(core,'tcanny'):
+        if pick_tool(tools, 'tcanny', ('tcanny', 'std')) == 'tcanny':
           spatialBlur = core.tcanny.TCanny(clip, sigma=2, mode=-1, planes=CMplanes)
         else:
-          spatialBlur = _boxblur_fn()(clip, planes=CMplanes, hradius=2, hpasses=3, vradius=2, vpasses=3)
+          spatialBlur = _boxblur_fn(tools)(clip, planes=CMplanes, hradius=2, hpasses=3, vradius=2, vpasses=3)
         spatialBlur = core.std.Merge(spatialBlur, clip, [0.1] if ChromaMotion or isGRAY else [0.1, 0])
     else:
         spatialBlur = clip
@@ -632,7 +639,7 @@ def TemporalDegrain2(clip, degrainTR=1, degrainPlane=4, grainLevel=2, grainLevel
     analyse_args = dict(blksize=meBlksz, overlap=Overlap, search=meAlg, searchparam=meAlgPar, pelsearch=meSubpel, truemotion=meTM, lambda_=Lambda, pnew=PNew, global_=GlobalMotion, dct=DCT, chroma=ChromaMotion)
     recalculate_args = dict(thsad=thSAD1 // 2, blksize=max(meBlksz // 2, 4), overlap=max(Overlap // 2, 2), search=meAlg, searchparam=meAlgPar, truemotion=meTM, lambda_=Lambda/4, pnew=PNew, dct=DCT, chroma=ChromaMotion)
 
-    lumaRebuild = DitherLumaRebuild(srchClip, s0=1, chroma=ChromaMotion)
+    lumaRebuild = DitherLumaRebuild(srchClip, s0=1, chroma=ChromaMotion, tools=tools)
 
     srchSuper = S(lumaRebuild, rfilter=4, **super_args)
     recSuper = S(lumaRebuild, levels=1, **super_args)
@@ -656,7 +663,7 @@ def TemporalDegrain2(clip, degrainTR=1, degrainPlane=4, grainLevel=2, grainLevel
         ovNum = [4, 4, 4, 3, 2, 2][grainLevel]
         ov = 2 * round(limitBlksz / ovNum * 0.5)
 
-        if neo and hasattr(core, 'neo_fft3d'):
+        if neo and pick_tool(tools, 'fft3d', ('neo_fft3d', 'fft3dfilter')) == 'neo_fft3d':
           spat = core.neo_fft3d.FFT3D(clip, planes=fPlane, sigma=limitSigma, sigma2=s2, sigma3=s3, sigma4=s4, bt=3, bw=limitBlksz, bh=limitBlksz, ow=ov, oh=ov, ncpu=fftThreads)
         else:
           spat = core.fft3dfilter.FFT3DFilter(clip, planes=fPlane, sigma=limitSigma, sigma2=s2, sigma3=s3, sigma4=s4, bt=3, bw=limitBlksz, bh=limitBlksz, ow=ov, oh=ov, ncpu=fftThreads)
@@ -700,14 +707,14 @@ def TemporalDegrain2(clip, degrainTR=1, degrainPlane=4, grainLevel=2, grainLevel
     
     if postFFT == 3:
         # The GPU implementations only cover sbsize == 16; DFTTest() falls back on its own.
-        dnWindow = DFTTest(noiseWindow, sigma=postSigma*4, tbsize=postTD, planes=fPlane, sbsize=postBlkSize, sosize=int(postBlkSize*9/12))
+        dnWindow = DFTTest(noiseWindow, sigma=postSigma*4, tbsize=postTD, planes=fPlane, sbsize=postBlkSize, sosize=int(postBlkSize*9/12), tools=tools)
     elif postFFT == 4:
       if ChromaNoise:
-        dnWindow = KNLMeansCL(noiseWindow, d=postTR, a=2, h=postSigma/2, device_id=knlDevId)
+        dnWindow = KNLMeansCL(noiseWindow, d=postTR, a=2, h=postSigma/2, device_id=knlDevId, tools=tools)
       else:
-        dnWindow = NLMeans(noiseWindow, d=postTR, a=2, h=postSigma/2, device_id=knlDevId)
+        dnWindow = NLMeans(noiseWindow, d=postTR, a=2, h=postSigma/2, device_id=knlDevId, tools=tools)
     elif postFFT > 0:
-        if postFFT == 1 and hasattr(core, 'neo_fft3d'):
+        if postFFT == 1 and pick_tool(tools, 'fft3d', ('neo_fft3d', 'fft3dfilter')) == 'neo_fft3d':
           dnWindow = core.neo_fft3d.FFT3D(noiseWindow, sigma=postSigma, planes=fPlane, bt=postTD, ncpu=fftThreads, bw=postBlkSize, bh=postBlkSize)
         else:
           dnWindow = core.fft3dfilter.FFT3DFilter(noiseWindow, sigma=postSigma, planes=fPlane, bt=postTD, ncpu=fftThreads, bw=postBlkSize, bh=postBlkSize)
@@ -717,7 +724,7 @@ def TemporalDegrain2(clip, degrainTR=1, degrainPlane=4, grainLevel=2, grainLevel
     if postTR > 0:
         dnWindow = dnWindow[postTR::postTD]
 
-    sharpened = ContraSharpening(dnWindow, clip, rad)
+    sharpened = ContraSharpening(dnWindow, clip, rad, tools=tools)
 
     if postMix > 0:
         sharpened = EXPR([clip,sharpened],f"x {postMix} * y {100-postMix} * + 100 /")
@@ -731,18 +738,18 @@ def TemporalDegrain2(clip, degrainTR=1, degrainPlane=4, grainLevel=2, grainLevel
 """ From https://gist.github.com/4re/b5399b1801072458fc80#file-mcdegrainsharp-py 
 """
 
-def _sharpen(clip, strength, planes):
+def _sharpen(clip, strength, planes, tools=None):
     core = vs.core
-    if hasattr(core,'tcanny'):
+    if pick_tool(tools, 'tcanny', ('tcanny', 'std')) == 'tcanny':
       blur = core.tcanny.TCanny(clip, sigma=strength, mode=-1, planes=planes)
     else:
       radius = max(1, round(strength * 1.5))
-      blur = _boxblur_fn()(clip, planes=planes, hradius=radius, hpasses=3, vradius=radius, vpasses=3)
-    EXPR = get_expr()
+      blur = _boxblur_fn(tools)(clip, planes=planes, hradius=radius, hpasses=3, vradius=radius, vpasses=3)
+    EXPR = get_expr(tools)
     return EXPR([clip, blur], "x x + y -")
 
 
-def mcdegrainsharp(clip, frames=2, bblur=0.3, csharp=0.3, bsrch=True, thsad=400, plane=4):
+def mcdegrainsharp(clip, frames=2, bblur=0.3, csharp=0.3, bsrch=True, thsad=400, plane=4, tools=None):
     """Based on MCDegrain By Didee:
     http://forum.doom9.org/showthread.php?t=161594
     Also based on DiDee observations in this thread:
@@ -786,18 +793,19 @@ def mcdegrainsharp(clip, frames=2, bblur=0.3, csharp=0.3, bsrch=True, thsad=400,
     else:
         planes = plane
 
-    if hasattr(core, 'tcanny'):
+    if pick_tool(tools, 'tcanny', ('tcanny', 'std')) == 'tcanny':
         c2 = core.tcanny.TCanny(clip, sigma=bblur, mode=-1, planes=planes)
     else:
         radius = max(1, round(bblur * 1.5))
-        c2 = _boxblur_fn()(clip, planes=planes, hradius=radius, hpasses=3, vradius=radius, vpasses=3)
+        c2 = _boxblur_fn(tools)(clip, planes=planes, hradius=radius, hpasses=3, vradius=radius, vpasses=3)
 
+    MV = get_mv(tools)
     if bsrch is True:
         super_a = MV.Super(c2, pel=2, sharp=1, overlap=blksize//2, blksize=blksize)
     else:
         super_a = MV.Super(clip, pel=2, sharp=1, overlap=blksize//2, blksize=blksize)
 
-    super_rend = MV.Super(_sharpen(clip, csharp, planes=planes), pel=2, sharp=1, levels=1, overlap=blksize//2, blksize=blksize)
+    super_rend = MV.Super(_sharpen(clip, csharp, planes=planes, tools=tools), pel=2, sharp=1, levels=1, overlap=blksize//2, blksize=blksize)
 
     # Motion analysis
     if hasattr(MV, "AnalyseMany"):

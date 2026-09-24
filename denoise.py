@@ -5,9 +5,9 @@ import math
 
 from typing import Optional, Union, Sequence
 
-from helpers import GetPlane, scale_value, scale, cround, DitherLumaRebuild, KNLMeansCL, DFTTest, get_expr, get_rg
+from helpers import GetPlane, scale_value, scale, cround, DitherLumaRebuild, KNLMeansCL, DFTTest, BoxFilter, get_expr, get_rg, pick_tool, tool_function
 
-from misc import MV, MinBlur, SCDetect, mt_expand_multi
+from misc import get_mv, MinBlur, SCDetect, mt_expand_multi
         
 ####################################################################################################################################
 ###                                                                                                                              ###
@@ -200,7 +200,7 @@ from misc import MV, MinBlur, SCDetect, mt_expand_multi
 def MCTemporalDenoise(i, radius=None, pfMode=3, sigma=None, twopass=None, useTTmpSm=False, limit=None, limit2=None, post=0, chroma=None, refine=False, deblock=False, useQED=None, quant1=None,
                       quant2=None, edgeclean=False, ECrad=None, ECthr=None, stabilize=None, maxr=None, TTstr=None, bwbh=None, owoh=None, blksize=None, overlap=None, bt=None, ncpu=1, thSAD=None,
                       thSADC=None, thSAD2=None, thSADC2=None, thSCD1=None, thSCD2=None, truemotion=False, MVglobal=True, pel=None, pelsearch=None, search=4, searchparam=2, MVsharp=None, DCT=0, p=None,
-                      settings='low', cuda=False):
+                      settings='low', cuda=False, tools=None):
     # cuda: True looks for a GPU DFTTest implementation (vszipcu, then dfttest2), False stays on CPU.
     if not isinstance(i, vs.VideoNode):
         raise vs.Error('MCTemporalDenoise: this is not a clip')
@@ -306,18 +306,18 @@ def MCTemporalDenoise(i, radius=None, pfMode=3, sigma=None, twopass=None, useTTm
     elif pfMode <= -1:
         p = i
     elif pfMode == 0:
-        if hasattr(core, 'neo_fft3d'):
+        if pick_tool(tools, 'fft3d', ('neo_fft3d', 'fft3dfilter')) == 'neo_fft3d':
             p = i.neo_fft3d.FFT3D(sigma=sigma * 0.8, sigma2=sigma * 0.6, sigma3=sigma * 0.4, sigma4=sigma * 0.2, **fft3d_args)
         else:                              
             p = i.fft3dfilter.FFT3DFilter(sigma=sigma * 0.8, sigma2=sigma * 0.6, sigma3=sigma * 0.4, sigma4=sigma * 0.2, **fft3d_args)
     elif pfMode >= 3:
         p = DFTTest(i, cuda=cuda, tbsize=1,
-                    slocation=[0.0,4.0, 0.2,9.0, 1.0,15.0], planes=planes)
+                    slocation=[0.0,4.0, 0.2,9.0, 1.0,15.0], planes=planes, tools=tools)
     else:
-        p = MinBlur(i, r=pfMode, planes=planes)
+        p = MinBlur(i, r=pfMode, planes=planes, tools=tools)
 
     pD = core.std.MakeDiff(i, p, planes=planes)
-    p = DitherLumaRebuild(p, s0=1, chroma=chroma)
+    p = DitherLumaRebuild(p, s0=1, chroma=chroma, tools=tools)
 
     ### DEBLOCKING
     crop_args = dict(left=xf // 2, right=xf // 2, top=yf // 2, bottom=yf // 2)
@@ -325,11 +325,13 @@ def MCTemporalDenoise(i, radius=None, pfMode=3, sigma=None, twopass=None, useTTm
     if not deblock:
         d = i
     elif useQED:
-        d = Deblock_QED(i.std.Crop(**crop_args), quant1=quant1, quant2=quant2, uv=3 if chroma else 2).resize.Point(**pointresize_args)
+        from deblock import Deblock_QED
+        d = Deblock_QED(i.std.Crop(**crop_args), quant1=quant1, quant2=quant2, uv=3 if chroma else 2, tools=tools).resize.Point(**pointresize_args)
     else:
         d = i.std.Crop(**crop_args).deblock.Deblock(quant=(quant1 + quant2) // 2, planes=planes).resize.Point(**pointresize_args)
 
     ### PREPARING
+    MV = get_mv(tools)
     super_args = dict(hpad=0, vpad=0, pel=pel, chroma=chroma, sharp=MVsharp, blksize=blksize, overlap=overlap)
     pMVS = MV.Super(p, rfilter=4 if refine else 2, **super_args)
     if refine:
@@ -452,8 +454,8 @@ def MCTemporalDenoise(i, radius=None, pfMode=3, sigma=None, twopass=None, useTTm
             c = core.std.Interleave([f6c, f5c, f4c, f3c, f2c, f1c, i, b1c, b2c, b3c, b4c, b5c, b6c])
             # SAD_m = core.std.Interleave([SAD_f6m, SAD_f5m, SAD_f4m, SAD_f3m, SAD_f2m, SAD_f1m, b, SAD_b1m, SAD_b2m, SAD_b3m, SAD_b4m, SAD_b5m, SAD_b6m])
 
-        c = SCDetect(c, threshold=0.999)
-        if hasattr(core,'zsmooth'):
+        c = SCDetect(c, threshold=0.999, tools=tools)
+        if pick_tool(tools, 'ttempsmooth', ('zsmooth', 'ttmpsm'), lambda name: name == 'ttmpsm' or hasattr(core, 'zsmooth')) == 'zsmooth':
           sm = core.zsmooth.TTempSmooth(c, maxr=radius, thresh=[255], mdiff=[1], strength=radius + 1, scthresh=-1, fp=False, planes=planes)
         else:
           sm = c.ttmpsm.TTempSmooth(maxr=radius, thresh=[255], mdiff=[1], strength=radius + 1, scthresh=99.9, fp=False, planes=planes)
@@ -462,7 +464,7 @@ def MCTemporalDenoise(i, radius=None, pfMode=3, sigma=None, twopass=None, useTTm
     ### DENOISING: FIRST PASS
     dMVS = MV.Super(d, levels=1, **super_args)
     sm = MCTD_TTSM(d, dMVS, thSAD) if useTTmpSm else MCTD_MVD(d, dMVS, thSAD, thSADC)
-    EXPR = get_expr()
+    EXPR = get_expr(tools)
     if limit <= -1:
         smD = core.std.MakeDiff(i, sm, planes=planes)
         expr = f'x {neutral} - abs y {neutral} - abs < x y ?'
@@ -494,32 +496,32 @@ def MCTemporalDenoise(i, radius=None, pfMode=3, sigma=None, twopass=None, useTTm
     if post <= 0:
         smP = smL
     else:
-        if hasattr(core, 'neo_fft3d'):
+        if pick_tool(tools, 'fft3d', ('neo_fft3d', 'fft3dfilter')) == 'neo_fft3d':
             smP = smL.neo_fft3d.FFT3D(sigma=post * 0.8, sigma2=post * 0.6, sigma3=post * 0.4, sigma4=post * 0.2, **fft3d_args)
         else:                              
             smP = smL.fft3dfilter.FFT3DFilter(sigma=post * 0.8, sigma2=post * 0.6, sigma3=post * 0.4, sigma4=post * 0.2, **fft3d_args)
 
     ### EDGECLEANING
     if edgeclean:
-        PREWITT = core.edgemasks.ExPrewitt if hasattr(core,"edgemasks") else core.std.Prewitt
+        PREWITT = core.edgemasks.ExPrewitt if pick_tool(tools, 'edgemasks', ('edgemasks', 'std')) == 'edgemasks' else core.std.Prewitt
         mP = PREWITT(GetPlane(smP, 0))
         mS = mt_expand_multi(mP, sw=ECrad, sh=ECrad).std.Inflate()
         mD = EXPR([mS, mP.std.Inflate()], expr=[f'x y - {ECthr} <= 0 x y - ?']).std.Inflate().std.Convolution(matrix=[1, 1, 1, 1, 1, 1, 1, 1, 1])
-        smoothed = DFTTest(smP, cuda=cuda, tbsize=1, planes=planes)
-        smP = core.std.MaskedMerge(smP, DeHalo_alpha(smoothed, darkstr=0), mD, planes=planes)
+        smoothed = DFTTest(smP, cuda=cuda, tbsize=1, planes=planes, tools=tools)
+        from dehalo import DeHalo_alpha
+        smP = core.std.MaskedMerge(smP, DeHalo_alpha(smoothed, darkstr=0, tools=tools), mD, planes=planes)
     ### STABILIZING
     if stabilize:
         # mM = core.std.Merge(GetPlane(SAD_f1m, 0), GetPlane(SAD_b1m, 0)).std.Lut(function=lambda x: min(cround(x ** 1.6), peak))
-        PREWITT = core.edgemasks.ExPrewitt if hasattr(core,"edgemasks") else core.std.Prewitt
+        PREWITT = core.edgemasks.ExPrewitt if pick_tool(tools, 'edgemasks', ('edgemasks', 'std')) == 'edgemasks' else core.std.Prewitt
         mE = PREWITT(GetPlane(smP, 0)).std.Lut(function=lambda x: min(cround(x ** 1.8), peak))
-        has_zsmooth = hasattr(core,'zsmooth');
-        mE = mE.zsmooth.Median() if has_zsmooth else mE.std.Median()
+        mE = mE.zsmooth.Median() if pick_tool(tools, 'median', ('zsmooth', 'std')) == 'zsmooth' else mE.std.Median()
         mE = mE.std.Inflate()
         # mF = core.std.Expr([mM, mE], expr=['x y max']).std.Convolution(matrix=[1, 1, 1, 1, 1, 1, 1, 1, 1])
         mF = mE.std.Convolution(matrix=[1, 1, 1, 1, 1, 1, 1, 1, 1])
-        if has_zsmooth:
+        if pick_tool(tools, 'ttempsmooth', ('zsmooth', 'ttmpsm'), lambda name: name == 'ttmpsm' or hasattr(core, 'zsmooth')) == 'zsmooth':
           import misc
-          smP = SCDetect(smP, threshold=0.12)
+          smP = SCDetect(smP, threshold=0.12, tools=tools)
           TTc = smP.zsmooth.TTempSmooth(maxr=maxr, mdiff=[255], strength=TTstr, scthresh=-1, planes=planes)
         else:
           TTc = smP.ttmpsm.TTempSmooth(maxr=maxr, mdiff=[255], strength=TTstr, planes=planes)
@@ -528,7 +530,7 @@ def MCTemporalDenoise(i, radius=None, pfMode=3, sigma=None, twopass=None, useTTm
     ### OUTPUT
     return smP.std.Crop(**crop_args)
     
-def mClean(clip, thSAD=400, chroma=True, sharp=10, rn=14, deband=0, depth=0, strength=20, outbits=None, icalc=True, rgmode=18):
+def mClean(clip, thSAD=400, chroma=True, sharp=10, rn=14, deband=0, depth=0, strength=20, outbits=None, icalc=True, rgmode=18, tools=None):
     """
     From: https://forum.doom9.org/showthread.php?t=174804 by burfadel
     mClean spatio/temporal denoiser
@@ -585,8 +587,10 @@ def mClean(clip, thSAD=400, chroma=True, sharp=10, rn=14, deband=0, depth=0, str
     bd = clip.format.bits_per_sample
     isFLOAT = clip.format.sample_type == vs.FLOAT
     icalc = False if isFLOAT else icalc
-    zsmooth = hasattr(core, 'zsmooth')
-    if hasattr(core, 'mvsf') and isFLOAT:  
+    MV = get_mv(tools)
+    use_mvsf = isFLOAT and pick_tool(tools, 'mv', ('mvsf',), lambda name: name != 'mvsf' or hasattr(core, 'mvsf'),
+                                     candidates=('mvsf', 'mv', 'mvutensils')) == 'mvsf'
+    if use_mvsf:  
       S = MV.Super if icalc else core.mvsf.Super
       A = MV.Analyse if icalc else core.mvsf.Analyse
       R = MV.Recalculate if icalc else core.mvsf.Recalculate
@@ -604,12 +608,8 @@ def mClean(clip, thSAD=400, chroma=True, sharp=10, rn=14, deband=0, depth=0, str
     if deband or depth:
         outbits = min(outbits, 16)
 
-    if zsmooth:
-      RE = core.zsmooth.Repair
-      RG = get_rg()
-    else:
-      RE = core.rgsf.Repair if outbits == 32 else core.rgvs.Repair
-      RG = get_rg(is_float=(outbits == 32))
+    RE = tool_function(tools, 'rg', 'Repair', ('zsmooth', 'rgsf', 'rgvs') if outbits == 32 else ('zsmooth', 'rgvs'))
+    RG = get_rg(is_float=(outbits == 32), tools=tools)
     
     sc = 8 if defH > 2880 else 4 if defH > 1440 else 2 if defH > 720 else 1
     i = 0.00392 if outbits == 32 else 1 << (outbits - 8)
@@ -631,7 +631,7 @@ def mClean(clip, thSAD=400, chroma=True, sharp=10, rn=14, deband=0, depth=0, str
 
     # Denoise preparation
     if chroma:
-      if hasattr(core,'zsmooth'):
+      if pick_tool(tools, 'median', ('zsmooth',)) == 'zsmooth':
         c = core.zsmooth.Median(clip, radius=2, planes=[1,2])
       else:
         c = core.vcm.Median(clip, plane=[0, 1, 1])
@@ -668,7 +668,7 @@ def mClean(clip, thSAD=400, chroma=True, sharp=10, rn=14, deband=0, depth=0, str
         c = c.fmtc.bitdepth(bits=outbits, dmode=1)
         cy = cy.fmtc.bitdepth(bits=outbits, dmode=1)
         clean = clean.fmtc.bitdepth(bits=outbits, dmode=1)
-    TM = core.zsmooth.TemporalMedian if zsmooth else core.tmedian.TemporalMedian
+    TM = tool_function(tools, 'tmedian', 'TemporalMedian')
     uv = core.std.MergeDiff(clean, TM(core.std.MakeDiff(c, clean, [1, 2]), 1, [1, 2]), [1, 2]) if chroma else c
     clean = core.std.ShufflePlanes(clean, [0], vs.GRAY) if clean.format.num_planes != 1 else clean
 
@@ -678,7 +678,9 @@ def mClean(clip, thSAD=400, chroma=True, sharp=10, rn=14, deband=0, depth=0, str
     if deband:
         grainy = defH/15
         grainc = defH/16 if chroma else 0
-        if hasattr(core, 'vszip'):
+        deband_plugin = pick_tool(tools, 'f3kdb', ('vszip', 'neo_f3kdb', 'f3kdb'),
+                                  lambda name: name == 'f3kdb' or hasattr(core, name)) or 'f3kdb'
+        if deband_plugin == 'vszip':
             # vszip.Deband is f3kdb on a 255 scale, f3kdb itself uses a 14 bit one. The preset
             # "high" puts every plane at 64, "luma" leaves chroma at 0. See
             # https://github.com/dnjulek/vapoursynth-zip/wiki/Deband#how-to-convert-args-from-neo_f3kdb-to-vszip
@@ -686,7 +688,7 @@ def mClean(clip, thSAD=400, chroma=True, sharp=10, rn=14, deband=0, depth=0, str
             thrc = 64 * f3k if chroma else 0
             filt = core.vszip.Deband(filt, range=16, thr=[64 * f3k, thrc, thrc], grain=[grainy * f3k, grainc * f3k])
         else:
-            deband_func = core.neo_f3kdb.Deband if hasattr(core, 'neo_f3kdb') else core.f3kdb.Deband
+            deband_func = core.neo_f3kdb.Deband if deband_plugin == 'neo_f3kdb' else core.f3kdb.Deband
             filt = deband_func(filt, range=16, preset="high" if chroma else "luma", grainy=grainy, grainc=grainc, output_depth=outbits)
         clean = core.std.ShufflePlanes(filt, [0], vs.GRAY)
         filt = core.vcm.Veed(filt) if deband == 2 else filt
@@ -699,14 +701,14 @@ def mClean(clip, thSAD=400, chroma=True, sharp=10, rn=14, deband=0, depth=0, str
         if sharp <= 50:
             clsharp = core.std.MakeDiff(clean, Blur(clean2, amountH=0.08+0.03*sharp))
         else:
-            if hasattr(core, 'tcanny'):
+            if pick_tool(tools, 'tcanny', ('tcanny', 'std')) == 'tcanny':
                 clsharp = core.std.MakeDiff(clean, clean2.tcanny.TCanny(sigma=(sharp-46)/4, mode=-1))
             else:
                 radius = max(1, round(((sharp-46)/4) * 1.5))
 
                 blur = clean2
                 for _ in range(3):
-                    blur = BoxFilter(blur, radius=radius, radius_v=radius)
+                    blur = BoxFilter(blur, radius=radius, radius_v=radius, tools=tools)
 
                 clsharp = core.std.MakeDiff(clean, blur)
 
@@ -714,11 +716,11 @@ def mClean(clip, thSAD=400, chroma=True, sharp=10, rn=14, deband=0, depth=0, str
 
     # If selected, combining ReNoise
     noise_diff = core.std.MakeDiff(clean2, cy)
-    EXPR = get_expr()
+    EXPR = get_expr(tools)
     if rn:
         import color
         expr = "x {a} < 0 x {b} > {p} 0 x {c} - {p} {a} {d} - / * - ? ?".format(a=32*i, b=45*i, c=35*i, d=65*i, p=peak)
-        clean1 = core.std.Merge(clean2, core.std.MergeDiff(clean2, color.Tweak(TM(noise_diff), cont=1.008+0.00016*rn)), 0.3+rn*0.035)
+        clean1 = core.std.Merge(clean2, core.std.MergeDiff(clean2, color.Tweak(TM(noise_diff), cont=1.008+0.00016*rn, tools=tools)), 0.3+rn*0.035)
         clean2 = core.std.MaskedMerge(clean2, clean1, EXPR([EXPR([clean, clean.std.Invert()], 'x y min')], [expr]))
 
     # Combining spatial detail enhancement with spatial noise reduction using prepared mask
@@ -728,13 +730,13 @@ def mClean(clip, thSAD=400, chroma=True, sharp=10, rn=14, deband=0, depth=0, str
     # Combining result of luma and chroma cleaning
     output = core.std.ShufflePlanes([clean2, filt], [0, 1, 2], vs.YUV)
     output = core.std.Merge(c, output, 0.2+0.04*strength) if strength < 20 else output
-    if hasattr(core,'warp'):
+    if pick_tool(tools, 'warp', ('warp', 'awarp')) == 'warp':
        s1 = output.warp.AWarpSharp2(128, 3, 1, depth2, 1)
        s2 = output.warp.AWarpSharp2(128, 2, 1, depth, 1)
     else:
        import sharpen
-       s1 = sharpen.AWarpSharp2(output, 128, 3, 1, depth2, 1)
-       s2 = sharpen.AWarpSharp2(output, 128, 2, 1, depth, 1)
+       s1 = sharpen.AWarpSharp2(output, 128, 3, 1, depth2, 1, tools=tools)
+       s2 = sharpen.AWarpSharp2(output, 128, 2, 1, depth, 1, tools=tools)
     return core.std.MergeDiff(output, core.std.MakeDiff(s1, s2)) if depth else output  
     
 
@@ -749,7 +751,8 @@ def EZDenoise(
     overlap: int = 4,
     pel: int = 1,
     chroma: bool = True,
-    out16: bool = False
+    out16: bool = False,
+    tools=None
 ) -> vs.VideoNode:
     """
     Flexible multi-frame denoising using MVTools.
@@ -771,6 +774,7 @@ def EZDenoise(
     if out16:
         clip = core.fmtc.bitdepth(clip, bits=16)
 
+    MV = get_mv(tools)
     super_clip = MV.Super(clip, pel=pel, chroma=chroma, hpad=blkSize, vpad=blkSize)
 
     # Analyse motion vectors for each delta up to tr

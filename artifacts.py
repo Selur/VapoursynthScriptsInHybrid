@@ -1,25 +1,24 @@
 from vapoursynth import core
 import vapoursynth as vs
 
-from misc import MV
+from misc import get_mv
+from helpers import pick_tool, tool_function
 
 # VS port of a script by Didée http://forum.doom9.net/showthread.php?p=1402690#post1402690
 # In my experience this filter works very good as a prefilter for SMDegrain(). 
 # Filtering only luma seems to help to avoid ghost artefacts.
-def DeSpot(o):
+def DeSpot(o, tools=None):
+  MV = get_mv(tools)
   osup = MV.Super(o, pel=2, sharp=2, blksize=8, overlap=4)
   bv1  = MV.Analyse(osup, isb=True, delta=1, blksize=8, overlap=4, search=4)
   fv1  = MV.Analyse(osup, isb=False,delta=1, blksize=8, overlap=4, search=4)
   bc1  = MV.Compensate(o, osup, bv1)
   fc1  = MV.Compensate(o, osup, fv1)
-  
+
   clip = core.std.Interleave([fc1, o, bc1])
-  
-  if hasattr(core,'zsmooth'):
-    clip = clip.zsmooth.Clense()
-  else:
-    clip = clip.rgvs.Clense()
-  
+
+  clip = tool_function(tools, 'rg', 'Clense')(clip)
+    
   return clip.std.SelectEvery(cycle=3, offsets=1)
 
 import vapoursynth as vs
@@ -28,7 +27,7 @@ core = vs.core
 # Requires
 # zsmooth: https://github.com/adworacz/zsmooth
 # RemoveDirt: https://github.com/pinterf/RemoveDirt
-def RemoveSpots(clip: vs.VideoNode, grey: bool = False, limit: int = 16) -> vs.VideoNode:
+def RemoveSpots(clip: vs.VideoNode, grey: bool = False, limit: int = 16, tools=None) -> vs.VideoNode:
     """
     Temporal spot/dirt removal filter using zsmooth and RemoveDirt.
     
@@ -48,7 +47,8 @@ def RemoveSpots(clip: vs.VideoNode, grey: bool = False, limit: int = 16) -> vs.V
     
     Dependencies:
         - zsmooth (Clense, ForwardClense, BackwardClense, Repair)
-        - RemoveDirt (SCSelect, RestoreMotionBlocks) as 'removedirt' or 'rmd'
+        - RemoveDirt (SCSelect, RestoreMotionBlocks) as 'removedirt' or 'rdvs'
+        tools['rg'] and tools['removedirt'] pick the implementations.
     
     Notes:
         - Uses a 3-frame temporal window (prev, current, next) for detection.
@@ -61,31 +61,28 @@ def RemoveSpots(clip: vs.VideoNode, grey: bool = False, limit: int = 16) -> vs.V
     planes = [0] if grey else [0, 1, 2]
     
     # Temporal median of 3 frames: reduces spots that appear on single frames
-    clensed = core.zsmooth.Clense(clip, planes=planes)
-    
+    clensed = tool_function(tools, 'rg', 'Clense')(clip, planes=planes)
+
     # Forward clense: temporal filter looking ahead
-    sbegin  = core.zsmooth.ForwardClense(clip, planes=planes)
-    
+    sbegin  = tool_function(tools, 'rg', 'ForwardClense')(clip, planes=planes)
+
     # Backward clense: temporal filter looking behind
-    send    = core.zsmooth.BackwardClense(clip, planes=planes)
+    send    = tool_function(tools, 'rg', 'BackwardClense')(clip, planes=planes)
 
     # Scene change detection: pick the best of the three temporal candidates
     # SCSelect avoids blending across scene boundaries
-    if hasattr(core, 'removedirt') and hasattr(core.removedirt, 'SCSelect'):
-        scenechange = core.removedirt.SCSelect(clip, sbegin, send, clensed)
-        RESTORE     = core.removedirt.RestoreMotionBlocks
-    else:
-        scenechange = core.rmd.SCSelect(clip, sbegin, send, clensed)
-        RESTORE     = core.rmd.RestoreMotionBlocks
+    removedirt = core.removedirt if pick_tool(tools, 'removedirt', ('removedirt', 'rdvs')) == 'removedirt' else core.rdvs
+    scenechange = removedirt.SCSelect(clip, sbegin, send, clensed)
+    RESTORE     = removedirt.RestoreMotionBlocks
 
     # Repair mode: how aggressively to replace pixels. 0 = no repair for that plane
     rep_mode = [limit if p in planes else 0 for p in range(clip.format.num_planes)]
     
     # Alternative restoration path using scene-change-selected frame
-    alt     = core.zsmooth.Repair(scenechange, clip, mode=rep_mode)
-    
+    alt     = tool_function(tools, 'rg', 'Repair')(scenechange, clip, mode=rep_mode)
+
     # Another restoration path using the temporal median
-    restore = core.zsmooth.Repair(clensed, clip, mode=rep_mode)
+    restore = tool_function(tools, 'rg', 'Repair')(clensed, clip, mode=rep_mode)
 
     # Final motion-aware restoration:
     # - clensed: temporal median as base
@@ -110,7 +107,7 @@ def RemoveSpots(clip: vs.VideoNode, grey: bool = False, limit: int = 16) -> vs.V
 # zsmooth: https://github.com/adworacz/zsmooth
 # RemoveDirt: https://github.com/pinterf/RemoveDirt
 # mvtools: https://github.com/Mr-Z-2697/vapoursynth-mvtools
-def RemoveSpotsMCX(clip: vs.VideoNode, limit: int = 6, grey: bool = False, runs: int = 3) -> vs.VideoNode:
+def RemoveSpotsMCX(clip: vs.VideoNode, limit: int = 6, grey: bool = False, runs: int = 3, tools=None) -> vs.VideoNode:
     """
     Motion-compensated temporal spot removal using mvtools + RemoveSpots.
 
@@ -152,6 +149,7 @@ def RemoveSpotsMCX(clip: vs.VideoNode, limit: int = 6, grey: bool = False, runs:
           RemoveSpots leaves visible spots.
     """
     # Create superclip for motion estimation at half-pixel precision
+    MV = get_mv(tools)
     sup  = MV.Super(clip, pel=2, blksize=8, overlap=4)
 
     # Analyse backward motion (next frame -> current)
@@ -170,7 +168,7 @@ def RemoveSpotsMCX(clip: vs.VideoNode, limit: int = 6, grey: bool = False, runs:
 
     # Multi-pass spot removal on the motion-compensated interleaved clip
     for _ in range(runs):
-        clp = RemoveSpots(clp, grey=grey, limit=limit)
+        clp = RemoveSpots(clp, grey=grey, limit=limit, tools=tools)
 
     # Extract only the source frames (offset 1 in each 3-frame cycle)
     clp = core.std.SelectEvery(clp, cycle=3, offsets=[1])

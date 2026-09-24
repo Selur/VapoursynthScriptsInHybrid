@@ -1,6 +1,6 @@
 import vapoursynth as vs
 from vapoursynth import core
-from misc import MV
+from misc import get_mv
 
 '''
 call using:
@@ -22,8 +22,9 @@ Replaces duplicate frames with interpolations.
 
 class FillDuplicateFrames:
   # constructor
-  def __init__(self, clip: vs.VideoNode, mode='FillDuplicate', thresh: float=0.001, method: str='SVP', sceneThr: float=0.15, rifeModel: int=22, rifeTTA=False, rifeUHD=False, frames = [], debug: bool=False, device_index: int=0):
+  def __init__(self, clip: vs.VideoNode, mode='FillDuplicate', thresh: float=0.001, method: str='SVP', sceneThr: float=0.15, rifeModel: int=22, rifeTTA=False, rifeUHD=False, frames = [], debug: bool=False, device_index: int=0, tools=None):
       # calculte stats
+      self.tools = tools
       self.thresh = thresh
       self.debug = debug
       self.method = method
@@ -67,6 +68,7 @@ class FillDuplicateFrames:
    
   def interpolateWithMV(self, clip, n, start, end):   
     num = end - start
+    MV = get_mv(self.tools)
     sup = MV.Super(clip, pel=2, hpad=0, vpad=0, blksize=16, overlap=0)
     bvec = MV.Analyse(sup, blksize=16, isb=True, chroma=True, search=3, searchparam=1)
     fvec = MV.Analyse(sup, blksize=16, isb=False, chroma=True, search=3, searchparam=1)

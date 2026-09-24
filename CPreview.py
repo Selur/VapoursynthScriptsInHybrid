@@ -7,11 +7,12 @@
 import math as m
 from functools import partial
 import vapoursynth as vs
+from helpers import pick_tool
 core = vs.core
 
 # ===============================================================================
 
-def CPreview(Source, CL, CR, CT, CB, Frame=False, Time=False, Type=1):
+def CPreview(Source, CL, CR, CT, CB, Frame=False, Time=False, Type=1, tools=None):
 
     CPE = "\nCPreview:\n"
     if not isinstance(Source, vs.VideoNode): raise vs.Error(f'{CPE}Source must be a video')
@@ -21,7 +22,7 @@ def CPreview(Source, CL, CR, CT, CB, Frame=False, Time=False, Type=1):
     Source_Height = Source.height
     Source_Bits = Source.format.bits_per_sample
     Source_ID = Source.format.id
-    IsSubPlugin = hasattr(core, "sub")
+    IsSubPlugin = pick_tool(tools, 'text', ('sub', 'std')) == 'sub'
     CropLine = P_Line(Source_Width, Source_Height) if (1 <= Type <= 3) else Q_Line(Source_Width, Source_Height)
     IsHalfFloat = Source.format.name.endswith("H")
     IsFullFloat = Source.format.name.endswith("S")
@@ -132,7 +133,7 @@ def CPreview(Source, CL, CR, CT, CB, Frame=False, Time=False, Type=1):
       core.text.Text(CPreviewVideo, SubText, alignment=5)
 
     CPreviewVideo = CPreviewVideo if not (Frame or Time) else \
-      CP_Position(CPreviewVideo, Frame, Time, Type, SubText)
+      CP_Position(CPreviewVideo, Frame, Time, Type, SubText, tools=tools)
 
     return (CPreviewVideo if not IsHalfFloat else core.resize.Bicubic(CPreviewVideo, format=vs.YUV444PH)) \
       if (Type == 1) or (Type == 4) or not IsChromaSS else \
@@ -148,63 +149,63 @@ def CPreview(Source, CL, CR, CT, CB, Frame=False, Time=False, Type=1):
 #            pCrop / pCropf / pCropt / pCropp
 # -------------------------------------------------------------------------------
 
-def pCrop(Source,  CL, CR, CT, CB): return CPreview(Source, CL, CR, CT, CB, False, False, 1)
-def pCropf(Source, CL, CR, CT, CB): return CPreview(Source, CL, CR, CT, CB, True,  False, 1)
-def pCropt(Source, CL, CR, CT, CB): return CPreview(Source, CL, CR, CT, CB, False, True,  1)
-def pCropp(Source, CL, CR, CT, CB): return CPreview(Source, CL, CR, CT, CB, True,  True,  1)
+def pCrop(Source,  CL, CR, CT, CB, tools=None): return CPreview(Source, CL, CR, CT, CB, False, False, 1, tools=tools)
+def pCropf(Source, CL, CR, CT, CB, tools=None): return CPreview(Source, CL, CR, CT, CB, True,  False, 1, tools=tools)
+def pCropt(Source, CL, CR, CT, CB, tools=None): return CPreview(Source, CL, CR, CT, CB, False, True,  1, tools=tools)
+def pCropp(Source, CL, CR, CT, CB, tools=None): return CPreview(Source, CL, CR, CT, CB, True,  True,  1, tools=tools)
 
 # -------------------------------------------------------------------------------
 #            ppCrop / ppCropf / ppCropt / ppCropp
 # -------------------------------------------------------------------------------
 
-def ppCrop(Source,  CL, CR, CT, CB): return CPreview(Source, CL, CR, CT, CB, False, False, 2)
-def ppCropf(Source, CL, CR, CT, CB): return CPreview(Source, CL, CR, CT, CB, True,  False, 2)
-def ppCropt(Source, CL, CR, CT, CB): return CPreview(Source, CL, CR, CT, CB, False, True,  2)
-def ppCropp(Source, CL, CR, CT, CB): return CPreview(Source, CL, CR, CT, CB, True,  True,  2)
+def ppCrop(Source,  CL, CR, CT, CB, tools=None): return CPreview(Source, CL, CR, CT, CB, False, False, 2, tools=tools)
+def ppCropf(Source, CL, CR, CT, CB, tools=None): return CPreview(Source, CL, CR, CT, CB, True,  False, 2, tools=tools)
+def ppCropt(Source, CL, CR, CT, CB, tools=None): return CPreview(Source, CL, CR, CT, CB, False, True,  2, tools=tools)
+def ppCropp(Source, CL, CR, CT, CB, tools=None): return CPreview(Source, CL, CR, CT, CB, True,  True,  2, tools=tools)
 
 # -------------------------------------------------------------------------------
 #            pppCrop / pppCropf / pppCropt / pppCropp
 # -------------------------------------------------------------------------------
 
-def pppCrop(Source,  CL, CR, CT, CB): return CPreview(Source, CL, CR, CT, CB, False, False, 3)
-def pppCropf(Source, CL, CR, CT, CB): return CPreview(Source, CL, CR, CT, CB, True,  False, 3)
-def pppCropt(Source, CL, CR, CT, CB): return CPreview(Source, CL, CR, CT, CB, False, True,  3)
-def pppCropp(Source, CL, CR, CT, CB): return CPreview(Source, CL, CR, CT, CB, True,  True,  3)
+def pppCrop(Source,  CL, CR, CT, CB, tools=None): return CPreview(Source, CL, CR, CT, CB, False, False, 3, tools=tools)
+def pppCropf(Source, CL, CR, CT, CB, tools=None): return CPreview(Source, CL, CR, CT, CB, True,  False, 3, tools=tools)
+def pppCropt(Source, CL, CR, CT, CB, tools=None): return CPreview(Source, CL, CR, CT, CB, False, True,  3, tools=tools)
+def pppCropp(Source, CL, CR, CT, CB, tools=None): return CPreview(Source, CL, CR, CT, CB, True,  True,  3, tools=tools)
 
 # -------------------------------------------------------------------------------
 #            qCrop / qCropf / qCropt / qCropp
 # -------------------------------------------------------------------------------
 
-def qCrop(Source,  CL, CR, CT, CB): return CPreview(Source, CL, CR, CT, CB, False, False, 4)
-def qCropf(Source, CL, CR, CT, CB): return CPreview(Source, CL, CR, CT, CB, True,  False, 4)
-def qCropt(Source, CL, CR, CT, CB): return CPreview(Source, CL, CR, CT, CB, False, True,  4)
-def qCropp(Source, CL, CR, CT, CB): return CPreview(Source, CL, CR, CT, CB, True,  True,  4)
+def qCrop(Source,  CL, CR, CT, CB, tools=None): return CPreview(Source, CL, CR, CT, CB, False, False, 4, tools=tools)
+def qCropf(Source, CL, CR, CT, CB, tools=None): return CPreview(Source, CL, CR, CT, CB, True,  False, 4, tools=tools)
+def qCropt(Source, CL, CR, CT, CB, tools=None): return CPreview(Source, CL, CR, CT, CB, False, True,  4, tools=tools)
+def qCropp(Source, CL, CR, CT, CB, tools=None): return CPreview(Source, CL, CR, CT, CB, True,  True,  4, tools=tools)
 
 # -------------------------------------------------------------------------------
 #            qqCrop / qqCropf / qqCropt / qqCropp
 # -------------------------------------------------------------------------------
 
-def qqCrop(Source,  CL, CR, CT, CB): return CPreview(Source, CL, CR, CT, CB, False, False, 5)
-def qqCropf(Source, CL, CR, CT, CB): return CPreview(Source, CL, CR, CT, CB, True,  False, 5)
-def qqCropt(Source, CL, CR, CT, CB): return CPreview(Source, CL, CR, CT, CB, False, True,  5)
-def qqCropp(Source, CL, CR, CT, CB): return CPreview(Source, CL, CR, CT, CB, True,  True,  5)
+def qqCrop(Source,  CL, CR, CT, CB, tools=None): return CPreview(Source, CL, CR, CT, CB, False, False, 5, tools=tools)
+def qqCropf(Source, CL, CR, CT, CB, tools=None): return CPreview(Source, CL, CR, CT, CB, True,  False, 5, tools=tools)
+def qqCropt(Source, CL, CR, CT, CB, tools=None): return CPreview(Source, CL, CR, CT, CB, False, True,  5, tools=tools)
+def qqCropp(Source, CL, CR, CT, CB, tools=None): return CPreview(Source, CL, CR, CT, CB, True,  True,  5, tools=tools)
 
 # -------------------------------------------------------------------------------
 #            qqqCrop / qqqCropf / qqqCropt / qqqCropp
 # -------------------------------------------------------------------------------
 
-def qqqCrop(Source,  CL, CR, CT, CB): return CPreview(Source, CL, CR, CT, CB, False, False, 6)
-def qqqCropf(Source, CL, CR, CT, CB): return CPreview(Source, CL, CR, CT, CB, True,  False, 6)
-def qqqCropt(Source, CL, CR, CT, CB): return CPreview(Source, CL, CR, CT, CB, False, True,  6)
-def qqqCropp(Source, CL, CR, CT, CB): return CPreview(Source, CL, CR, CT, CB, True,  True,  6)
+def qqqCrop(Source,  CL, CR, CT, CB, tools=None): return CPreview(Source, CL, CR, CT, CB, False, False, 6, tools=tools)
+def qqqCropf(Source, CL, CR, CT, CB, tools=None): return CPreview(Source, CL, CR, CT, CB, True,  False, 6, tools=tools)
+def qqqCropt(Source, CL, CR, CT, CB, tools=None): return CPreview(Source, CL, CR, CT, CB, False, True,  6, tools=tools)
+def qqqCropp(Source, CL, CR, CT, CB, tools=None): return CPreview(Source, CL, CR, CT, CB, True,  True,  6, tools=tools)
 
 # -------------------------------------------------------------------------------
 #            Cropf / Cropt / Cropp
 # -------------------------------------------------------------------------------
 
-def Cropf(Source, CL, CR, CT, CB): return CP_Position(core.std.Crop(Source, CL, CR, CT, CB), True, False)
-def Cropt(Source, CL, CR, CT, CB): return CP_Position(core.std.Crop(Source, CL, CR, CT, CB), False, True)
-def Cropp(Source, CL, CR, CT, CB): return CP_Position(core.std.Crop(Source, CL, CR, CT, CB), True,  True)
+def Cropf(Source, CL, CR, CT, CB, tools=None): return CP_Position(core.std.Crop(Source, CL, CR, CT, CB), True, False, tools=tools)
+def Cropt(Source, CL, CR, CT, CB, tools=None): return CP_Position(core.std.Crop(Source, CL, CR, CT, CB), False, True, tools=tools)
+def Cropp(Source, CL, CR, CT, CB, tools=None): return CP_Position(core.std.Crop(Source, CL, CR, CT, CB), True,  True, tools=tools)
 
 # ===============================================================================
 # ===============================================================================
@@ -508,7 +509,7 @@ def CR_PicMod(W, H):
 # ===============================================================================
 # ===============================================================================
 
-def CP_Position(Source, Frame, Time, Type=4, SubText=""):
+def CP_Position(Source, Frame, Time, Type=4, SubText="", tools=None):
 
     Source_Width = Source.width
     Source_Height = Source.height
@@ -517,7 +518,7 @@ def CP_Position(Source, Frame, Time, Type=4, SubText=""):
     FRateDen = Source.fps.denominator
     IsHalfFloat = Source.format.name.endswith("H")
     Time = Time and (FRateNum > 0 < FRateDen)
-    IsSubPlugin = hasattr(core, "sub")
+    IsSubPlugin = pick_tool(tools, 'text', ('sub', 'std')) == 'sub'
 
     Float32 = None if not IsHalfFloat else \
       core.query_video_format(Source.format.color_family, 1, 32, \
@@ -543,7 +544,7 @@ def CP_Position(Source, Frame, Time, Type=4, SubText=""):
       ('\n' * (2 if Source_Height < 300 else 3)) + SubText
 
     Position = core.std.FrameEval(Source, partial(CP_Pos, Source=Source, \
-      FRateNum=FRateDen, FRateDen=FRateDen, Frame=Frame, Time=Time, Type=Type, \
+      FRateNum=FRateNum, FRateDen=FRateDen, Frame=Frame, Time=Time, Type=Type, \
       SubText=SubText, Style=Style, IsSubPlugin=IsSubPlugin))
 
     return Position if not IsHalfFloat else core.resize.Bicubic(Position, format=Source_ID)

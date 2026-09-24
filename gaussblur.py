@@ -1,6 +1,7 @@
 import math
-from typing import Sequence, Union, Optional
+from typing import Sequence, Union, Optional, Mapping
 import vapoursynth as vs
+from helpers import tool_function
 
 # based on vs-jetpack
 
@@ -19,12 +20,9 @@ def _gauss_kernel(sigma: float, radius: int):
     return [v / total for v in kernel]
 
 
-def _boxblur_impl():
-    """Pick the best available BoxBlur function."""
-    core = vs.core
-    if hasattr(core, 'vszip'):
-        return core.vszip.BoxBlur
-    return core.std.BoxBlur
+def _boxblur_impl(tools: Optional[Mapping[str, str]] = None):
+    """Pick the BoxBlur function: tools['boxblur'], else vszip, else std."""
+    return tool_function(tools, 'boxblur', 'BoxBlur')
 
 
 def GaussBlur(
@@ -34,13 +32,14 @@ def GaussBlur(
     mode: str = "hv",
     planes: Optional[Union[int, Sequence[int]]] = None,
     max_conv_radius: int = 12,
+    tools: Optional[Mapping[str, str]] = None,
 ) -> vs.VideoNode:
     """
     Standalone Gaussian blur. Drop-in replacement for:
       core.tcanny.TCanny(..., mode=-1, sigma=sigma, planes=planes)
 
     - Small sigma  -> exact Gaussian via std.Convolution
-    - Large sigma  -> 3-pass BoxBlur approximation
+    - Large sigma  -> 3-pass BoxBlur approximation (tools['boxblur'] picks the BoxBlur)
     """
     if not isinstance(clip, vs.VideoNode):
         raise TypeError("GaussBlur: clip must be a VideoNode")
@@ -55,7 +54,7 @@ def GaussBlur(
         if len(set(sigma)) == 1:
             sigma = sigma[0]
         else:
-            return _gauss_blur_per_plane(clip, sigma, radius, mode, planes, max_conv_radius)
+            return _gauss_blur_per_plane(clip, sigma, radius, mode, planes, max_conv_radius, tools)
 
     if sigma <= 0:
         return clip
@@ -68,7 +67,7 @@ def GaussBlur(
     # ---------- Large-sigma fallback ----------
     if radius > max_conv_radius:
         box_radius = max(1, round(sigma))
-        blur_fn = _boxblur_impl()
+        blur_fn = _boxblur_impl(tools)
 
         out = clip
         if "h" in mode:
@@ -103,6 +102,7 @@ def _gauss_blur_per_plane(
     mode: str,
     planes: Sequence[int],
     max_conv_radius: int,
+    tools: Optional[Mapping[str, str]] = None,
 ) -> vs.VideoNode:
     """Process selected planes individually and recombine."""
     core = vs.core
@@ -118,6 +118,7 @@ def _gauss_blur_per_plane(
             mode=mode,
             planes=[0],
             max_conv_radius=max_conv_radius,
+            tools=tools,
         )
 
     cf = clip.format.color_family

@@ -120,7 +120,7 @@ class Arguments:
         return self.function(clip, **set_out)
 
 
-def distribute(n, clip, MAP, selection, **overlay_kwargs):
+def distribute(n, clip, MAP, selection, tools=None, **overlay_kwargs):
     iterator = iter(MAP)
     change = False
     for (lower, upper) in iterator:
@@ -133,7 +133,7 @@ def distribute(n, clip, MAP, selection, **overlay_kwargs):
             clip = functools.reduce(lambda r, f: f(r, n, lower, upper), funcs, clip)
             change = True
     if change and selection is not None:
-        return misc.Overlay(clip_master, clip, x=selection[2], y=selection[3], **overlay_kwargs)
+        return misc.Overlay(clip_master, clip, x=selection[2], y=selection[3], tools=tools, **overlay_kwargs)
     else:
         return clip
 
@@ -142,12 +142,13 @@ def run(clip,
         MAP,
         selection=None,
         mask=None, opacity=1.0, mode='normal', planes=None, mask_first_plane=True, # misc.Overlay kwargs
-        placeholder = None):
+        placeholder = None, tools=None):
     
     if placeholder is None:
         placeholder = clip
     return core.std.FrameEval(placeholder, functools.partial(distribute, clip=clip, MAP=MAP, selection=selection,
-                                                             mask=mask, opacity=opacity, mode=mode, planes=planes, mask_first_plane=mask_first_plane)
+                                                             mask=mask, opacity=opacity, mode=mode, planes=planes, mask_first_plane=mask_first_plane,
+                                                             tools=tools)
                               )
 
 

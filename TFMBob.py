@@ -10,10 +10,11 @@ def TFMBobN(clip: vs.VideoNode,
             cthresh: int = 9,
             MI: int = 80,
             chroma: bool=False,
-            openCL: bool = False):
+            openCL: bool = False,
+            tools=None):
   field = clip.get_frame(0).props['_FieldBased']
   # openCL only reorders the search - NNEDI3 takes whichever implementation is loaded.
-  n = NNEDI3(clip, field=field + 1, nns=4, gpu=openCL)
+  n = NNEDI3(clip, field=field + 1, nns=4, gpu=openCL, tools=tools)
   if field == 1:
     field = 0
   else:
@@ -27,10 +28,11 @@ def TFMBobQ(clip: vs.VideoNode,
             cthresh: int = 9,
             MI: int = 80,
             chroma: bool=False,
-            openCL: bool = False):
+            openCL: bool = False,
+            tools=None):
   import qtgmc
   field = clip.get_frame(0).props['_FieldBased']
-  q = qtgmc.QTGMC(Input=clip, Preset="Fast", TFF=(field == 2), opencl=openCL) 
+  q = qtgmc.QTGMC(Input=clip, Preset="Fast", TFF=(field == 2), opencl=openCL, tools=tools) 
   if field == 1:
     field = 0
   else:

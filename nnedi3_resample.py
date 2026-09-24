@@ -1,11 +1,10 @@
 import vapoursynth as vs
 from vapoursynth import core
-import color
 import math
 import functools
 from typing import Union, Optional, Callable, Dict, Any, Sequence
 
-from helpers import Depth, BoxFilter, NNEDI3, get_expr
+from helpers import Depth, BoxFilter, NNEDI3, get_expr, pick_tool
 
 # --- shim to preserve color.Depth's range/dither defaults on top of helpers.Depth ---
 def _range(full):
@@ -21,7 +20,7 @@ def _depth(clip, depth, fulls, fulld=None):
         dither = 'error_diffusion'
     return Depth(clip, bits=depth, dither_type=dither, range=_range(fulld), range_in=_range(fulls))
 
-def nnedi3_resample(input, target_width=None, target_height=None, src_left=None, src_top=None, src_width=None, src_height=None, csp=None, mats=None, matd=None, cplaces=None, cplaced=None, fulls=None, fulld=None, curves=None, curved=None, sigmoid=None, scale_thr=None, nsize=None, nns=None, qual=None, etype=None, pscrn=None, opt=None, int16_prescreener=None, int16_predictor=None, exp=None, kernel=None, invks=False, taps=None, invkstaps=3, a1=None, a2=None, chromak_up=None, chromak_up_taps=None, chromak_up_a1=None, chromak_up_a2=None, chromak_down=None, chromak_down_invks=False, chromak_down_invkstaps=3, chromak_down_taps=None, chromak_down_a1=None, chromak_down_a2=None, mode=None, device=None):
+def nnedi3_resample(input, target_width=None, target_height=None, src_left=None, src_top=None, src_width=None, src_height=None, csp=None, mats=None, matd=None, cplaces=None, cplaced=None, fulls=None, fulld=None, curves=None, curved=None, sigmoid=None, scale_thr=None, nsize=None, nns=None, qual=None, etype=None, pscrn=None, opt=None, int16_prescreener=None, int16_predictor=None, exp=None, kernel=None, invks=False, taps=None, invkstaps=3, a1=None, a2=None, chromak_up=None, chromak_up_taps=None, chromak_up_a1=None, chromak_up_a2=None, chromak_down=None, chromak_down_invks=False, chromak_down_invkstaps=3, chromak_down_taps=None, chromak_down_a1=None, chromak_down_a2=None, mode=None, device=None, tools=None):
     funcName = 'nnedi3_resample'
     
     # Get property about input clip
@@ -220,8 +219,8 @@ def nnedi3_resample(input, target_width=None, target_height=None, src_left=None,
                 U = core.std.ShufflePlanes(last, [1], vs.GRAY)
                 V = core.std.ShufflePlanes(last, [2], vs.GRAY)
                 # Chroma up-scaling
-                U = nnedi3_resample_kernel(U, Y.width, Y.height, -sHCPlace / sHSubS, -sVCPlace / sVSubS, None, None, 1, nsize, nns, qual, etype, pscrn, opt, int16_prescreener, int16_predictor, exp, kernel, taps, a1, a2, mode=mode, device=device)
-                V = nnedi3_resample_kernel(V, Y.width, Y.height, -sHCPlace / sHSubS, -sVCPlace / sVSubS, None, None, 1, nsize, nns, qual, etype, pscrn, opt, int16_prescreener, int16_predictor, exp, kernel, taps, a1, a2, mode=mode, device=device)
+                U = nnedi3_resample_kernel(U, Y.width, Y.height, -sHCPlace / sHSubS, -sVCPlace / sVSubS, None, None, 1, nsize, nns, qual, etype, pscrn, opt, int16_prescreener, int16_predictor, exp, kernel, taps, a1, a2, mode=mode, device=device, tools=tools)
+                V = nnedi3_resample_kernel(V, Y.width, Y.height, -sHCPlace / sHSubS, -sVCPlace / sVSubS, None, None, 1, nsize, nns, qual, etype, pscrn, opt, int16_prescreener, int16_predictor, exp, kernel, taps, a1, a2, mode=mode, device=device, tools=tools)
                 # Merge planes
                 last = core.std.ShufflePlanes([Y, U, V], [0, 0, 0], last.format.color_family)
             else:
@@ -246,7 +245,7 @@ def nnedi3_resample(input, target_width=None, target_height=None, src_left=None,
             last = GammaToLinear(last, fulls, fulls, curves, sigmoid=sigmoid)
         elif sigmoid:
             last = SigmoidInverse(last)
-        last = nnedi3_resample_kernel(last, target_width, target_height, src_left, src_top, src_width, src_height, scale_thr, nsize, nns, qual, etype, pscrn, opt, int16_prescreener, int16_predictor, exp, kernel, taps, a1, a2, invks, invkstaps, mode, device)
+        last = nnedi3_resample_kernel(last, target_width, target_height, src_left, src_top, src_width, src_height, scale_thr, nsize, nns, qual, etype, pscrn, opt, int16_prescreener, int16_predictor, exp, kernel, taps, a1, a2, invks, invkstaps, mode, device, tools=tools)
         if gammaConv and dGammaConv:
             last = LinearToGamma(last, fulls, fulls, curved, sigmoid=sigmoid)
         elif sigmoid:
@@ -257,7 +256,7 @@ def nnedi3_resample(input, target_width=None, target_height=None, src_left=None,
         U = core.std.ShufflePlanes(last, [1], vs.GRAY)
         V = core.std.ShufflePlanes(last, [2], vs.GRAY)
         # Scale Y
-        Y = nnedi3_resample_kernel(Y, target_width, target_height, src_left, src_top, src_width, src_height, scale_thr, nsize, nns, qual, etype, pscrn, opt, int16_prescreener, int16_predictor, exp, kernel, taps, a1, a2, mode=mode, device=device)
+        Y = nnedi3_resample_kernel(Y, target_width, target_height, src_left, src_top, src_width, src_height, scale_thr, nsize, nns, qual, etype, pscrn, opt, int16_prescreener, int16_predictor, exp, kernel, taps, a1, a2, mode=mode, device=device, tools=tools)
         # Scale UV
         dCw = target_width // dHSubS
         dCh = target_height // dVSubS
@@ -265,8 +264,8 @@ def nnedi3_resample(input, target_width=None, target_height=None, src_left=None,
         dCsy = ((src_top - sVCPlace) * vScale + dVCPlace) / vScale / sVSubS
         dCsw = src_width / sHSubS
         dCsh = src_height / sVSubS
-        U = nnedi3_resample_kernel(U, dCw, dCh, dCsx, dCsy, dCsw, dCsh, scale_thr, nsize, nns, qual, etype, pscrn, opt, int16_prescreener, int16_predictor, exp, kernel, taps, a1, a2, mode=mode, device=device)
-        V = nnedi3_resample_kernel(V, dCw, dCh, dCsx, dCsy, dCsw, dCsh, scale_thr, nsize, nns, qual, etype, pscrn, opt, int16_prescreener, int16_predictor, exp, kernel, taps, a1, a2, mode=mode, device=device)
+        U = nnedi3_resample_kernel(U, dCw, dCh, dCsx, dCsy, dCsw, dCsh, scale_thr, nsize, nns, qual, etype, pscrn, opt, int16_prescreener, int16_predictor, exp, kernel, taps, a1, a2, mode=mode, device=device, tools=tools)
+        V = nnedi3_resample_kernel(V, dCw, dCh, dCsx, dCsy, dCsw, dCsh, scale_thr, nsize, nns, qual, etype, pscrn, opt, int16_prescreener, int16_predictor, exp, kernel, taps, a1, a2, mode=mode, device=device, tools=tools)
         # Merge planes
         last = core.std.ShufflePlanes([Y, U, V], [0, 0, 0], last.format.color_family)
     
@@ -305,7 +304,7 @@ def nnedi3_resample(input, target_width=None, target_height=None, src_left=None,
     return last
 
 
-def nnedi3_resample_kernel(input, target_width=None, target_height=None, src_left=None, src_top=None, src_width=None, src_height=None, scale_thr=None, nsize=None, nns=None, qual=None, etype=None, pscrn=None, opt=None, int16_prescreener=None, int16_predictor=None, exp=None, kernel=None, taps=None, a1=None, a2=None, invks=False, invkstaps=3, mode=None, device=None):
+def nnedi3_resample_kernel(input, target_width=None, target_height=None, src_left=None, src_top=None, src_width=None, src_height=None, scale_thr=None, nsize=None, nns=None, qual=None, etype=None, pscrn=None, opt=None, int16_prescreener=None, int16_predictor=None, exp=None, kernel=None, taps=None, a1=None, a2=None, invks=False, invkstaps=3, mode=None, device=None, tools=None):
 
     # Parameters of scaling
     if target_width is None:
@@ -360,16 +359,16 @@ def nnedi3_resample_kernel(input, target_width=None, target_height=None, src_lef
     
     if hResample:
         last = core.std.Transpose(last)
-        last = nnedi3_resample_kernel_vertical(last, target_width, src_left, src_width, scale_thr, nsize, nns, qual, etype, pscrn, opt, int16_prescreener, int16_predictor, exp, kernel, taps, a1, a2, invks, invkstaps, mode, device)
+        last = nnedi3_resample_kernel_vertical(last, target_width, src_left, src_width, scale_thr, nsize, nns, qual, etype, pscrn, opt, int16_prescreener, int16_predictor, exp, kernel, taps, a1, a2, invks, invkstaps, mode, device, tools=tools)
         last = core.std.Transpose(last)
     if vResample:
-        last = nnedi3_resample_kernel_vertical(last, target_height, src_top, src_height, scale_thr, nsize, nns, qual, etype, pscrn, opt, int16_prescreener, int16_predictor, exp, kernel, taps, a1, a2, invks, invkstaps, mode, device)
+        last = nnedi3_resample_kernel_vertical(last, target_height, src_top, src_height, scale_thr, nsize, nns, qual, etype, pscrn, opt, int16_prescreener, int16_predictor, exp, kernel, taps, a1, a2, invks, invkstaps, mode, device, tools=tools)
     
     # Output
     return last
 
 
-def nnedi3_resample_kernel_vertical(input, target_height=None, src_top=None, src_height=None, scale_thr=None, nsize=None, nns=None, qual=None, etype=None, pscrn=None, opt=None, int16_prescreener=None, int16_predictor=None, exp=None, kernel=None, taps=None, a1=None, a2=None, invks=False, invkstaps=3, mode=None, device=None):
+def nnedi3_resample_kernel_vertical(input, target_height=None, src_top=None, src_height=None, scale_thr=None, nsize=None, nns=None, qual=None, etype=None, pscrn=None, opt=None, int16_prescreener=None, int16_predictor=None, exp=None, kernel=None, taps=None, a1=None, a2=None, invks=False, invkstaps=3, mode=None, device=None, tools=None):
     
     # Parameters of scaling
     if target_height is None:
@@ -407,7 +406,7 @@ def nnedi3_resample_kernel_vertical(input, target_height=None, src_top=None, src
         return input
     
     # Scaling with nnedi3
-    last = nnedi3_rpow2_vertical(input, eTimes, 1, nsize, nns, qual, etype, pscrn, opt, int16_prescreener, int16_predictor, exp, mode, device)
+    last = nnedi3_rpow2_vertical(input, eTimes, 1, nsize, nns, qual, etype, pscrn, opt, int16_prescreener, int16_predictor, exp, mode, device, tools=tools)
     
     # Center shift calculation
     vShift = 0.5 if eTimes >= 1 else 0
@@ -430,22 +429,22 @@ def nnedi3_resample_kernel_vertical(input, target_height=None, src_top=None, src
     return last
 
 
-def nnedi3_rpow2_vertical(input, eTimes=1, field=1, nsize=None, nns=None, qual=None, etype=None, pscrn=None, opt=None, int16_prescreener=None, int16_predictor=None, exp=None, mode=None, device=None):
+def nnedi3_rpow2_vertical(input, eTimes=1, field=1, nsize=None, nns=None, qual=None, etype=None, pscrn=None, opt=None, int16_prescreener=None, int16_predictor=None, exp=None, mode=None, device=None, tools=None):
     
     if eTimes >= 1:
-        last = nnedi3_dh(input, field, nsize, nns, qual, etype, pscrn, opt, int16_prescreener, int16_predictor, exp, mode, device)
+        last = nnedi3_dh(input, field, nsize, nns, qual, etype, pscrn, opt, int16_prescreener, int16_predictor, exp, mode, device, tools=tools)
         eTimes = eTimes - 1
         field = 0
     else:
         last = input
     
     if eTimes >= 1:
-        return nnedi3_rpow2_vertical(last, eTimes, field, nsize, nns, qual, etype, pscrn, opt, int16_prescreener, int16_predictor, exp, mode, device)
+        return nnedi3_rpow2_vertical(last, eTimes, field, nsize, nns, qual, etype, pscrn, opt, int16_prescreener, int16_predictor, exp, mode, device, tools=tools)
     else:
         return last
 
 
-def nnedi3_dh(input, field=1, nsize=None, nns=None, qual=None, etype=None, pscrn=None, opt=None, int16_prescreener=None, int16_predictor=None, exp=None, mode=None, device=None):
+def nnedi3_dh(input, field=1, nsize=None, nns=None, qual=None, etype=None, pscrn=None, opt=None, int16_prescreener=None, int16_predictor=None, exp=None, mode=None, device=None, tools=None):
     nnedi3_args1 = dict(nsize=nsize, nns=nns, qual=qual, etype=etype, pscrn=pscrn)
     nnedi3_args2 = dict(opt=opt, int16_prescreener=int16_prescreener, int16_predictor=int16_predictor, exp=exp)
 
@@ -454,7 +453,7 @@ def nnedi3_dh(input, field=1, nsize=None, nns=None, qual=None, etype=None, pscrn
         raise ValueError(f'nnedi3_dh: Unsupported mode={mode}, should be znedi3, nnedi3 or nnedi3cl.')
     gpu = True if mode == 'nnedi3cl' else False if mode in ('znedi3', 'nnedi3') else None
 
-    res = NNEDI3(input, field=field, dh=True, gpu=gpu, device=device, **nnedi3_args1, **nnedi3_args2)
+    res = NNEDI3(input, field=field, dh=True, gpu=gpu, device=device, tools=tools, **nnedi3_args1, **nnedi3_args2)
 
     return res
 
@@ -573,7 +572,7 @@ def SSIM_downsample(clip: vs.VideoNode, w: int, h: int,
                     gamma: bool = False, fulls: bool = False, fulld: bool = False,
                     curve: str = '709', sigmoid: bool = False,
                     epsilon: float = 1e-6, depth_args: Optional[Dict[str, Any]] = None,
-                    **resample_args: Any) -> vs.VideoNode:
+                    tools: Optional[Dict[str, str]] = None, **resample_args: Any) -> vs.VideoNode:
     """SSIM downsampler
 
     SSIM downsampler is an image downscaling technique that aims to optimize for the perceptual quality of the downscaled results.
@@ -644,16 +643,16 @@ def SSIM_downsample(clip: vs.VideoNode, w: int, h: int,
     if callable(smooth):
         Filter = smooth
     elif isinstance(smooth, int):
-        Filter = functools.partial(BoxFilter, radius=smooth + 1)
+        Filter = functools.partial(BoxFilter, radius=smooth + 1, tools=tools)
     elif isinstance(smooth, float):
-        if hasattr(core, 'tcanny'):
+        if pick_tool(tools, 'tcanny', ('tcanny', 'std')) == 'tcanny':
             Filter = functools.partial(core.tcanny.TCanny, sigma=smooth, mode=-1)
         else:
             radius = max(1, round(smooth * 1.5))
 
             def _boxblur_filter(src: vs.VideoNode) -> vs.VideoNode:
                 for _ in range(3):
-                    src = BoxFilter(src, radius=radius, radius_v=radius)
+                    src = BoxFilter(src, radius=radius, radius_v=radius, tools=tools)
                 return src
 
             Filter = _boxblur_filter
@@ -664,11 +663,11 @@ def SSIM_downsample(clip: vs.VideoNode, w: int, h: int,
         kernel = 'Bicubic'
 
     if gamma:
-        clip = color.GammaToLinear(Depth(clip, 16), fulls=fulls, fulld=fulld, curve=curve, sigmoid=sigmoid, planes=[0])
+        clip = GammaToLinear(Depth(clip, 16), fulls=fulls, fulld=fulld, curve=curve, sigmoid=sigmoid, planes=[0])
 
     clip = Depth(clip, 32, **depth_args)
 
-    EXPR = get_expr()
+    EXPR = get_expr(tools)
 
     kernel = kernel.capitalize()
 

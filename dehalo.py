@@ -5,7 +5,7 @@ import math
 from typing import Union, Optional, Sequence
 
 from misc import MinBlur, median_blur, mt_expand_multi, mt_inpand_multi
-from helpers import GetPlane, m4, scale_value, cround, Padding, get_expr, get_rg
+from helpers import GetPlane, m4, scale_value, cround, Padding, get_expr, get_rg, pick_tool, tool_function
 
 def DeHalo_alpha(
     clp: vs.VideoNode,
@@ -16,6 +16,7 @@ def DeHalo_alpha(
     lowsens: float = 50.0,
     highsens: float = 50.0,
     ss: float = 1.5,
+    tools=None,
 ) -> vs.VideoNode:
     '''
     Reduce halo artifacts that can occur when sharpening.
@@ -51,7 +52,7 @@ def DeHalo_alpha(
 
     ox = clp.width
     oy = clp.height
-    EXPR = get_expr()
+    EXPR = get_expr(tools)
     halos = clp.resize.Bicubic(m4(ox / rx), m4(oy / ry), filter_param_a=1 / 3, filter_param_b=1 / 3).resize.Bicubic(ox, oy, filter_param_a=1, filter_param_b=0)
     are = EXPR([clp.std.Maximum(), clp.std.Minimum()], expr='x y -')
     ugly = EXPR([halos.std.Maximum(), halos.std.Minimum()], expr='x y -')
@@ -60,13 +61,10 @@ def DeHalo_alpha(
         expr=f'y x - y 0.000001 + / {scale_value(255, 8, bits)} * {scale_value(lowsens, 8, bits)} - y {scale_value(256, 8, bits)} + {scale_value(512, 8, bits)} / {highsens / 100} + *',
     )
     if clp.format.sample_type == vs.FLOAT:
-        so = so.vszip.Limiter() if hasattr(core,'vszip') else so.std.Limiter()
+        so = so.vszip.Limiter() if pick_tool(tools, 'limiter', ('vszip', 'std'), lambda name: name == 'std' or hasattr(core, 'vszip')) == 'vszip' else so.std.Limiter()
     lets = core.std.MaskedMerge(halos, clp, so)
     if ss <= 1:
-      if hasattr(core, 'zsmooth'):
-        remove = core.zsmooth.Repair(clp, lets, mode=1)
-      else:
-        remove = core.rgvs.Repair(clp, lets, mode=1)
+      remove = tool_function(tools, 'rg', 'Repair')(clp, lets, mode=1)
     else:
         remove = EXPR(
             [
@@ -87,7 +85,7 @@ def DeHalo_alpha(
         them = core.std.ShufflePlanes([them, clp_orig], planes=[0, 1, 2], colorfamily=clp_orig.format.color_family)
     return them
     
-def EdgeCleaner(c: vs.VideoNode, strength: int = 10, rep: bool = True, rmode: int = 17, smode: int = 0, hot: bool = False) -> vs.VideoNode:
+def EdgeCleaner(c: vs.VideoNode, strength: int = 10, rep: bool = True, rmode: int = 17, smode: int = 0, hot: bool = False, tools=None) -> vs.VideoNode:
     '''
     EdgeCleaner v1.04
     A simple edge cleaning and weak dehaloing function.
@@ -127,20 +125,17 @@ def EdgeCleaner(c: vs.VideoNode, strength: int = 10, rep: bool = True, rmode: in
         strength += 4
     
     main = Padding(c, 6, 6, 6, 6)
-    if hasattr(core,'warp'):
+    if pick_tool(tools, 'warp', ('warp', 'awarp')) == 'warp':
       main = core.warp.AWarpSharp2(main, blur=1, depth=cround(strength / 2))
     else:
       import sharpen
-      main = sharpen.AWarpSharp2(main, blur=1, depth=cround(strength / 2))
+      main = sharpen.AWarpSharp2(main, blur=1, depth=cround(strength / 2), tools=tools)
     main = core.std.Crop(main, 6, 6, 6, 6)      
      
     if rep:
-      if hasattr(core, 'zsmooth'):
-        main = core.zsmooth.Repair(main, c, mode=rmode)
-      else:
-        main = core.rgvs.Repair(main, c, mode=rmode)
-    EXPR = get_expr()
-    PREWITT = core.edgemasks.ExPrewitt if hasattr(core,"edgemasks") else core.std.Prewitt
+      main = tool_function(tools, 'rg', 'Repair')(main, c, mode=rmode)
+    EXPR = get_expr(tools)
+    PREWITT = core.edgemasks.ExPrewitt if pick_tool(tools, 'edgemasks', ('edgemasks', 'std')) == 'edgemasks' else core.std.Prewitt
     mask = (
         EXPR(PREWITT(c), expr=f'x {scale_value(4, 8, bits)} < 0 x {scale_value(32, 8, bits)} > {peak} x ? ?')
         .std.InvertMask()
@@ -149,12 +144,9 @@ def EdgeCleaner(c: vs.VideoNode, strength: int = 10, rep: bool = True, rmode: in
 
     final = core.std.MaskedMerge(c, main, mask)
     if hot:
-      if hasattr(core, 'zsmooth'):
-        final = core.zsmooth.Repair(final, c, mode=2)
-      else:
-        final = core.rgvs.Repair(final, c, mode=2)
+      final = tool_function(tools, 'rg', 'Repair')(final, c, mode=2)
     if smode > 0:
-        RG = get_rg()
+        RG = get_rg(tools=tools)
         clean = RG(c, mode=17)
         diff = core.std.MakeDiff(c, clean)
         mask = EXPR(PREWITT(RG(diff.std.Levels(min_in=scale_value(40, 8, bits), max_in=scale_value(168, 8, bits), gamma=0.35), mode=7)),
@@ -181,6 +173,7 @@ def FineDehalo(
     excl: bool = True,
     edgeproc: float = 0.0,
     mask: Optional[vs.VideoNode] = None,
+    tools=None,
 ) -> vs.VideoNode:
     '''
     Halo removal script that uses DeHalo_alpha with a few masks and optional contra-sharpening to try remove halos without removing important details.
@@ -240,21 +233,21 @@ def FineDehalo(
 
     # Dehaloing #
 
-    dehaloed = DeHalo_alpha(src, rx=rx, ry=ry, darkstr=darkstr, brightstr=brightstr)
+    dehaloed = DeHalo_alpha(src, rx=rx, ry=ry, darkstr=darkstr, brightstr=brightstr, tools=tools)
 
     # Contrasharpening
     if contra > 0:
-        dehaloed = FineDehalo_contrasharp(dehaloed, src, contra)
+        dehaloed = FineDehalo_contrasharp(dehaloed, src, contra, tools=tools)
 
     # Main edges #
 
     # Basic edge detection, thresholding will be applied later
-    PREWITT = core.edgemasks.ExPrewitt if hasattr(core,"edgemasks") else core.std.Prewitt
+    PREWITT = core.edgemasks.ExPrewitt if pick_tool(tools, 'edgemasks', ('edgemasks', 'std')) == 'edgemasks' else core.std.Prewitt
     edges = mask if mask is not None else PREWITT(src)
 
-    vszip = hasattr(core,'vszip')
+    vszip = pick_tool(tools, 'limiter', ('vszip', 'std'), lambda name: name == 'std' or hasattr(core, 'vszip')) == 'vszip'
     # Keeps only the sharpest edges (line edges)
-    EXPR = get_expr()
+    EXPR = get_expr(tools)
     strong = EXPR(edges, expr=f'x {scale_value(thmi, 8, bits)} - {thma - thmi} / 255 *')
     if is_float:
         strong = strong.vszip.Limiter() if vszip else strong.std.Limiter()
@@ -344,7 +337,7 @@ def FineDehalo(
         else:
             return strong
 
-def FineDehalo_contrasharp(dehaloed: vs.VideoNode, src: vs.VideoNode, level: float) -> vs.VideoNode:
+def FineDehalo_contrasharp(dehaloed: vs.VideoNode, src: vs.VideoNode, level: float, tools=None) -> vs.VideoNode:
     '''level == 1.0 : normal contrasharp'''
     if not (isinstance(dehaloed, vs.VideoNode) and isinstance(src, vs.VideoNode)):
         raise vs.Error('FineDehalo_contrasharp: this is not a clip')
@@ -360,18 +353,16 @@ def FineDehalo_contrasharp(dehaloed: vs.VideoNode, src: vs.VideoNode, level: flo
     if dehaloed.format.color_family != vs.GRAY:
         dehaloed_orig = dehaloed
         dehaloed = GetPlane(dehaloed,0)
-        src = GetPlaney(src,0)
+        src = GetPlane(src,0)
     else:
         dehaloed_orig = None
 
     bb = dehaloed.std.Convolution(matrix=[1, 2, 1, 2, 4, 2, 1, 2, 1])
-    bbb = median_blur(bb, radius=2)
-    if hasattr(core, 'zsmooth'):
-      bb2 = core.zsmooth.Repair(bb, core.zsmooth.Repair(bb, bbb, mode=1), mode=1)
-    else:
-      bb2 = core.rgvs.Repair(bb, core.rgvs.Repair(bb, bbb, mode=1), mode=1)
+    bbb = median_blur(bb, radius=2, tools=tools)
+    REPAIR = tool_function(tools, 'rg', 'Repair')
+    bb2 = REPAIR(bb, REPAIR(bb, bbb, mode=1), mode=1)
     xd = core.std.MakeDiff(bb, bb2)
-    EXPR = get_expr()
+    EXPR = get_expr(tools)
     xd = EXPR(xd, expr=f'x {neutral} - 2.49 * {level} * {neutral} +')
     xdd = EXPR(
         [xd, core.std.MakeDiff(src, dehaloed)], expr=f'x {neutral} - y {neutral} - * 0 < {neutral} x {neutral} - abs y {neutral} - abs < x y ? ?'
@@ -382,7 +373,7 @@ def FineDehalo_contrasharp(dehaloed: vs.VideoNode, src: vs.VideoNode, level: flo
         last = core.std.ShufflePlanes([last, dehaloed_orig], planes=[0, 1, 2], colorfamily=dehaloed_orig.format.color_family)
     return last
 
-def YAHR(clp: vs.VideoNode, blur: int = 2, depth: int = 32) -> vs.VideoNode:
+def YAHR(clp: vs.VideoNode, blur: int = 2, depth: int = 32, tools=None) -> vs.VideoNode:
     '''
     Y'et A'nother H'alo R'educing script
 
@@ -405,23 +396,20 @@ def YAHR(clp: vs.VideoNode, blur: int = 2, depth: int = 32) -> vs.VideoNode:
     else:
         clp_orig = None
 
-    b1 = MinBlur(clp, 2).std.Convolution(matrix=[1, 2, 1, 2, 4, 2, 1, 2, 1])
+    b1 = MinBlur(clp, 2, tools=tools).std.Convolution(matrix=[1, 2, 1, 2, 4, 2, 1, 2, 1])
     b1D = core.std.MakeDiff(clp, b1)
     
     w1 = Padding(clp, 6, 6, 6, 6)
-    if hasattr(core,'warp'):
+    if pick_tool(tools, 'warp', ('warp', 'awarp')) == 'warp':
       w1 = core.warp.AWarpSharp2(w1, blur=blur, depth=depth)
     else:
       import sharpen
-      w1 = sharpen.AWarpSharp2(w1, blur=blur, depth=depth)
+      w1 = sharpen.AWarpSharp2(w1, blur=blur, depth=depth, tools=tools)
     w1 = core.std.Crop(w1, 6, 6, 6, 6)      
     
-    w1b1 = MinBlur(w1, 2).std.Convolution(matrix=[1, 2, 1, 2, 4, 2, 1, 2, 1])
+    w1b1 = MinBlur(w1, 2, tools=tools).std.Convolution(matrix=[1, 2, 1, 2, 4, 2, 1, 2, 1])
     w1b1D = core.std.MakeDiff(w1, w1b1)
-    if hasattr(core, 'zsmooth'):
-      DD = core.zsmooth.Repair(b1D, w1b1D, mode=13)
-    else:
-      DD = core.rgvs.Repair(b1D, w1b1D, mode=13)
+    DD = tool_function(tools, 'rg', 'Repair')(b1D, w1b1D, mode=13)
     DD2 = core.std.MakeDiff(b1D, DD)
     last = core.std.MakeDiff(clp, DD2)
 
@@ -438,7 +426,8 @@ def SecondOrderDehalo(
     vconv: list[int] | None = None,
     edgemask: str | None = None,
     growmask: str | None = None,
-    showmask: int = 0
+    showmask: int = 0,
+    tools=None
 ) -> vs.VideoNode:
     """
     SecondOrderDehalo - Second-order dehalo removal using directional edge masks and convolution.
@@ -548,7 +537,7 @@ def SecondOrderDehalo(
     else:
         raise vs.Error(f'FineDehalo2: Unknown edgemask type "{edgemask}"')
 
-    EXPR = get_expr()
+    EXPR = get_expr(tools)
     temp_h = EXPR([mask_h, mask_v], ['x 3 * y -'])
     temp_v = EXPR([mask_v, mask_h], ['x 3 * y -'])
 
@@ -594,8 +583,8 @@ def SecondOrderDehalo(
 
 def BlindDeHalo3(clp: vs.VideoNode, rx: float = 3.0, ry: float = 3.0, strength: float = 125,
                  lodamp: float = 0, hidamp: float = 0, sharpness: float = 0, tweaker: float = 0,
-                 PPmode: int = 0, PPlimit: Optional[int] = None, interlaced: bool = False
-                 ) -> vs.VideoNode:
+                 PPmode: int = 0, PPlimit: Optional[int] = None, interlaced: bool = False,
+                 tools=None) -> vs.VideoNode:
     """Avisynth's BlindDeHalo3() version: 3_MT2
 
     This script removes the light & dark halos from too strong "Edge Enhancement".
@@ -712,7 +701,7 @@ def BlindDeHalo3(clp: vs.VideoNode, rx: float = 3.0, ry: float = 3.0, strength: 
         elif abs(PPmode) == 2:
             postclean = core.std.MaskedMerge(base, base.std.Convolution(matrix=[1, 1, 1, 1, 0, 1, 1, 1, 1]), hull)
         elif abs(PPmode) == 3:
-            if hasattr(core,'zsmooth'):
+            if pick_tool(tools, 'median', ('zsmooth', 'std')) == 'zsmooth':
               postclean = core.std.MaskedMerge(base, base.zsmooth.Median(), hull)
             else:
               postclean = core.std.MaskedMerge(base, base.std.Median(), hull)
@@ -724,7 +713,7 @@ def BlindDeHalo3(clp: vs.VideoNode, rx: float = 3.0, ry: float = 3.0, strength: 
     if PPlimit != 0:
         postclean = core.std.Expr([base, postclean], [LIM])
 
-    last = haf_Weave(postclean, tff=True) if interlaced else postclean
+    last = core.std.DoubleWeave(postclean, tff=True)[::2] if interlaced else postclean
 
     if not isGray:
         last = core.std.ShufflePlanes([last, clp_src], list(range(clp_src.format.num_planes)), clp_src.format.color_family)

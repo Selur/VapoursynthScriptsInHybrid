@@ -5,17 +5,17 @@ import math
 from functools import partial
 from typing import Optional, Union, Sequence, Any, Dict
 
-from helpers import GetPlane, BoxFilter, scale, get_expr, get_rg
+from helpers import GetPlane, BoxFilter, scale, get_expr, get_rg, pick_tool, type_error, value_error
 from misc import SCDetect
 
 # taken from adjust
-def Tweak(clip, hue=None, sat=None, bright=None, cont=None, coring=True):
+def Tweak(clip, hue=None, sat=None, bright=None, cont=None, coring=True, tools=None):
     if clip.format is None:
         raise vs.Error("Tweak: only clips with constant format are accepted.")
 
     if clip.format.color_family == vs.RGB:
         raise vs.Error("Tweak: RGB clips are not accepted.")
-    EXPR = get_expr()
+    EXPR = get_expr(tools)
         
     if (hue is not None or sat is not None) and clip.format.color_family != vs.GRAY:
         hue = 0.0 if hue is None else hue
@@ -203,7 +203,8 @@ def SmoothLevels(
     Smode: int = -2,
     Mfactor: Union[int, float] = 2,
     RGmode: int = 12,
-    useDB: bool = False
+    useDB: bool = False,
+    tools: Optional[Dict[str, str]] = None
 ) -> vs.VideoNode:
     """Optimized SmoothLevels function with performance improvements."""
     
@@ -215,7 +216,7 @@ def SmoothLevels(
         raise vs.Error('SmoothLevels: RGB format is not supported')
 
     core = vs.core
-    EXPR = get_expr()
+    EXPR = get_expr(tools)
     
     # Precompute format-dependent values
     bits = input.format.bits_per_sample
@@ -246,7 +247,7 @@ def SmoothLevels(
 
     # RemoveGrain mode selection
     RG_MAP = {
-        4: core.zsmooth.Median if hasattr(core, 'zsmooth') else core.std.Median,
+        4: core.zsmooth.Median if pick_tool(tools, 'median', ('zsmooth', 'std')) == 'zsmooth' else core.std.Median,
         11: partial(core.std.Convolution, matrix=[1, 2, 1, 2, 4, 2, 1, 2, 1]),
         12: partial(core.std.Convolution, matrix=[1, 2, 1, 2, 4, 2, 1, 2, 1]),
         19: partial(core.std.Convolution, matrix=[1, 1, 1, 1, 0, 1, 1, 1, 1]),
@@ -255,7 +256,7 @@ def SmoothLevels(
     
     RemoveGrain = RG_MAP.get(RGmode)
     if RemoveGrain is None:
-        RG = get_rg()
+        RG = get_rg(tools=tools)
         RemoveGrain = partial(RG, mode=[RGmode])
 
     # Build expressions
@@ -315,9 +316,11 @@ def SmoothLevels(
     
     if useDB:
         deband_expr = f'x {neutral[1]} - {Mfactor} / {neutral[1]} +'
-        use_vszip = hasattr(core, 'vszip')
+        deband = pick_tool(tools, 'f3kdb', ('vszip', 'neo_f3kdb', 'f3kdb'),
+                           lambda name: name == 'f3kdb' or hasattr(core, name)) or 'f3kdb'
+        use_vszip = deband == 'vszip'
         if not use_vszip:
-            deband_func = core.neo_f3kdb.Deband if hasattr(core, 'neo_f3kdb') else core.f3kdb.Deband
+            deband_func = core.neo_f3kdb.Deband if deband == 'neo_f3kdb' else core.f3kdb.Deband
 
         def _deband(clip):
             deband_in = EXPR(clip, expr=[deband_expr])
@@ -438,7 +441,7 @@ def HighBitDepthHistogram(clip: vs.VideoNode, method: str = "Classic") -> vs.Vid
 
 
 # based on: https://forum.videohelp.com/threads/396285-Converting-Blu-Ray-YUV-to-RGB-and-back-to-YUV#post2576719 by  _Al_
-def RGBAdjust(rgb: vs.VideoNode, r: float=1.0, g: float=1.0, b: float=1.0, a: float=1.0, rb: float=0.0, gb: float=0.0, bb: float=0.0, ab: float=0.0, rg: float=1.0, gg: float=1.0, bg: float=1.0, ag: float=1.0):
+def RGBAdjust(rgb: vs.VideoNode, r: float=1.0, g: float=1.0, b: float=1.0, a: float=1.0, rb: float=0.0, gb: float=0.0, bb: float=0.0, ab: float=0.0, rg: float=1.0, gg: float=1.0, bg: float=1.0, ag: float=1.0, tools=None):
   funcName = 'RGBAdjust'
   if rgb.format.color_family != vs.RGB:
     raise ValueError(funcName + ': input clip needs to be RGB!')
@@ -472,7 +475,7 @@ def RGBAdjust(rgb: vs.VideoNode, r: float=1.0, g: float=1.0, b: float=1.0, a: fl
       maxVal = 255.0
   rb,gb,bb = map(lambda b: b if size==maxVal else size/maxVal*b if type==vs.INTEGER else b/maxVal, [rb,gb,bb])
 
-  EXPR = get_expr()
+  EXPR = get_expr(tools)
   #x*r + rb , x*g + gb , x*b + bb
   rgb_adjusted = EXPR(rgb, [f"x {r} * {rb} +", f"x {g} * {gb} +", f"x {b} * {bb} +"])
 
@@ -488,7 +491,8 @@ def AutoGain(
     strength: float = 0.5,
     darken: bool = False,
     sc_threshold: float = 0.4,
-    ema_alpha: float = 0.15
+    ema_alpha: float = 0.15,
+    tools: Optional[Dict[str, str]] = None
 ) -> vs.VideoNode:
     """
     AutoGain: Scene-aware automatic gain adjustment with EMA smoothing.
@@ -526,15 +530,15 @@ def AutoGain(
     if fmt.color_family != vs.YUV:
         raise ValueError("AutoGain: Only YUV clips supported.")
         
-    if hasattr(core, 'vszip'):
-      return AutoGainZ(clip)
+    if pick_tool(tools, 'planestats', ('vszip', 'std'), lambda name: name == 'std' or hasattr(core, 'vszip')) == 'vszip':
+      return AutoGainZ(clip, gain_limit, strength, darken, sc_threshold, ema_alpha, tools=tools)
 
     # Extract luma plane
     Y = core.std.ShufflePlanes(clip, 0, vs.GRAY)
 
     # Plane statistics + scene detection
     stats = core.std.PlaneStats(Y)
-    sc = SCDetect(Y, threshold=sc_threshold)
+    sc = SCDetect(Y, threshold=sc_threshold, tools=tools)
     prop_src = core.std.CopyFrameProps(sc, stats)
 
     # Determine peak value
@@ -589,7 +593,7 @@ def AutoGain(
         expr = f"x {o:.8f} + {s:.8f} * {w:.8f} * x {1.0-w:.8f} * +"
 
         # Use Akarin / Expr depending on availability
-        EXPR = get_expr()
+        EXPR = get_expr(tools)
         return EXPR([Y], expr=[expr])
 
     Y_adj = core.std.FrameEval(Y, eval=apply_gain, prop_src=prop_src)
@@ -608,7 +612,8 @@ def AutoGainZ(
     strength: float = 0.5,
     darken: bool = False,
     sc_threshold: float = 0.4,
-    ema_alpha: float = 0.15
+    ema_alpha: float = 0.15,
+    tools: Optional[Dict[str, str]] = None
 ) -> vs.VideoNode:
     """
     AutoGain optimized with vszip PlaneAverage.
@@ -632,7 +637,7 @@ def AutoGainZ(
     )
 
     # Scene detection
-    sc = SCDetect(Y, threshold=sc_threshold)
+    sc = SCDetect(Y, threshold=sc_threshold, tools=tools)
 
     # Combine stats + scene detection properties
     prop_src = core.std.CopyFrameProps(sc, stats)
@@ -688,7 +693,7 @@ def AutoGainZ(
         expr = f"x {o:.8f} + {s:.8f} * {w:.8f} * x {1.0-w:.8f} * +"
 
         # Use Akarin / Expr depending on availability
-        EXPR = get_expr()
+        EXPR = get_expr(tools)
 
         return EXPR(Y, expr=[expr])
 
@@ -707,7 +712,7 @@ def AutoGainZ(
 
 
 # auto white from https://www.vapoursynth.com/doc/functions/frameeval.html
-def AutoWhiteAdjust(n, f, clip, core):
+def AutoWhiteAdjust(n, f, clip, core, tools=None):
     small_number = 1e-9
 
     # Extract per-plane averages from PlaneStats props
@@ -728,12 +733,12 @@ def AutoWhiteAdjust(n, f, clip, core):
     b_gain = blue_corr / norm
 
     # Use Akarin / Expr depending on availability
-    EXPR = get_expr()
+    EXPR = get_expr(tools)
 
     return EXPR(clip, expr=[f"x {r_gain} *", f"x {g_gain} *", f"x {b_gain} *"])
 
 # AutoWhiteAdjustZ version using vszip
-def AutoWhiteAdjustZ(clip, r, g, b, core):
+def AutoWhiteAdjustZ(clip, r, g, b, core, tools=None):
     small_number = 1e-9
 
     # Compute per-plane correction factors
@@ -751,7 +756,7 @@ def AutoWhiteAdjustZ(clip, r, g, b, core):
     b_gain = blue_corr / norm
 
     # Select the fastest available expression filter
-    EXPR = get_expr()
+    EXPR = get_expr(tools)
 
     return EXPR(clip, expr=[f"x {r_gain} *", f"x {g_gain} *", f"x {b_gain} *"])
 
@@ -761,21 +766,21 @@ def AutoWhiteAdjustZ(clip, r, g, b, core):
 # This function calculates the correction gain for each color plane (red, green, blue) based on the average color values of each plane, and applies the correction gain to each pixel in the input clip.
 # The output is a video clip with corrected white balance.
 ###
-def AutoWhite(clip):
-    if hasattr(core, 'vszip'):
-      return AutoWhiteZ(clip)
+def AutoWhite(clip, tools=None):
+    if pick_tool(tools, 'planestats', ('vszip', 'std'), lambda name: name == 'std' or hasattr(core, 'vszip')) == 'vszip':
+      return AutoWhiteZ(clip, tools=tools)
     # Compute per-plane stats separately (required for correct output)
     r_avg = core.std.PlaneStats(clip, plane=0)
     g_avg = core.std.PlaneStats(clip, plane=1)
     b_avg = core.std.PlaneStats(clip, plane=2)
 
     # Use FrameEval with partial to avoid repeated Python lookups
-    return core.std.FrameEval(clip, partial(AutoWhiteAdjust, clip=clip, core=core), prop_src=[r_avg, g_avg, b_avg])
+    return core.std.FrameEval(clip, partial(AutoWhiteAdjust, clip=clip, core=core, tools=tools), prop_src=[r_avg, g_avg, b_avg])
 
 
 
 # AutoWhite version using vszip
-def AutoWhiteZ(clip):
+def AutoWhiteZ(clip, tools=None):
     # One PlaneAverage per plane
     r_avg = core.vszip.PlaneAverage(clip, exclude=[-1], planes=[0], prop="r_avg")
     g_avg = core.vszip.PlaneAverage(clip, exclude=[-1], planes=[1], prop="g_avg")
@@ -789,7 +794,8 @@ def AutoWhiteZ(clip):
             r=f[0].props['r_avgAvg'],  # correct property name
             g=f[1].props['g_avgAvg'],
             b=f[2].props['b_avgAvg'],
-            core=core
+            core=core,
+            tools=tools
         ),
         prop_src=[r_avg, g_avg, b_avg]
     )
@@ -798,7 +804,7 @@ def AutoWhiteZ(clip):
 
 
 # ToneMapping Simple
-def tm(clip="",source_peak="",desat=50,lin=True,show_satmask=False,show_clipped=False ) :
+def tm(clip="",source_peak="",desat=50,lin=True,show_satmask=False,show_clipped=False, tools=None) :
     c=clip
     o=c
     a=c
@@ -818,11 +824,11 @@ def tm(clip="",source_peak="",desat=50,lin=True,show_satmask=False,show_clipped=
     w=((exposure_bias*(0.15*exposure_bias+0.10*0.50)+0.20*0.02)/(exposure_bias*(0.15*exposure_bias+0.50)+0.20*0.30))-0.02/0.30
     tm_ldr_value=tm * (1 / w)#value of 100 nits after the tone mapping
     ldr_value_mult=tm_ldr_value/(1/exposure_bias)#0.1 (100nits) * ldr_value_mult=tm_ldr_value
-    EXPR = get_expr()
+    EXPR = get_expr(tools)
     tm = EXPR(c, expr="x  {exposure_bias} * 0.15 x  {exposure_bias} * * 0.05 + * 0.004 + x  {exposure_bias} * 0.15 x  {exposure_bias} * * 0.50 + * 0.06 + / 0.02 0.30 / -  ".format(exposure_bias=exposure_bias),format=vs.RGBS)
     w=((exposure_bias*(0.15*exposure_bias+0.10*0.50)+0.20*0.02)/(exposure_bias*(0.15*exposure_bias+0.50)+0.20*0.30))-0.02/0.30
     tm = EXPR(clips=[tm,c], expr="x  1 {w}  / * ".format(exposure_bias=exposure_bias,w=w),format=vs.RGBS)
-    vszip = hasattr(core,'vszip')
+    vszip = pick_tool(tools, 'limiter', ('vszip', 'std'), lambda name: name == 'std' or hasattr(core, 'vszip')) == 'vszip'
     tm = core.vszip.Limiter(tm, [0,0,0], [1,1,1]) if vszip else core.std.Limiter(tm, 0, 1)
 
     if lin == True :
@@ -875,16 +881,16 @@ def tm(clip="",source_peak="",desat=50,lin=True,show_satmask=False,show_clipped=
  
     return c 
 
-def hablehdr10tosdr(clip, source_peak=1000, desat=50, tFormat=vs.YUV420P8, tMatrix="709", tRange="limited", color_loc="center", f_a=0.0, f_b=0.75, show_satmask=False,lin=True,show_clipped=False) :
+def hablehdr10tosdr(clip, source_peak=1000, desat=50, tFormat=vs.YUV420P8, tMatrix="709", tRange="limited", color_loc="center", f_a=0.0, f_b=0.75, show_satmask=False,lin=True,show_clipped=False, tools=None) :
   core = vs.core
   clip=core.resize.Bicubic(clip=clip, format=vs.RGBS, filter_param_a=f_a, filter_param_b=f_b, range_in_s="limited", matrix_in_s="2020ncl", primaries_in_s="2020", primaries_s="2020", transfer_in_s="st2084", transfer_s="linear",dither_type="none", nominal_luminance=1000)
-  clip=tm(clip=clip,source_peak=source_peak,desat=desat,show_satmask=show_satmask,lin=lin,show_clipped=show_clipped) 
+  clip=tm(clip=clip,source_peak=source_peak,desat=desat,show_satmask=show_satmask,lin=lin,show_clipped=show_clipped,tools=tools) 
   if tFormat != vs.RGBS:
     clip=core.resize.Bicubic(clip=clip, format=tFormat, filter_param_a=f_a, filter_param_b=f_b, matrix_s=tMatrix, primaries_in_s="2020", primaries_s=tMatrix, transfer_in_s="linear", transfer_s=tMatrix, dither_type="ordered")
     
   return clip
   
-def tm_simple(clip="",source_peak="" ) :
+def tm_simple(clip="",source_peak="", tools=None) :
     core = vs.core
     c=clip
     o=c
@@ -900,11 +906,11 @@ def tm_simple(clip="",source_peak="" ) :
     #tm=((x*exposure_bias*(0.15*x*exposure_bias+0.10*0.50)+0.20*0.02) / (x*exposure_bias*(0.15*x*exposure_bias+0.50)+0.20*0.30)) - 0.02/0.30
     #w=((exposure_bias*(0.15*exposure_bias+0.10*0.50)+0.20*0.02)/(exposure_bias*(0.15*exposure_bias+0.50)+0.20*0.30))-0.02/0.30
     #tm=tm * (1 / w)
-    EXPR = get_expr()
+    EXPR = get_expr(tools)
     tm = EXPR(c, expr="x  {exposure_bias} * 0.15 x  {exposure_bias} * * 0.05 + * 0.004 + x  {exposure_bias} * 0.15 x  {exposure_bias} * * 0.50 + * 0.06 + / 0.02 0.30 / -  ".format(exposure_bias=exposure_bias),format=vs.RGBS)
     w=((exposure_bias*(0.15*exposure_bias+0.10*0.50)+0.20*0.02)/(exposure_bias*(0.15*exposure_bias+0.50)+0.20*0.30))-0.02/0.30
     tm = EXPR(clips=[tm,c], expr="x  1 {w}  / * ".format(exposure_bias=exposure_bias,w=w),format=vs.RGBS)
-    vszip = hasattr(core,'vszip')
+    vszip = pick_tool(tools, 'limiter', ('vszip', 'std'), lambda name: name == 'std' or hasattr(core, 'vszip')) == 'vszip'
     tm = core.vszip.Limiter(tm, [0,0,0], [1,1,1]) if vszip else core.std.Limiter(tm, 0, 1)
 
     r=core.std.ShufflePlanes(clips=[a], planes=[0], colorfamily=vs.GRAY)
@@ -943,10 +949,10 @@ def tm_simple(clip="",source_peak="" ) :
 
 
    
-def simplehdr10tosdr(clip, source_peak=1000, tFormat=vs.YUV420P8, tMatrix="709", tRange="limited", color_loc="center", f_a=0.0, f_b=0.75) :
+def simplehdr10tosdr(clip, source_peak=1000, tFormat=vs.YUV420P8, tMatrix="709", tRange="limited", color_loc="center", f_a=0.0, f_b=0.75, tools=None) :
   core = vs.core
   clip=core.resize.Bicubic(clip=clip, format=vs.RGBS,filter_param_a=f_a,filter_param_b=f_b, range_in_s="limited", matrix_in_s="2020ncl", primaries_in_s="2020", primaries_s="2020", transfer_in_s="st2084", transfer_s="linear",dither_type="none", nominal_luminance=1000)
-  clip=tm_simple(clip=clip,source_peak=source_peak)
+  clip=tm_simple(clip=clip,source_peak=source_peak,tools=tools)
   if tFormat != vs.RGBS:
     clip=core.resize.Bicubic(clip=clip, format=tFormat, filter_param_a=f_a, filter_param_b=f_b, matrix_s=tMatrix, primaries_in_s="2020", primaries_s=tMatrix, transfer_in_s="linear", transfer_s=tMatrix, dither_type="ordered")
   return clip
@@ -957,7 +963,8 @@ def simplehdr10tosdr(clip, source_peak=1000, tFormat=vs.YUV420P8, tMatrix="709",
 # Type aliases
 def SmoothGrad(input: vs.VideoNode, radius: int = 9, thr: float = 0.25,
                ref: Optional[vs.VideoNode] = None, elast: float = 3.0,
-               planes: Optional[Union[int, Sequence[int]]] = None, **limit_filter_args: Any) -> vs.VideoNode:
+               planes: Optional[Union[int, Sequence[int]]] = None, tools: Optional[Dict[str, str]] = None,
+               **limit_filter_args: Any) -> vs.VideoNode:
     '''Avisynth's SmoothGrad
 
     SmoothGrad smooths the low gradients or flat areas of a 16-bit clip.
@@ -990,11 +997,11 @@ def SmoothGrad(input: vs.VideoNode, radius: int = 9, thr: float = 0.25,
         planes = [planes]
 
     # process
-    smooth = BoxFilter(input, radius, planes=planes)
+    smooth = BoxFilter(input, radius, planes=planes, tools=tools)
 
-    return LimitFilter(smooth, input, ref, thr, elast, planes=planes, **limit_filter_args)
+    return LimitFilter(smooth, input, ref, thr, elast, planes=planes, tools=tools, **limit_filter_args)
  
-def ClipRGB(clip: vs.VideoNode, min8: int = 16, max8: int = 235) -> vs.VideoNode:
+def ClipRGB(clip: vs.VideoNode, min8: int = 16, max8: int = 235, tools=None) -> vs.VideoNode:
     """
     Hard-clips all RGB channels of a clip to a specified limited-range interval,
     scaled to the clip's bit depth. Useful for enforcing broadcast-safe RGB levels.
@@ -1017,7 +1024,7 @@ def ClipRGB(clip: vs.VideoNode, min8: int = 16, max8: int = 235) -> vs.VideoNode
     lo = int(round(min8 * peak / 255))
     hi = int(round(max8 * peak / 255))
 
-    EXPR = get_expr()
+    EXPR = get_expr(tools)
     expr = f'x {lo} max {hi} min'
     return EXPR(clip, [expr] * 3)
 
@@ -1079,7 +1086,7 @@ def ClipRGB(clip: vs.VideoNode, min8: int = 16, max8: int = 235) -> vs.VideoNode
 ##         - False: use the std.Lut implementation if available
 ##         default: True
 ################################################################################################################################
-def LimitFilter(flt, src, ref=None, thr=None, elast=None, brighten_thr=None, thrc=None, force_expr=None, planes=None):
+def LimitFilter(flt, src, ref=None, thr=None, elast=None, brighten_thr=None, thrc=None, force_expr=None, planes=None, tools=None):
     # input clip
     if not isinstance(flt, vs.VideoNode):
         raise type_error('"flt" must be a clip!')
@@ -1198,12 +1205,13 @@ def LimitFilter(flt, src, ref=None, thr=None, elast=None, brighten_thr=None, thr
                     expr.append(limitExprY)
             else:
                 expr.append("")
-        EXPR = get_expr()
+        EXPR = get_expr(tools)
         if ref is None:
             clip = EXPR([flt, src], expr)
         else:
             clip = EXPR([flt, src, ref], expr)
     else: # implementation with std.MakeDiff, std.Lut and std.MergeDiff
+        from deband import _limit_diff_lut
         diff = core.std.MakeDiff(flt, src, planes=planes)
         if sIsYUV:
             if process[0]:
@@ -1317,10 +1325,10 @@ def SetColorSpace(clip, ChromaLocation=None, ColorRange=None, Primaries=None, Ma
         pass
     elif isinstance(ChromaLocation, bool):
         if ChromaLocation is False:
-            clip = RemoveFrameProp(clip, '_ChromaLocation')
+            clip = core.std.RemoveFrameProps(clip, props=['_ChromaLocation'])
     elif isinstance(ChromaLocation, int):
         if ChromaLocation >= 0 and ChromaLocation <=5:
-            clip = core.std.SetFrameProp(clip, prop='_ChromaLocation', intval=ChromaLocation)
+            clip = core.std.SetFrameProps(clip, **{'_ChromaLocation': ChromaLocation})
         else:
             raise value_error('valid range of "ChromaLocation" is [0, 5]!')
     else:
@@ -1331,10 +1339,10 @@ def SetColorSpace(clip, ChromaLocation=None, ColorRange=None, Primaries=None, Ma
         pass
     elif isinstance(ColorRange, bool):
         if ColorRange is False:
-            clip = RemoveFrameProp(clip, prop_name)
+            clip = core.std.RemoveFrameProps(clip, props=[prop_name])
     elif isinstance(ColorRange, int):
         if ColorRange >= 0 and ColorRange <=1:
-            clip = core.std.SetFrameProp(clip, prop=prop_name, intval=ColorRange)
+            clip = core.std.SetFrameProps(clip, **{prop_name: ColorRange})
         else:
             raise value_error('valid range of "ColorRange" is [0, 1]!')
     else:
@@ -1344,9 +1352,9 @@ def SetColorSpace(clip, ChromaLocation=None, ColorRange=None, Primaries=None, Ma
         pass
     elif isinstance(Primaries, bool):
         if Primaries is False:
-            clip = RemoveFrameProp(clip, '_Primaries')
+            clip = core.std.RemoveFrameProps(clip, props=['_Primaries'])
     elif isinstance(Primaries, int):
-        clip = core.std.SetFrameProp(clip, prop='_Primaries', intval=Primaries)
+        clip = core.std.SetFrameProps(clip, **{'_Primaries': Primaries})
     else:
         raise type_error('"Primaries" must be an int or a bool!')
 
@@ -1354,9 +1362,9 @@ def SetColorSpace(clip, ChromaLocation=None, ColorRange=None, Primaries=None, Ma
         pass
     elif isinstance(Matrix, bool):
         if Matrix is False:
-            clip = RemoveFrameProp(clip, '_Matrix')
+            clip = core.std.RemoveFrameProps(clip, props=['_Matrix'])
     elif isinstance(Matrix, int):
-        clip = core.std.SetFrameProp(clip, prop='_Matrix', intval=Matrix)
+        clip = core.std.SetFrameProps(clip, **{'_Matrix': Matrix})
     else:
         raise type_error('"Matrix" must be an int or a bool!')
 
@@ -1364,9 +1372,9 @@ def SetColorSpace(clip, ChromaLocation=None, ColorRange=None, Primaries=None, Ma
         pass
     elif isinstance(Transfer, bool):
         if Transfer is False:
-            clip = RemoveFrameProp(clip, '_Transfer')
+            clip = core.std.RemoveFrameProps(clip, props=['_Transfer'])
     elif isinstance(Transfer, int):
-        clip = core.std.SetFrameProp(clip, prop='_Transfer', intval=Transfer)
+        clip = core.std.SetFrameProps(clip, **{'_Transfer': Transfer})
     else:
         raise type_error('"Transfer" must be an int or a bool!')
 

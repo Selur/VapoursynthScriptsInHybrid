@@ -55,7 +55,7 @@ from misc import SCDetect
 #   (The scene change threshold, scnchg, is not reflected in the mask.)
 #
 ###################
-def LUTDeCrawl(input, ythresh=10, cthresh=10, maxdiff=50, scnchg=25, usemaxdiff=True, mask=False):
+def LUTDeCrawl(input, ythresh=10, cthresh=10, maxdiff=50, scnchg=25, usemaxdiff=True, mask=False, tools=None):
     def YDifferenceFromPrevious(n, f, clips):
         if f.props['_SceneChangePrev']:
             return clips[0]
@@ -88,7 +88,7 @@ def LUTDeCrawl(input, ythresh=10, cthresh=10, maxdiff=50, scnchg=25, usemaxdiff=
     input_plus_y = GetPlane(input_plus, 0)
     input_plus_u = GetPlane(input_plus, 1)
     input_plus_v = GetPlane(input_plus, 2)
-    EXPR = get_expr()
+    EXPR = get_expr(tools)
 
     average_y = EXPR([input_minus_y, input_plus_y], expr=[f'x y - abs {ythresh} < x y + 2 / 0 ?'])
     average_u = EXPR([input_minus_u, input_plus_u], expr=[f'x y - abs {cthresh} < {peak} 0 ?'])
@@ -108,7 +108,7 @@ def LUTDeCrawl(input, ythresh=10, cthresh=10, maxdiff=50, scnchg=25, usemaxdiff=
     fixed_y = core.std.Merge(average_y, input_y)
 
     output = core.std.ShufflePlanes([core.std.MaskedMerge(input_y, fixed_y, themask), input], planes=[0, 1, 2], colorfamily=input.format.color_family)
-    input = SCDetect(input, threshold=scnchg / 255)
+    input = SCDetect(input, threshold=scnchg / 255, tools=tools)
     output = output.std.FrameEval(eval=partial(YDifferenceFromPrevious, clips=[input, output]), prop_src=input)
     output = output.std.FrameEval(eval=partial(YDifferenceToNext, clips=[input, output]), prop_src=input)
 

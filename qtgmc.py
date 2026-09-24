@@ -6,8 +6,8 @@ import importlib
 from functools import partial
 from typing import Any, Mapping, Optional, Sequence, Union, TypeVar
 
-from helpers import Depth, scale_value, DitherLumaRebuild, KNLMeansCL, NLMeans, DFTTest, NNEDI3 as _NNEDI3, EEDI3 as _EEDI3, get_expr, get_rg
-from misc import MV, mt_clamp
+from helpers import Depth, scale_value, DitherLumaRebuild, KNLMeansCL, NLMeans, DFTTest, NNEDI3 as _NNEDI3, EEDI3 as _EEDI3, get_expr, get_rg, pick_tool, tool_function
+from misc import get_mv, mt_clamp
 
 
 
@@ -105,6 +105,7 @@ def QTGMC(
     eedi3_args: Mapping[str, Any] = {},
     opencl: bool = False,
     device: Optional[int] = None,
+    tools: Optional[Mapping[str, str]] = None,
 ) -> vs.VideoNode:
     '''
     QTGMC 3.33
@@ -663,10 +664,10 @@ def QTGMC(
     if isinstance(srchClip, vs.VideoNode) or Rep0 <= 0:
         repair0 = binomial0
     else:
-        repair0 = QTGMC_KeepOnlyBobShimmerFixes(binomial0, bobbed, Rep0, RepChroma and ChromaMotion)
+        repair0 = QTGMC_KeepOnlyBobShimmerFixes(binomial0, bobbed, Rep0, RepChroma and ChromaMotion, tools=tools)
 
     matrix = [1, 2, 1, 2, 4, 2, 1, 2, 1]
-    EXPR = get_expr()
+    EXPR = get_expr(tools)
     # Blur image and soften edges to assist in motion matching of edge blocks. Blocks are matched by SAD (sum of absolute differences between blocks), but even
     # a slight change in an edge from frame to frame will give a high SAD due to the higher contrast of edges
     if not isinstance(srchClip, vs.VideoNode):
@@ -684,7 +685,7 @@ def QTGMC(
             tweaked = EXPR([repair0, bobbed], expr=expr if ChromaMotion or is_gray else [expr, ''])
             expr = 'x {i7} + y < x {i2} + x {i7} - y > x {i2} - x 51 * y 49 * + 100 / ? ?'.format(i7=scale_value(7, 8, bits), i2=scale_value(2, 8, bits))
             srchClip = EXPR([spatialBlur, tweaked], expr=expr if ChromaMotion or is_gray else [expr, ''])
-        srchClip = DitherLumaRebuild(srchClip, s0=Str, c=Amp, chroma=ChromaMotion)
+        srchClip = DitherLumaRebuild(srchClip, s0=Str, c=Amp, chroma=ChromaMotion, tools=tools)
         if bits > 8 and FastMA:
             srchClip = Depth(srchClip, 8, dither_type='none')
 
@@ -716,6 +717,7 @@ def QTGMC(
         dct=DCT,
     )
 
+    MV = get_mv(tools)
     # Calculate forward and backward motion vectors from motion search clip
     if maxTR > 0:
         if not isinstance(srchSuper, vs.VideoNode):
@@ -824,14 +826,14 @@ def QTGMC(
                                 sample_type=noiseWindow.format.sample_type)
         elif Denoiser == 'dfttest':
           # Takes the first DFTTest implementation that is loaded, GPU ones first.
-          dnWindow = DFTTest(noiseWindow, sigma=Sigma * 4, tbsize=noiseTD, planes=CNplanes)
+          dnWindow = DFTTest(noiseWindow, sigma=Sigma * 4, tbsize=noiseTD, planes=CNplanes, tools=tools)
         elif Denoiser in ['knlm', 'knlmeanscl', 'nlm_cuda', 'nlm_ispc']:
             if ChromaNoise and not is_gray:
-                dnWindow = KNLMeansCL(noiseWindow, d=NoiseTR, h=Sigma)
+                dnWindow = KNLMeansCL(noiseWindow, d=NoiseTR, h=Sigma, tools=tools)
             else:
-                dnWindow = NLMeans(noiseWindow, d=NoiseTR, h=Sigma)
+                dnWindow = NLMeans(noiseWindow, d=NoiseTR, h=Sigma, tools=tools)
         else:
-            fft3d_func = noiseWindow.neo_fft3d.FFT3D if hasattr(core, 'neo_fft3d') else noiseWindow.fft3dfilter.FFT3DFilter
+            fft3d_func = noiseWindow.neo_fft3d.FFT3D if pick_tool(tools, 'fft3d', ('neo_fft3d', 'fft3dfilter')) == 'neo_fft3d' else noiseWindow.fft3dfilter.FFT3DFilter
             dnWindow = fft3d_func(sigma=Sigma, planes=CNplanes, bt=noiseTD, ncpu=FftThreads)
 
 
@@ -858,7 +860,7 @@ def QTGMC(
             elif NoiseDeint == 'bob':
                 deintNoise = noise.resize.Bob(tff=TFF, filter_param_a=0, filter_param_b=0.5)
             elif NoiseDeint == 'generate':
-                deintNoise = QTGMC_Generate2ndFieldNoise(noise, denoised, ChromaNoise, TFF)
+                deintNoise = QTGMC_Generate2ndFieldNoise(noise, denoised, ChromaNoise, TFF, tools=tools)
             else:
                 deintNoise = noise.std.SeparateFields(tff=TFF).std.DoubleWeave(tff=TFF)
 
@@ -889,7 +891,7 @@ def QTGMC(
     else:
         edi1 = QTGMC_Interpolate(
             ediInput, InputType, EdiMode, NNSize, NNeurons, EdiQual, EdiMaxD, bobbed, ChromaEdi.lower(), TFF, nnedi3_args, eedi3_args, opencl, device
-        )
+        , tools=tools)
 
     # InputType=2,3: use motion mask to blend luma between original clip & reweaved clip based on ProgSADMask setting. Use chroma from original clip in any case
     if InputType < 2:
@@ -906,7 +908,7 @@ def QTGMC(
     # Get the max/min value for each pixel over neighboring motion-compensated frames - used for temporal sharpness limiting
     if TR1 > 0 or temporalSL:
         ediSuper = MV.Super(edi, sharp=SubPelInterp, levels=1, **super_args)
-    EXPR = get_expr()
+    EXPR = get_expr(tools)
     if temporalSL:
         bComp1 = MV.Compensate(edi, ediSuper, bVec1, thscd1=ThSCD1, thscd2=ThSCD2)
         fComp1 = MV.Compensate(edi, ediSuper, fVec1, thscd1=ThSCD1, thscd2=ThSCD2)
@@ -942,7 +944,7 @@ def QTGMC(
     if Rep1 <= 0:
         repair1 = binomial1
     else:
-        repair1 = QTGMC_KeepOnlyBobShimmerFixes(binomial1, edi, Rep1, RepChroma)
+        repair1 = QTGMC_KeepOnlyBobShimmerFixes(binomial1, edi, Rep1, RepChroma, tools=tools)
 
     # Apply source match - use difference between output and source to succesively refine output [extracted to function to clarify main code path]
     if SourceMatch <= 0:
@@ -982,13 +984,13 @@ def QTGMC(
             eedi3_args,
             opencl,
             device,
-        )
+        tools=tools)
 
     # Lossless=2 - after preparing an interpolated, de-shimmered clip, restore the original source fields into it and clean up any artefacts
     # This mode will not give a true lossless result because the resharpening and final temporal smooth are still to come, but it will add further detail
     # However, it can introduce minor combing. This setting is best used together with source-match (it's effectively the final source-match stage)
     if Lossless >= 2:
-        lossed1 = QTGMC_MakeLossless(match, innerClip, InputType, TFF)
+        lossed1 = QTGMC_MakeLossless(match, innerClip, InputType, TFF, tools=tools)
     else:
         lossed1 = match
 
@@ -1010,7 +1012,7 @@ def QTGMC(
 
     # Slightly thin down 1-pixel high horizontal edges that have been widened into neighboring field lines by the interpolator
     SVThinSc = SVThin * 6.0
-    zsmooth = hasattr(core,'zsmooth')
+    zsmooth = pick_tool(tools, 'rg', ('zsmooth', 'rgvs'), lambda name: name == 'rgvs' or hasattr(core, 'zsmooth')) == 'zsmooth'
     if SVThin > 0:
         expr = f'y x - {SVThinSc} * {neutral} +'
         if zsmooth:
@@ -1038,7 +1040,7 @@ def QTGMC(
         else:
             sharpLimit1 = core.zsmooth.Repair(backBlend1, core.zsmooth.Repair(backBlend1, edi, mode=12), mode=1) if zsmooth else core.rgvs.Repair(backBlend1, core.rgvs.Repair(backBlend1, edi, mode=12), mode=1)
     elif SLMode == 2:
-        sharpLimit1 = mt_clamp(backBlend1, tMax, tMin, SOvs, SOvs)
+        sharpLimit1 = mt_clamp(backBlend1, tMax, tMin, SOvs, SOvs, tools=tools)
     else:
         sharpLimit1 = backBlend1
 
@@ -1074,7 +1076,7 @@ def QTGMC(
     if Rep2 <= 0:
         repair2 = stable
     else:
-        repair2 = QTGMC_KeepOnlyBobShimmerFixes(stable, edi, Rep2, RepChroma)
+        repair2 = QTGMC_KeepOnlyBobShimmerFixes(stable, edi, Rep2, RepChroma, tools=tools)
 
     # Limit over-sharpening by clamping to neighboring (spatial or temporal) min/max values in original
     # Occurs here (after final temporal smooth) if SLMode == 3,4. Allows more sharpening here, but more prone to introducing minor artefacts
@@ -1084,14 +1086,14 @@ def QTGMC(
         else:
             sharpLimit2 = core.zsmooth.Repair(repair2, core.zsmooth.Repair(repair2, edi, mode=12), mode=1) if zsmooth else core.rgvs.Repair(repair2, core.rgvs.Repair(repair2, edi, mode=12), mode=1)
     elif SLMode >= 4:
-        sharpLimit2 = mt_clamp(repair2, tMax, tMin, SOvs, SOvs)
+        sharpLimit2 = mt_clamp(repair2, tMax, tMin, SOvs, SOvs, tools=tools)
     else:
         sharpLimit2 = repair2
 
     # Lossless=1 - inject source fields into result and clean up inevitable artefacts. Provided NoiseRestore=0.0 or 1.0, this mode will make the script result
     # properly lossless, but this will retain source artefacts and cause some combing (where the smoothed deinterlace doesn't quite match the source)
     if Lossless == 1:
-        lossed2 = QTGMC_MakeLossless(sharpLimit2, innerClip, InputType, TFF)
+        lossed2 = QTGMC_MakeLossless(sharpLimit2, innerClip, InputType, TFF, tools=tools)
     else:
         lossed2 = sharpLimit2
 
@@ -1202,6 +1204,7 @@ def QTGMC_Interpolate(
     eedi3_args: Mapping[str, Any] = {},
     opencl: bool = False,
     device: Optional[int] = None,
+    tools: Optional[Mapping[str, str]] = None,
 ) -> vs.VideoNode:
     '''
     Interpolate input clip using method given in EdiMode. Use Fallback or Bob as result if mode not in list. If ChromaEdi string if set then interpolate chroma
@@ -1215,11 +1218,11 @@ def QTGMC_Interpolate(
     field = 3 if TFF else 2
 
     
-    nnedi3 = partial(_NNEDI3, field=field, gpu=opencl, device=device, **nnedi3_args)
+    nnedi3 = partial(_NNEDI3, field=field, gpu=opencl, device=device, tools=tools, **nnedi3_args)
 
     # opencl only reorders the search - _EEDI3 takes whichever implementation is loaded and can
     # serve the call. It also gets the device argument right, which differs per plugin.
-    eedi3 = partial(_EEDI3, field=field, planes=planes, mdis=EdiMaxD, gpu=opencl, device=device, **eedi3_args)
+    eedi3 = partial(_EEDI3, field=field, planes=planes, mdis=EdiMaxD, gpu=opencl, device=device, tools=tools, **eedi3_args)
 
     if InputType == 1:
         return Input
@@ -1246,7 +1249,7 @@ def QTGMC_Interpolate(
     return core.std.ShufflePlanes([interp, interpuv], planes=[0, 1, 2], colorfamily=Input.format.color_family)
 
 
-def QTGMC_KeepOnlyBobShimmerFixes(Input: vs.VideoNode, Ref: vs.VideoNode, Rep: int = 1, Chroma: bool = True) -> vs.VideoNode:
+def QTGMC_KeepOnlyBobShimmerFixes(Input: vs.VideoNode, Ref: vs.VideoNode, Rep: int = 1, Chroma: bool = True, tools=None) -> vs.VideoNode:
     '''
     Helper function: Compare processed clip with reference clip: only allow thin, horizontal areas of difference, i.e. bob shimmer fixes
     Rough algorithm: Get difference, deflate vertically by a couple of pixels or so, then inflate again. Thin regions will be removed
@@ -1267,7 +1270,7 @@ def QTGMC_KeepOnlyBobShimmerFixes(Input: vs.VideoNode, Ref: vs.VideoNode, Rep: i
     diff = core.std.MakeDiff(Ref, Input)
 
     coordinates = [0, 1, 0, 0, 0, 0, 1, 0]
-    has_zsmooth = hasattr(core, 'zsmooth')
+    has_zsmooth = pick_tool(tools, 'median', ('zsmooth', 'std')) == 'zsmooth'
     # Areas of positive difference
     choke1 = diff.std.Minimum(planes=planes, coordinates=coordinates)
     if ed > 2:
@@ -1318,14 +1321,14 @@ def QTGMC_KeepOnlyBobShimmerFixes(Input: vs.VideoNode, Ref: vs.VideoNode, Rep: i
     # Combine above areas to find those areas of difference to restore
     expr1 = f'x {scale_value(129, 8, bits)} < x y {neutral} < {neutral} y ? ?'
     expr2 = f'x {scale_value(127, 8, bits)} > x y {neutral} > {neutral} y ? ?'
-    EXPR = get_expr()
+    EXPR = get_expr(tools)
     restore = EXPR(
         [EXPR([diff, choke1], expr=expr1 if Chroma or is_gray else [expr1, '']), choke2], expr=expr2 if Chroma or is_gray else [expr2, '']
     )
     return core.std.MergeDiff(Input, restore, planes=planes)
 
 
-def QTGMC_Generate2ndFieldNoise(Input: vs.VideoNode, InterleavedClip: vs.VideoNode, ChromaNoise: bool = False, TFF: Optional[bool] = None) -> vs.VideoNode:
+def QTGMC_Generate2ndFieldNoise(Input: vs.VideoNode, InterleavedClip: vs.VideoNode, ChromaNoise: bool = False, TFF: Optional[bool] = None, tools=None) -> vs.VideoNode:
     '''
     Given noise extracted from an interlaced source (i.e. the noise is interlaced), generate "progressive" noise with a new "field" of noise injected. The new
     noise is centered on a weighted local average and uses the difference between local min & max as an estimate of local variance
@@ -1339,7 +1342,7 @@ def QTGMC_Generate2ndFieldNoise(Input: vs.VideoNode, InterleavedClip: vs.VideoNo
     origNoise = Input.std.SeparateFields(tff=TFF)
     noiseMax = origNoise.std.Maximum(planes=planes).std.Maximum(planes=planes, coordinates=[0, 0, 0, 1, 1, 0, 0, 0])
     noiseMin = origNoise.std.Minimum(planes=planes).std.Minimum(planes=planes, coordinates=[0, 0, 0, 1, 1, 0, 0, 0])
-    GRAIN = core.noise.Add if hasattr(core, 'noise') else core.grain.Add
+    GRAIN = tool_function(tools, 'grain', 'Add')
     random = (
         InterleavedClip.std.SeparateFields(tff=TFF)
         .std.BlankClip(color=[neutral] * Input.format.num_planes)
@@ -1350,13 +1353,13 @@ def QTGMC_Generate2ndFieldNoise(Input: vs.VideoNode, InterleavedClip: vs.VideoNo
         uvar=1800 if ChromaNoise else 0
     )
     expr = f'x {neutral} - y * {scale_value(256, 8, bits)} / {neutral} +'
-    EXPR = get_expr()
+    EXPR = get_expr(tools)
     varRandom = EXPR([core.std.MakeDiff(noiseMax, noiseMin, planes=planes), random], expr=expr if ChromaNoise or is_gray else [expr, ''])
     newNoise = core.std.MergeDiff(noiseMin, varRandom, planes=planes)
     return Weave(core.std.Interleave([origNoise, newNoise]), tff=TFF)
 
 
-def QTGMC_MakeLossless(Input: vs.VideoNode, Source: vs.VideoNode, InputType: int, TFF: Optional[bool] = None) -> vs.VideoNode:
+def QTGMC_MakeLossless(Input: vs.VideoNode, Source: vs.VideoNode, InputType: int, TFF: Optional[bool] = None, tools=None) -> vs.VideoNode:
     '''
     Insert the source lines into the result to create a true lossless output. However, the other lines in the result have had considerable processing and won't
     exactly match source lines. There will be some slight residual combing. Use vertical medians to clean a little of this away
@@ -1375,11 +1378,11 @@ def QTGMC_MakeLossless(Input: vs.VideoNode, Source: vs.VideoNode, InputType: int
     processed = Weave(core.std.Interleave([srcFields, newFields]).std.SelectEvery(cycle=4, offsets=[0, 1, 3, 2]), tff=TFF)
 
     # Clean some of the artefacts caused by the above - creating a second version of the "new" fields
-    zsmooth = hasattr(core,'zsmooth')
+    zsmooth = pick_tool(tools, 'rg', ('zsmooth', 'rgvs'), lambda name: name == 'rgvs' or hasattr(core, 'zsmooth')) == 'zsmooth'
     vertMedian = processed.zsmooth.VerticalCleaner(mode=1) if zsmooth else processed.rgvs.VerticalCleaner(mode=1)
     vertMedDiff = core.std.MakeDiff(processed, vertMedian)
     vmNewDiff1 = vertMedDiff.std.SeparateFields(tff=TFF).std.SelectEvery(cycle=4, offsets=[1, 2])
-    EXPR = get_expr()
+    EXPR = get_expr(tools)
     if zsmooth:
       vmNewDiff2 = EXPR(
         [vmNewDiff1.zsmooth.VerticalCleaner(mode=1), vmNewDiff1], expr=f'x {neutral} - y {neutral} - * 0 < {neutral} x {neutral} - abs y {neutral} - abs < x y ? ?'
@@ -1388,7 +1391,7 @@ def QTGMC_MakeLossless(Input: vs.VideoNode, Source: vs.VideoNode, InputType: int
       vmNewDiff2 = EXPR(
         [vmNewDiff1.rgvs.VerticalCleaner(mode=1), vmNewDiff1], expr=f'x {neutral} - y {neutral} - * 0 < {neutral} x {neutral} - abs y {neutral} - abs < x y ? ?'
       )
-    RG = get_rg()
+    RG = get_rg(tools=tools)
     vmNewDiff3 = core.zsmooth.Repair(vmNewDiff2, RG(vmNewDiff2, mode=2), mode=1) if zsmooth else core.rgvs.Repair(vmNewDiff2, RG(vmNewDiff2, mode=2), mode=1)
 
     # Reweave final result
@@ -1429,6 +1432,7 @@ def QTGMC_ApplySourceMatch(
     eedi3_args: Mapping[str, Any] = {},
     opencl: bool = False,
     device: Optional[int] = None,
+    tools: Optional[Mapping[str, str]] = None,
 ) -> vs.VideoNode:
     '''
     Source-match, a three stage process that takes the difference between deinterlaced input and the original interlaced source, to shift the input more towards
@@ -1443,9 +1447,10 @@ def QTGMC_ApplySourceMatch(
     # revised image to use as new source for interpolation/smoothing, k is the weighting given to the current frame in the smooth, and S is a factor indicating
     # "temporal similarity" of the error from frame to frame, i.e. S = average over all pixels of [neighbor frame error / current frame error] . Decreasing
     # S will make the result sharper, sensible range is about -0.25 to 1.0. Empirically, S=0.5 is effective [will do deeper analysis later]
+    MV = get_mv(tools)
     errorTemporalSimilarity = 0.5  # S in formula described above
     errorAdjust1 = [1.0, 2.0 / (1.0 + errorTemporalSimilarity), 8.0 / (3.0 + 5.0 * errorTemporalSimilarity)][MatchTR1]
-    EXPR = get_expr()
+    EXPR = get_expr(tools)
     if SourceMatch < 1 or InputType == 1:
         match1Clip = Deinterlace
     else:
@@ -1468,7 +1473,7 @@ def QTGMC_ApplySourceMatch(
             eedi3_args=eedi3_args,
             opencl=opencl,
             device=device,
-        )
+        tools=tools)
         if MatchTR1 > 0:
             match1Super = MV.Super(match1Edi, pel=SubPel, sharp=SubPelInterp, levels=1, hpad=hpad, vpad=vpad, blksize=8, overlap=0)
             match1Degrain1 = MV.Degrain1(match1Edi, match1Super, bVec1, fVec1, thsad=ThSAD1, thscd1=ThSCD1, thscd2=ThSCD2)
@@ -1515,7 +1520,7 @@ def QTGMC_ApplySourceMatch(
             eedi3_args=eedi3_args,
             opencl=opencl,
             device=device,
-        )
+        tools=tools)
         if MatchTR2 > 0:
             match2Super = MV.Super(match2Edi, pel=SubPel, sharp=SubPelInterp, levels=1, hpad=hpad, vpad=vpad, blksize=8, overlap=0)
             match2Degrain1 = MV.Degrain1(match2Edi, match2Super, bVec1, fVec1, thsad=ThSAD1, thscd1=ThSCD1, thscd2=ThSCD2)

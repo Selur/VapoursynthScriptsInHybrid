@@ -1,9 +1,9 @@
 import vapoursynth as vs
 from vapoursynth import core
-from misc import MV
+from misc import get_mv
 
 class ReplaceMultipleFrames:
-    def __init__(self, clip: vs.VideoNode, intervals: list, method: str = 'SVP', rifeModel: int = 22, rifeTTA=False, rifeUHD=False, device_index: int = 0, debug: bool = False):
+    def __init__(self, clip: vs.VideoNode, intervals: list, method: str = 'SVP', rifeModel: int = 22, rifeTTA=False, rifeUHD=False, device_index: int = 0, debug: bool = False, tools=None):
         """Initialize the frame replacement/interpolation class.
         
         Args:
@@ -15,7 +15,9 @@ class ReplaceMultipleFrames:
             rifeUHD: Whether to use UHD mode for RIFE
             device_index: GPU device index to use
             debug: Whether to show debug information on frames
+            tools: tools['mv'] picks the motion vector plugin for method 'MV'
         """
+        self.tools = tools
         self.clip = clip
         self.method = method
         self.intervals = self.validate_intervals(intervals)
@@ -153,6 +155,7 @@ class ReplaceMultipleFrames:
         Returns:
             Clip with interpolated frames
         """
+        MV = get_mv(self.tools)
         sup = MV.Super(clip, pel=2, hpad=0, vpad=0, blksize=16, overlap=0)
         bvec = MV.Analyse(sup, blksize=16, isb=True, chroma=True, search=3, searchparam=1)
         fvec = MV.Analyse(sup, blksize=16, isb=False, chroma=True, search=3, searchparam=1)

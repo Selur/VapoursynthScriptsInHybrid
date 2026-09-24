@@ -5,7 +5,7 @@ import math
 
 from typing import TypeVar, Optional
 from functools import partial
-from helpers import GetPlane, m4, scale, NNEDI3 as _NNEDI3, EEDI3 as _EEDI3, get_expr
+from helpers import GetPlane, m4, scale, NNEDI3 as _NNEDI3, EEDI3 as _EEDI3, get_expr, pick_tool, tool_function
 
 # Taken from old havsfunc
 def daa(
@@ -19,6 +19,7 @@ def daa(
     exp: Optional[int] = None,
     opencl: bool = False,
     device: Optional[int] = None,
+    tools=None,
 ) -> vs.VideoNode:
     '''
     Anti-aliasing with contra-sharpening by Didée.
@@ -31,34 +32,28 @@ def daa(
 
     # opencl only reorders the search - _NNEDI3 takes whichever implementation is loaded.
     nnedi3 = partial(_NNEDI3, gpu=opencl, device=device, nsize=nsize, nns=nns, qual=qual, pscrn=pscrn,
-                     int16_prescreener=int16_prescreener, int16_predictor=int16_predictor, exp=exp)
+                     int16_prescreener=int16_prescreener, int16_predictor=int16_predictor, exp=exp, tools=tools)
 
     nn = nnedi3(c, field=3)
     dbl = core.std.Merge(nn[::2], nn[1::2])
     dblD = core.std.MakeDiff(c, dbl)
     shrpD = core.std.MakeDiff(dbl, dbl.std.Convolution(matrix=[1, 1, 1, 1, 1, 1, 1, 1, 1] if c.width > 1100 else [1, 2, 1, 2, 4, 2, 1, 2, 1]))
-    if hasattr(core,'zsmooth'):
-      DD = core.zsmooth.Repair(shrpD, dblD, mode=13)
-    else:
-      DD = core.rgvs.Repair(shrpD, dblD, mode=13)
+    DD = tool_function(tools, 'rg', 'Repair')(shrpD, dblD, mode=13)
     return core.std.MergeDiff(dbl, DD)
 
-def daamod(c, nsize=None, nns=None, qual=None, pscrn=None, exp=None, opencl=False, device=None, rep=9):
+def daamod(c, nsize=None, nns=None, qual=None, pscrn=None, exp=None, opencl=False, device=None, rep=9, tools=None):
     """Anti-aliasing with contra-sharpening by Didée, modded by GMJCZP"""
 
     if not isinstance(c, vs.VideoNode):
         raise TypeError("daamod: This is not a clip")
 
     isFLOAT = c.format.sample_type == vs.FLOAT
-    if hasattr(core,'zsmooth'):
-      R = core.zsmooth.Repair
-      V = core.zsmooth.VerticalCleaner
-    else:
-      R = core.rgsf.Repair if isFLOAT else core.rgvs.Repair
-      V = core.rgsf.VerticalCleaner if isFLOAT else core.rgvs.VerticalCleaner
+    rg_order = ('zsmooth', 'rgsf', 'rgvs') if isFLOAT else ('zsmooth', 'rgvs')
+    R = tool_function(tools, 'rg', 'Repair', rg_order)
+    V = tool_function(tools, 'rg', 'VerticalCleaner', rg_order)
 
     NNEDI3 = _NNEDI3
-    nnedi3_args = dict(gpu=opencl, device=device, nsize=nsize, nns=nns, qual=qual, pscrn=pscrn, exp=exp)
+    nnedi3_args = dict(gpu=opencl, device=device, nsize=nsize, nns=nns, qual=qual, pscrn=pscrn, exp=exp, tools=tools)
 
     nn = NNEDI3(c, field=3, **nnedi3_args)
     dbl = core.std.Merge(nn[::2], nn[1::2])
@@ -69,27 +64,29 @@ def daamod(c, nsize=None, nns=None, qual=None, pscrn=None, exp=None, opencl=Fals
     return core.std.MergeDiff(dbl, DD)
 
 # from muvsfunc
-def ediaa(a: vs.VideoNode) -> vs.VideoNode:
+def ediaa(a: vs.VideoNode, tools=None) -> vs.VideoNode:
     """Suggested by Mystery Keeper in "Denoise of tv-anime" thread
 
-    Read the document of Avisynth version for more details.
+    Read the document of Avisynth version for more details. tools['eedi2'] can switch to eedi2cuda.
 
     """
-    last = core.eedi2.EEDI2(a, field=1).std.Transpose()
-    last = core.eedi2.EEDI2(last, field=1).std.Transpose()
+    EEDI2 = getattr(core, pick_tool(tools, 'eedi2', ('eedi2',), lambda name: True, candidates=('eedi2', 'eedi2cuda')) or 'eedi2').EEDI2
+    last = EEDI2(a, field=1).std.Transpose()
+    last = EEDI2(last, field=1).std.Transpose()
     last = core.resize.Spline36(last, a.width, a.height, src_left=-0.5, src_top=-0.5)
 
     return last
 
-def ediaaCuda(a: vs.VideoNode):
+def ediaaCuda(a: vs.VideoNode, tools=None):
     """
     Suggested by Mystery Keeper in "Denoise of tv-anime" thread
-    Read the document of Avisynth version for more details.
+    Read the document of Avisynth version for more details. tools['eedi2'] can switch to eedi2.
     requirement: https://github.com/AmusementClub/VapourSynth-EEDI2CUDA/releases
     """
 
-    last = core.eedi2cuda.EEDI2(a, field=1).std.Transpose()
-    last = core.eedi2cuda.EEDI2(last, field=1).std.Transpose()
+    EEDI2 = getattr(core, pick_tool(tools, 'eedi2', ('eedi2cuda',), lambda name: True, candidates=('eedi2', 'eedi2cuda')) or 'eedi2cuda').EEDI2
+    last = EEDI2(a, field=1).std.Transpose()
+    last = EEDI2(last, field=1).std.Transpose()
     last = core.resize.Spline36(last, a.width, a.height, src_left=-0.5, src_top=-0.5)
 
     return last
@@ -125,13 +122,13 @@ def maa(input: vs.VideoNode) -> vs.VideoNode:
         return core.std.ShufflePlanes([last, input_src], planes=list(range(input_src.format.num_planes)),
             colorfamily=input_src.format.color_family)
     
-def nnedi3aa(a: vs.VideoNode, opencl: bool=False, device: Optional[int] = None,):
+def nnedi3aa(a: vs.VideoNode, opencl: bool=False, device: Optional[int] = None, tools=None):
     """Using nnedi3 (Emulgator):
     Read the document of Avisynth version for more details.
     """
 
-    last = _NNEDI3(a, field=1, dh=True, gpu=opencl, device=device).std.Transpose()
-    last = _NNEDI3(last, field=1, dh=True, gpu=opencl, device=device).std.Transpose()
+    last = _NNEDI3(a, field=1, dh=True, gpu=opencl, device=device, tools=tools).std.Transpose()
+    last = _NNEDI3(last, field=1, dh=True, gpu=opencl, device=device, tools=tools).std.Transpose()
       
     last = vs.core.resize.Spline36(last, a.width, a.height, src_left=-0.5, src_top=-0.5)
     return last;
@@ -184,6 +181,7 @@ def aaf(                \
     , aax  = None       \
     , estr = 255        \
     , bstr = 40         \
+    , tools = None      \
 ) :
     mode = mode.lower()
     if aas < 0:
@@ -231,12 +229,8 @@ def aaf(                \
 
     repMode = [18] if isGray else [18, 0]
 
-    zsmooth = hasattr(core,'zsmooth')
     if mode == "repair":
-      if zsmooth:
-        return core.zsmooth.Repair(aa, inputClip, mode=repMode)
-      else:
-        return core.rgvs.Repair(aa, inputClip, mode=repMode)
+      return tool_function(tools, 'rg', 'Repair')(aa, inputClip, mode=repMode)
 
     if mode != "edge":
         return aa
@@ -246,13 +240,13 @@ def aaf(                \
                              , inputClip.std.Minimum(planes=0)\
                              , planes=0)
     expr = 'x {i} > {estr} x {neutral} - {j} 90 / * {bstr} + ?'.format(i=scale(218, peak), estr=scale(estr, peak), neutral=neutral, j=estr - bstr, bstr=scale(bstr, peak))
-    EXPR = get_expr()
+    EXPR = get_expr(tools)
     mask = EXPR(mask, expr=[expr] if isGray else [expr, ''])
 
     merged = core.std.MaskedMerge(inputClip, aa, mask, planes=0)
     if aas > 0.84:
         return merged
-    return core.zsmooth.Repair(merged, inputClip, mode=repMode) if zsmooth else core.rgvs.Repair(merged, inputClip, mode=repMode)
+    return tool_function(tools, 'rg', 'Repair')(merged, inputClip, mode=repMode)
 
 
 # Taken from old havsfunc
@@ -282,6 +276,7 @@ def santiag(
     typev: Optional[str] = None,
     opencl: bool = False,
     device: Optional[int] = None,
+    tools=None,
 ) -> vs.VideoNode:
     '''
     santiag v1.6
@@ -300,12 +295,12 @@ def santiag(
 
     def santiag_stronger(c: vs.VideoNode, strength: int, type: str) -> vs.VideoNode:
         nnedi3 = partial(_NNEDI3, gpu=opencl, device=device, nsize=nsize, nns=nns, qual=qual, pscrn=pscrn,
-                         int16_prescreener=int16_prescreener, int16_predictor=int16_predictor, exp=exp)
+                         int16_prescreener=int16_prescreener, int16_predictor=int16_predictor, exp=exp, tools=tools)
 
         def get_eedi3():
             # opencl only reorders the search; _EEDI3 also picks the right device argument name.
             return partial(_EEDI3, gpu=opencl, device=device,
-                           alpha=alpha, beta=beta, gamma=gamma, nrad=nrad, mdis=mdis, vcheck=vcheck)
+                           alpha=alpha, beta=beta, gamma=gamma, nrad=nrad, mdis=mdis, vcheck=vcheck, tools=tools)
 
         strength = max(strength, 0)
         field = strength % 2
@@ -323,12 +318,9 @@ def santiag(
             if not dh:
                 c = c.resize.Point(w, h // 2, src_top=1 - field)
             # Take whichever EEDI2 is loaded - with opencl that is usually eedi2cuda, not eedi2.
-            if opencl and hasattr(core, 'eedi2cuda'):
-                return core.eedi2cuda.EEDI2(c, field=field)
-            if hasattr(core, 'eedi2'):
-                return core.eedi2.EEDI2(c, field=field)
-            if hasattr(core, 'eedi2cuda'):
-                return core.eedi2cuda.EEDI2(c, field=field)
+            eedi2 = pick_tool(tools, 'eedi2', ('eedi2cuda', 'eedi2') if opencl else ('eedi2', 'eedi2cuda'), lambda name: hasattr(core, name))
+            if eedi2 is not None:
+                return getattr(core, eedi2).EEDI2(c, field=field)
             raise vs.Error('santiag: type "eedi2" needs the eedi2 or eedi2cuda plugin')
         elif type == 'eedi3':
             sclip = nnedi3(c, field=field, dh=dh)

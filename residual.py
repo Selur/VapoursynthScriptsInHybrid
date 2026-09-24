@@ -2,7 +2,7 @@ import vapoursynth as vs
 from vapoursynth import core
 
 from typing import Optional, Union, Sequence
-from helpers import GetPlane, get_expr
+from helpers import GetPlane, get_expr, pick_tool, scale
 
 # Taken form old havsfunc
 # Vinverse: a small, but effective function against (residual) combing, by Didée
@@ -10,11 +10,11 @@ from helpers import GetPlane, get_expr
 # amnt: change no pixel by more than this (default=255: unrestricted)
 # chroma: chroma mode, True=process chroma, False=pass chroma through
 # scl: scale factor for vshrpD*vblurD < 0
-def Vinverse(clp, sstr=2.7, amnt=255, chroma=True, scl=0.25):
+def Vinverse(clp, sstr=2.7, amnt=255, chroma=True, scl=0.25, tools=None):
     if not isinstance(clp, vs.VideoNode):
         raise vs.Error('Vinverse: this is not a clip')
 
-    if hasattr(core,'vinverse'):
+    if pick_tool(tools, 'vinverse', ('vinverse', 'std')) == 'vinverse':
         uv=3 if chroma else 2
         return core.vinverse.vinverse(clip=clp, sstr=sstr, amnt=amnt, scl=scl, uv=uv)
 
@@ -33,7 +33,7 @@ def Vinverse(clp, sstr=2.7, amnt=255, chroma=True, scl=0.25):
 
     vblur = clp.std.Convolution(matrix=[50, 99, 50], mode='v')
     vblurD = core.std.MakeDiff(clp, vblur)
-    EXPR = get_expr()
+    EXPR = get_expr(tools)
     vshrp = EXPR([vblur, vblur.std.Convolution(matrix=[1, 4, 6, 4, 1], mode='v')], expr=[f'x x y - {sstr} * +'])
     vshrpD = core.std.MakeDiff(vshrp, vblur)
     expr = f'x {neutral} - y {neutral} - * 0 < x {neutral} - abs y {neutral} - abs < x y ? {neutral} - {scl} * {neutral} + x {neutral} - abs y {neutral} - abs < x y ? ?'
@@ -49,11 +49,11 @@ def Vinverse(clp, sstr=2.7, amnt=255, chroma=True, scl=0.25):
     return last
 
 # Taken form old havsfunc
-def Vinverse2(clp, sstr=2.7, amnt=255, chroma=True, scl=0.25):
+def Vinverse2(clp, sstr=2.7, amnt=255, chroma=True, scl=0.25, tools=None):
     if not isinstance(clp, vs.VideoNode):
         raise vs.Error('Vinverse2: this is not a clip')
         
-    if hasattr(core,'vinverse'):
+    if pick_tool(tools, 'vinverse', ('vinverse', 'std')) == 'vinverse':
         uv= 3 if chroma else 2
         return core.vinverse.vinverse2(clip=clp, sstr=sstr, amnt=amnt, scl=scl, uv=uv)
         
@@ -70,9 +70,9 @@ def Vinverse2(clp, sstr=2.7, amnt=255, chroma=True, scl=0.25):
     else:
         clp_orig = None
 
-    vblur = sbrV(clp)
+    vblur = sbrV(clp, tools=tools)
     vblurD = core.std.MakeDiff(clp, vblur)
-    EXPR = get_expr()
+    EXPR = get_expr(tools)
     vshrp = EXPR([vblur, vblur.std.Convolution(matrix=[1, 2, 1], mode='v')], expr=[f'x x y - {sstr} * +'])
     vshrpD = core.std.MakeDiff(vshrp, vblur)
     expr = f'x {neutral} - y {neutral} - * 0 < x {neutral} - abs y {neutral} - abs < x y ? {neutral} - {scl} * {neutral} + x {neutral} - abs y {neutral} - abs < x y ? ?'
@@ -88,7 +88,7 @@ def Vinverse2(clp, sstr=2.7, amnt=255, chroma=True, scl=0.25):
     return last
 
 # Taken form old havsfunc
-def sbrV(c: vs.VideoNode, r: int = 1, planes: Optional[Union[int, Sequence[int]]] = None) -> vs.VideoNode:
+def sbrV(c: vs.VideoNode, r: int = 1, planes: Optional[Union[int, Sequence[int]]] = None, tools=None) -> vs.VideoNode:
     if not isinstance(c, vs.VideoNode):
         raise vs.Error('sbrV: this is not a clip')
 
@@ -117,7 +117,7 @@ def sbrV(c: vs.VideoNode, r: int = 1, planes: Optional[Union[int, Sequence[int]]
         RG11DS = RG11DS.std.Convolution(matrix=matrix2, planes=planes, mode='v')
     if r >= 3:
         RG11DS = RG11DS.std.Convolution(matrix=matrix2, planes=planes, mode='v')
-    EXPR = get_expr()
+    EXPR = get_expr(tools)
     RG11DD = EXPR(
         [RG11D, RG11DS],
         expr=[f'x y - x {neutral} - * 0 < {neutral} x y - abs x {neutral} - abs < x y - {neutral} + x ? ?' if i in planes else '' for i in plane_range],

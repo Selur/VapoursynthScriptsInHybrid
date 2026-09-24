@@ -2,7 +2,7 @@ import importlib.util
 
 import vapoursynth as vs
 core = vs.core
-from misc import MV, SCDetect
+from misc import get_mv, SCDetect
 
 
 # ---------------------------------------------------------------------------
@@ -39,7 +39,8 @@ def _loop_single(clip, single):
 # range interpolators: each returns exactly (end - start + 1) frames
 # ---------------------------------------------------------------------------
 
-def fillWithMVToolsM(clip, start, end):
+def fillWithMVToolsM(clip, start, end, tools=None):
+    MV = get_mv(tools)
     pair = clip[start - 1:start] + clip[end + 1:end + 2]
     super = MV.Super(pair, pel=2, blksize=8, overlap=0)
     vfe = MV.Analyse(super, truemotion=True, isb=False, delta=1)
@@ -55,14 +56,14 @@ def fillWithMVToolsM(clip, start, end):
     return core.std.Splice(clips)
 
 
-def fillWithRIFEM(clip, start, end, rifeModel=22, rifeTTA=False, rifeUHD=False, sceneThresh=0.15):
+def fillWithRIFEM(clip, start, end, rifeModel=22, rifeTTA=False, rifeUHD=False, sceneThresh=0.15, tools=None):
     clip1 = core.std.AssumeFPS(clip, fpsnum=1, fpsden=1)
     pair = clip1[start - 1:start] + clip1[end + 1:end + 2]
 
     # Scene detection has to run on the pair RIFE actually sees, not on the
     # full clip - on the full clip the props describe a different comparison.
     if sceneThresh > 0:
-        pair = SCDetect(clip=pair, threshold=sceneThresh)
+        pair = SCDetect(clip=pair, threshold=sceneThresh, tools=tools)
 
     pair = core.resize.Bicubic(pair, format=vs.RGBS, matrix_in_s="709")
 
@@ -122,15 +123,15 @@ def fillWithSVPM(clip, start, end, gpu=False):
 
 
 def _interp_range(clip, start, end, method, rifeModel=22, rifeTTA=False, rifeUHD=False,
-                  sceneThresh=0.15, gmfssModel=0):
+                  sceneThresh=0.15, gmfssModel=0, tools=None):
     if method == "mv":
-        interp = fillWithMVToolsM(clip, start, end)
+        interp = fillWithMVToolsM(clip, start, end, tools=tools)
     elif method == "svp":
         interp = fillWithSVPM(clip, start, end)
     elif method == "svp_gpu":
         interp = fillWithSVPM(clip, start, end, gpu=True)
     elif method == "rife":
-        interp = fillWithRIFEM(clip, start, end, rifeModel, rifeTTA, rifeUHD, sceneThresh)
+        interp = fillWithRIFEM(clip, start, end, rifeModel, rifeTTA, rifeUHD, sceneThresh, tools=tools)
     elif method == "gmfssfortuna":
         interp = fillWithGMFSSUnionM(clip, start, end, gmfssModel, sceneThresh)
     else:
@@ -148,15 +149,16 @@ def _interp_range(clip, start, end, method, rifeModel=22, rifeTTA=False, rifeUHD
 # single frame wrappers (full-length clips, for use inside FrameEval)
 # ---------------------------------------------------------------------------
 
-def fillWithMVTools(clip):
+def fillWithMVTools(clip, tools=None):
+    MV = get_mv(tools)
     super = MV.Super(clip, pel=2, blksize=8, overlap=0)
     vfe = MV.Analyse(super, truemotion=True, isb=False, delta=1)
     vbe = MV.Analyse(super, truemotion=True, isb=True, delta=1)
     return MV.FlowInter(clip, super, mvbw=vbe, mvfw=vfe, time=50)
 
 
-def fillWithRIFE(clip, firstframe=None, rifeModel=22, rifeTTA=False, rifeUHD=False, sceneThresh=0.15):
-    single = fillWithRIFEM(clip, firstframe, firstframe, rifeModel, rifeTTA, rifeUHD, sceneThresh)
+def fillWithRIFE(clip, firstframe=None, rifeModel=22, rifeTTA=False, rifeUHD=False, sceneThresh=0.15, tools=None):
+    single = fillWithRIFEM(clip, firstframe, firstframe, rifeModel, rifeTTA, rifeUHD, sceneThresh, tools=tools)
     return _loop_single(clip, single)
 
 
@@ -181,13 +183,13 @@ def fillWithSVP(clip, firstframe=None, gpu=False, endframe=None):
 # ---------------------------------------------------------------------------
 
 def FillSingleDrops(clip, thresh=0.3, method="mv", rifeModel=22, rifeTTA=False, rifeUHD=False,
-                    sceneThresh=0.15, gmfssModel=0, debug=False):
+                    sceneThresh=0.15, gmfssModel=0, debug=False, tools=None):
     _check_yuv(clip, 'FillSingleDrops')
 
     last = clip.num_frames - 1
 
     # Built once, not per frame: this graph does not depend on n.
-    static_fill = fillWithMVTools(clip) if method == "mv" else None
+    static_fill = fillWithMVTools(clip, tools=tools) if method == "mv" else None
 
     def selectFunc(n, f):
         if f.props['PlaneStatsDiff'] > thresh or n == 0 or n >= last:
@@ -202,7 +204,7 @@ def FillSingleDrops(clip, thresh=0.3, method="mv", rifeModel=22, rifeTTA=False, 
         elif method == "svp_gpu":
             filldrops = fillWithSVP(clip, n, gpu=True)
         elif method == "rife":
-            filldrops = fillWithRIFE(clip, n, rifeModel, rifeTTA, rifeUHD, sceneThresh)
+            filldrops = fillWithRIFE(clip, n, rifeModel, rifeTTA, rifeUHD, sceneThresh, tools=tools)
         elif method == "gmfssfortuna":
             filldrops = fillWithGMFSSUnion(clip, n, gmfssModel, sceneThresh)
         else:
@@ -217,10 +219,10 @@ def FillSingleDrops(clip, thresh=0.3, method="mv", rifeModel=22, rifeTTA=False, 
 
 
 def InsertSingle(clip, afterEveryX=2, method="mv", rifeModel=0, rifeTTA=False, rifeUHD=False,
-                 sceneThresh=0.15, gmfssModel=0, debug=False):
+                 sceneThresh=0.15, gmfssModel=0, debug=False, tools=None):
     _check_yuv(clip, 'InsertSingle')
 
-    static_fill = fillWithMVTools(clip) if method == "mv" else None
+    static_fill = fillWithMVTools(clip, tools=tools) if method == "mv" else None
     if static_fill is not None:
         static_fill = core.text.Text(static_fill, text="Interpolated", alignment=8)
 
@@ -236,7 +238,7 @@ def InsertSingle(clip, afterEveryX=2, method="mv", rifeModel=0, rifeTTA=False, r
         elif method == "svp_gpu":
             insertFrame = fillWithSVP(clip, n, gpu=True)
         elif method == "rife":
-            insertFrame = fillWithRIFE(clip, n, rifeModel, rifeTTA, rifeUHD, sceneThresh)
+            insertFrame = fillWithRIFE(clip, n, rifeModel, rifeTTA, rifeUHD, sceneThresh, tools=tools)
         elif method == "gmfssfortuna":
             insertFrame = fillWithGMFSSUnion(clip, n, gmfssModel, sceneThresh)
         else:
@@ -248,13 +250,13 @@ def InsertSingle(clip, afterEveryX=2, method="mv", rifeModel=0, rifeTTA=False, r
 
 
 def ReplaceSingle(clip, frameList, method="mv", rifeModel=0, rifeTTA=False, rifeUHD=False,
-                  sceneThresh=0.15, gmfssModel=0, debug=False):
+                  sceneThresh=0.15, gmfssModel=0, debug=False, tools=None):
     _check_yuv(clip, 'ReplaceSingle')
 
     # Set lookup instead of a linear scan per frame.
     frameSet = frozenset(frameList)
 
-    static_fill = fillWithMVTools(clip) if method == "mv" else None
+    static_fill = fillWithMVTools(clip, tools=tools) if method == "mv" else None
 
     def selectFunc(n):
         if n in frameSet:
@@ -265,7 +267,7 @@ def ReplaceSingle(clip, frameList, method="mv", rifeModel=0, rifeTTA=False, rife
             elif method == "svp_gpu":
                 insertFrame = fillWithSVP(clip, n, gpu=True)
             elif method == "rife":
-                insertFrame = fillWithRIFE(clip, n, rifeModel, rifeTTA, rifeUHD, sceneThresh)
+                insertFrame = fillWithRIFE(clip, n, rifeModel, rifeTTA, rifeUHD, sceneThresh, tools=tools)
             elif method == "gmfssfortuna":
                 insertFrame = fillWithGMFSSUnion(clip, n, gmfssModel, sceneThresh)
             else:
@@ -433,7 +435,7 @@ def flickerFlag(clip, max_flash_frames=5, min_diff=0.0, return_ranges=False, lum
 # ---------------------------------------------------------------------------
 
 def ReplaceFlagged(clip, ranges=None, method="mv", rifeModel=22, rifeTTA=False, rifeUHD=False,
-                   sceneThresh=0.15, gmfssModel=0, debug=False):
+                   sceneThresh=0.15, gmfssModel=0, debug=False, tools=None):
     """
     Replaces every run of frames flagged with _UseInterp by an interpolation
     between the frames surrounding the run.
@@ -458,7 +460,7 @@ def ReplaceFlagged(clip, ranges=None, method="mv", rifeModel=22, rifeTTA=False, 
             continue
 
         interp = _interp_range(clip, start, end, method, rifeModel, rifeTTA, rifeUHD,
-                               sceneThresh, gmfssModel)
+                               sceneThresh, gmfssModel, tools=tools)
 
         # The segment is built from the frames around the run, so it inherits
         # their _UseInterp=0 - retag it as replaced.
@@ -560,7 +562,7 @@ def _label_luma(clip, luma):
 
 
 def _fixFlickerLazy(clip, max_flash_frames, min_diff, method, rifeModel, rifeTTA,
-                    rifeUHD, sceneThresh, gmfssModel, debug):
+                    rifeUHD, sceneThresh, gmfssModel, debug, tools=None):
     """FixFlicker without the analysis pass, see FixFlicker(lazy=True)."""
     brighter = _brighter(min_diff)
     backoff = 2 * max_flash_frames + 2
@@ -595,7 +597,7 @@ def _fixFlickerLazy(clip, max_flash_frames, min_diff, method, rifeModel, rifeTTA
             # interpolation computes every intermediate frame anyway.
             if interp is None:
                 interp = _interp_range(clip, start, end, method, rifeModel, rifeTTA, rifeUHD,
-                                       sceneThresh, gmfssModel)
+                                       sceneThresh, gmfssModel, tools=tools)
                 interp = core.std.SetFrameProp(interp, prop="_UseInterp", intval=1)
                 if debug:
                     interp = core.text.Text(interp, text="INTERPOLATED " + str(start) + "-" + str(end),
@@ -619,7 +621,7 @@ def _fixFlickerLazy(clip, max_flash_frames, min_diff, method, rifeModel, rifeTTA
 def FixFlicker(clip: vs.VideoNode, max_flash_frames: int = 1, min_diff: float = 0.0,
                method: str = "mv", rifeModel: int = 22, rifeTTA: bool = False,
                rifeUHD: bool = False, sceneThresh: float = 0.15, gmfssModel: int = 0,
-               debug: bool = False, lazy: bool = False) -> vs.VideoNode:
+               debug: bool = False, lazy: bool = False, tools=None) -> vs.VideoNode:
     """
     Detects short brightness flashes and replaces them by an interpolation
     between the frames surrounding the flash.
@@ -645,7 +647,7 @@ def FixFlicker(clip: vs.VideoNode, max_flash_frames: int = 1, min_diff: float = 
 
     if lazy:
         return _fixFlickerLazy(clip, max_flash_frames, min_diff, method, rifeModel,
-                               rifeTTA, rifeUHD, sceneThresh, gmfssModel, debug)
+                               rifeTTA, rifeUHD, sceneThresh, gmfssModel, debug, tools=tools)
 
     # Needed twice with debug on - for the detection and for the labels.
     luma = _luma_values(clip) if debug else None
@@ -666,6 +668,6 @@ def FixFlicker(clip: vs.VideoNode, max_flash_frames: int = 1, min_diff: float = 
                          rifeUHD=rifeUHD,
                          sceneThresh=sceneThresh,
                          gmfssModel=gmfssModel,
-                         debug=debug)
+                         debug=debug, tools=tools)
 
     return _label_luma(out, luma) if debug else out

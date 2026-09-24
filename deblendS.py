@@ -253,7 +253,7 @@ import threading
 from dataclasses import dataclass
 from typing import Optional, Union
 
-from helpers import GetPlane, NLMeans, cround, scale_value, get_expr, get_rg
+from helpers import GetPlane, NLMeans, cround, scale_value, get_expr, get_rg, pick_tool, tool_loaded, tool_namespace
 
 import vapoursynth as vs
 
@@ -291,6 +291,7 @@ def _build_detection_clips(
     srad:  float = 12.0,
     mode:  int   = 2,
     bom:   bool  = False,
+    tools        = None,
 ) -> tuple[vs.VideoNode, vs.VideoNode, vs.VideoNode]:
     """
     Returns (bclp, dclp, det).
@@ -330,7 +331,7 @@ def _build_detection_clips(
     else:
         det = GetPlane(small, 0)
 
-    EXPR = get_expr()
+    EXPR = get_expr(tools)
 
     # AviSynth srestore: bom ? det.mt_lut("x 2 / 64 +") : det
     # Halves the contrast before the differences are taken, because the
@@ -846,7 +847,7 @@ class Engine:
 # pp0 - pp3 blend reconstruction  (srestore's "bom" branch)
 # ---------------------------------------------------------------------------
 
-def _build_pp_clip(source: vs.VideoNode, omode: str) -> vs.VideoNode:
+def _build_pp_clip(source: vs.VideoNode, omode: str, tools=None) -> vs.VideoNode:
     """
     Build srestore's 'fin' clip: frame n is frame n of the source with
     the blend removed, rebuilt ("unblended") from its neighbours.
@@ -866,7 +867,7 @@ def _build_pp_clip(source: vs.VideoNode, omode: str) -> vs.VideoNode:
     else:
         neutral, peak = 1 << (bits - 1), (1 << bits) - 1
 
-    EXPR = get_expr()
+    EXPR = get_expr(tools)
 
     sourceDuplicate = source.std.DuplicateFrames(frames=[0])
     sourceTrim1     = source.std.Trim(first=1)
@@ -938,6 +939,7 @@ def _apply_dclip_denoise(
     denoise:   str,
     nlmeans_h: float = 7.0,
     mode:      int   = 2,
+    tools            = None,
 ) -> vs.VideoNode:
     """
     Apply a purely spatial denoise to dclip before detection thumbnail
@@ -958,7 +960,7 @@ def _apply_dclip_denoise(
     do_chroma = mode < 0
 
     if method == "removegrain":
-        if not hasattr(core, 'zsmooth') and not hasattr(core, 'rgvs'):
+        if not tool_loaded('rg', 'zsmooth') and not tool_loaded('rg', 'rgvs'):
             raise vs.Error(
                 "deblendS: denoise='RemoveGrain' requires either the "
                 "zsmooth or rgvs (RemoveGrainVS) plugin to be installed."
@@ -974,7 +976,7 @@ def _apply_dclip_denoise(
         # neighbourhood-clipping modes; 0 is the copy mode.
         # zsmooth is preferred over rgvs: supports higher bit depths natively
         # and is generally faster.
-        _rg = get_rg()
+        _rg = get_rg(tools=tools)
         _c1 = 2  if do_chroma else 0
         _c2 = 12 if do_chroma else 0
         dclip = _rg(dclip, mode=[2,  _c1, _c1])
@@ -1008,7 +1010,7 @@ def _apply_dclip_denoise(
             passes = ['YUV' if do_chroma else 'Y']
 
         # Common kwargs shared across all passes.
-        kw = dict(d=0, a=2, s=3, h=nlmeans_h, wmode=0, wref=1.0)
+        kw = dict(d=0, a=2, s=3, h=nlmeans_h, wmode=0, wref=1.0, tools=tools)
 
         for ch in passes:
             dclip = NLMeans(dclip, channels=ch, **kw)
@@ -1042,6 +1044,7 @@ def deblendS(
     nlmeans_h:            float                  = 7.0,
     thresh:               int                    = 16,
     bsize:                int                    = 32,
+    tools                                        = None,
 ) -> vs.VideoNode:
     if clip.format is None or clip.format.color_family != vs.YUV:
         raise vs.Error("deblendS: input must be a YUV clip with fixed format")
@@ -1072,7 +1075,7 @@ def deblendS(
     # with no explicit dclip still works correctly (denoise is applied to
     # a copy of clip used only for detection, never touching the output).
     if denoise is not None:
-        dclip = _apply_dclip_denoise(dclip, denoise, nlmeans_h, mode)
+        dclip = _apply_dclip_denoise(dclip, denoise, nlmeans_h, mode, tools=tools)
 
     # AviSynth srestore:
     #   frfac = bom || abs(omode-3)<2.5 ? 1 : ...
@@ -1119,7 +1122,7 @@ def deblendS(
     if bsize < 8 or bsize > 256:
         raise vs.Error("deblendS: 'bsize' must be between 8 and 256")
 
-    bclp, dclp_clip, dclip_small = _build_detection_clips(dclip, bsize=bsize, mode=mode, bom=bom)
+    bclp, dclp_clip, dclip_small = _build_detection_clips(dclip, bsize=bsize, mode=mode, bom=bom, tools=tools)
 
     bclp_s = bclp.std.PlaneStats()
     dclp_s = dclp_clip.std.PlaneStats()
@@ -1160,7 +1163,7 @@ def deblendS(
     else:
         mec = clip
 
-    pp_clip = _build_pp_clip(clip, omode) if bom else None
+    pp_clip = _build_pp_clip(clip, omode, tools=tools) if bom else None
 
     if optical_flow:
         engine_name = optical_flow_engine.lower().strip()
@@ -1171,7 +1174,7 @@ def deblendS(
             # MVUtensils and fall back to MVTools2 if mvsf is missing.
             of_clip = _build_of_clip(
                 clip, pel=of_pel, blksize=of_blksize,
-                prefer_sf=engine_name in ("mvtools-sf", "mvtools_sf"),
+                prefer_sf=engine_name in ("mvtools-sf", "mvtools_sf"), tools=tools,
             )
     else:
         of_clip = None
@@ -1269,6 +1272,7 @@ def deblendS6(
     nlmeans_h:            float                  = 7.0,
     thresh:               int                    = 16,
     bsize:                int                    = 32,
+    tools                                        = None,
 ) -> vs.VideoNode:
     """
     deblendS with omode=6 -- the cadence-resolving mode this script
@@ -1291,6 +1295,7 @@ def deblendS6(
         nlmeans_h           = nlmeans_h,
         thresh              = thresh,
         bsize               = bsize,
+        tools               = tools,
     )
 
 
@@ -1303,6 +1308,7 @@ def _build_of_clip(
     pel:       int  = 2,
     blksize:   int  = 16,
     prefer_sf: bool = False,
+    tools           = None,
 ) -> vs.VideoNode:
     """
     Build the motion-compensated clip used to reconstruct blend frames.
@@ -1316,8 +1322,10 @@ def _build_of_clip(
                  that was explicitly asked for is actually installed.
     """
     fmt_orig = clip.format
+    order = ('mvsf', 'mvutensils', 'mv') if prefer_sf else ('mvutensils', 'mvsf', 'mv')
+    backend = pick_tool(tools, 'mv', order, lambda name: hasattr(core, tool_namespace('mv', name)))
 
-    if hasattr(core, 'mvu') and not (prefer_sf and hasattr(core, 'mvsf')):
+    if backend == 'mvutensils':
         mv       = core.mvu
         overlap  = blksize // 2
 
@@ -1342,11 +1350,11 @@ def _build_of_clip(
 
         interp = mv.FlowInter(src_work, sup_src, [bwd, fwd], time=50)
 
-    elif hasattr(core, 'mvsf') or hasattr(core, 'mv'):
+    elif backend is not None:
         # --- MVTools-sf first, MVTools2 as fallback.
         # Reached either because MVUtensils is missing, or because
         # prefer_sf routed an explicit "mvtools-sf" request here.
-        if hasattr(core, 'mvsf'):
+        if backend == 'mvsf':
             mv = core.mvsf
             target_fmt = fmt_orig.replace(bits_per_sample=32, sample_type=vs.FLOAT)
             src_work   = clip.resize.Bicubic(format=target_fmt.id)

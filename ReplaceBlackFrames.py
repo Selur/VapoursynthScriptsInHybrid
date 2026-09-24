@@ -26,7 +26,7 @@ v0.0.4 RIFE RGBH
 '''
 class ReplaceBlackFrames:
   # constructor
-  def __init__(self, clip: vs.VideoNode, thresh: float=0.1, debug: bool=False, method: str='previous', rifeSC: float=0.15):
+  def __init__(self, clip: vs.VideoNode, thresh: float=0.1, debug: bool=False, method: str='previous', rifeSC: float=0.15, tools=None):
       self.thresh = thresh
       self.debug = debug
       self.method = method
@@ -41,7 +41,7 @@ class ReplaceBlackFrames:
       if (method == 'interpolateRIFE') and clip.format.id != vs.RGBS:
         raise ValueError(f'ReplaceBlackFrames: "clip" color format need to be RGBS when RIFE is used!\n{clip.format}')
       if (method == 'interpolateRIFE') and rifeSC != 0:
-        self.clip = SCDetect(clip=clip, threshold=rifeSC)
+        clip = SCDetect(clip=clip, threshold=rifeSC, tools=tools)
       self.clip = core.std.PlaneStats(clip)
 
   def previous(self, n, f):
@@ -71,16 +71,6 @@ class ReplaceBlackFrames:
     self.smooth_start = start
     self.smooth_end   = end
     return self.smooth[n-start]
-    
-    if clip.format != vs.RGBS:
-      r = core.resize.Bicubic(r, format=clip.format, matrix_s=clip.get_frame(0).props['_Matrix'])
-
-    r = core.std.Trim(r, first=1, last=1) 
-    r = core.std.AssumeFPS(r, fpsnum=1, fpsden=1)
-    a = core.std.Trim(clip1, first=0, last=firstframe-1) 
-    b = core.std.Trim(clip1, first=firstframe+1)
-    join = a + r + b
-    return core.std.AssumeFPS(join, src=clip)
 
   def interpolateWithSVP(self, clip, n, start, end):   
       if self.method == 'interpolateSVP':

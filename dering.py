@@ -6,13 +6,12 @@ import math
 from typing import Optional, Union, Sequence, TypeVar
 
 from misc import MinBlur, median_blur, mt_expand_multi, mt_inflate_multi
-from helpers import scale, DFTTest, get_expr
+from helpers import scale, DFTTest, get_expr, pick_tool, tool_function, value_error
 from color import LimitFilter
 
-def _hysteresis_fn():
-    """Pick the best available Hysteresis."""
-    if hasattr(core, 'hysteresis'): return core.hysteresis.Hysteresis
-    return core.misc.Hysteresis
+def _hysteresis_fn(tools=None):
+    """Pick the Hysteresis: tools['hysteresis'], else hysteresis, else misc."""
+    return tool_function(tools, 'hysteresis', 'Hysteresis')
 
 def HQDeringmod(
     input: vs.VideoNode,
@@ -35,7 +34,8 @@ def HQDeringmod(
     darkthr: Optional[float] = None,
     planes: Union[int, Sequence[int]] = 0,
     show: bool = False,
-    cuda: bool = False,                   
+    cuda: bool = False,
+    tools=None,
 ) -> vs.VideoNode:
     '''
     HQDering mod v1.8
@@ -126,15 +126,15 @@ def HQDeringmod(
         if nrmode <= 0:
           # The GPU implementations only cover sbsize == 16; DFTTest() falls back on its own.
           smoothed = DFTTest(input, cuda=cuda, sbsize=sbsize, sosize=sosize, tbsize=1,
-                             slocation=[0.0, sigma2, 0.05, sigma, 0.5, sigma, 0.75, sigma2, 1.0, 0.0], planes=planes)
+                             slocation=[0.0, sigma2, 0.05, sigma, 0.5, sigma, 0.75, sigma2, 1.0, 0.0], planes=planes, tools=tools)
         else:
-            smoothed = MinBlur(input, nrmode, planes)
+            smoothed = MinBlur(input, nrmode, planes, tools=tools)
 
     # Post-Process: Contra-Sharpening
     matrix1 = [1, 2, 1, 2, 4, 2, 1, 2, 1]
     matrix2 = [1, 1, 1, 1, 1, 1, 1, 1, 1]
-    has_zsmooth = hasattr(core,'zsmooth')
-    EXPR = get_expr()
+    has_zsmooth = pick_tool(tools, 'median', ('zsmooth', 'std')) == 'zsmooth'
+    EXPR = get_expr(tools)
     if sharp <= 0:
         sclp = smoothed
     else:
@@ -149,10 +149,7 @@ def HQDeringmod(
             )
         sharpdiff = core.std.MakeDiff(pre, method, planes=planes)
         allD = core.std.MakeDiff(input, smoothed, planes=planes)
-        if hasattr(core,'zsmooth'):
-          ssDD = core.zsmooth.Repair(sharpdiff, allD, mode=[1 if i in planes else 0 for i in plane_range])
-        else:
-          ssDD = core.rgvs.Repair(sharpdiff, allD, mode=[1 if i in planes else 0 for i in plane_range])
+        ssDD = tool_function(tools, 'rg', 'Repair')(sharpdiff, allD, mode=[1 if i in planes else 0 for i in plane_range])
         ssDD = EXPR(
             [ssDD, sharpdiff], expr=[f'x {neutral} - abs y {neutral} - abs <= x y ?' if i in planes else '' for i in plane_range]
         )
@@ -162,23 +159,20 @@ def HQDeringmod(
     if drrep <= 0:
         repclp = sclp
     else:
-      if has_zsmooth:
-        repclp = core.zsmooth.Repair(input, sclp, mode=[drrep if i in planes else 0 for i in plane_range])
-      else:
-        repclp = core.rgvs.Repair(input, sclp, mode=[drrep if i in planes else 0 for i in plane_range])
+      repclp = tool_function(tools, 'rg', 'Repair')(input, sclp, mode=[drrep if i in planes else 0 for i in plane_range])
 
     # Post-Process: Limiting
     if (thr <= 0 and darkthr <= 0) or (thr >= 255 and darkthr >= 255):
         limitclp = repclp
     else:
-        limitclp = LimitFilter(repclp, input, thr=thr, elast=elast, brighten_thr=darkthr, planes=planes)
-    EXPR = get_expr()
+        limitclp = LimitFilter(repclp, input, thr=thr, elast=elast, brighten_thr=darkthr, planes=planes, tools=tools)
+    EXPR = get_expr(tools)
     # Post-Process: Ringing Mask Generating
     if ringmask is None:
         expr = f'x {scale(mthr, bits)} < 0 x ?'
-        PREWITT = core.edgemasks.ExPrewitt if hasattr(core,"edgemasks") else core.std.Prewitt
+        PREWITT = core.edgemasks.ExPrewitt if pick_tool(tools, 'edgemasks', ('edgemasks', 'std')) == 'edgemasks' else core.std.Prewitt
         prewittm = EXPR(PREWITT(input, planes=0), expr=expr if is_gray else [expr, ''])
-        fmask = _hysteresis_fn()(prewittm.zsmooth.Median(planes=0), prewittm, planes=0) if has_zsmooth else _hysteresis_fn()(prewittm.std.Median(planes=0), prewittm, planes=0)
+        fmask = _hysteresis_fn(tools)(prewittm.zsmooth.Median(planes=0), prewittm, planes=0) if has_zsmooth else _hysteresis_fn(tools)(prewittm.std.Median(planes=0), prewittm, planes=0)
         if mrad > 0:
             omask = mt_expand_multi(fmask, planes=0, sw=mrad, sh=mrad)
         else:
@@ -211,7 +205,7 @@ def HQDeringmod(
         return core.std.MaskedMerge(input, limitclp, ringmask, planes=planes, first_plane=True)
         
 # Taken from mvsfunc
-def mdering(clip: vs.VideoNode, thr: float = 2) -> vs.VideoNode:
+def mdering(clip: vs.VideoNode, thr: float = 2, tools=None) -> vs.VideoNode:
     """A simple light and bright DCT ringing remover
 
     It is a special instance of TMinBlur (r=1 and only filter the bright part) for higher performance.
@@ -226,7 +220,7 @@ def mdering(clip: vs.VideoNode, thr: float = 2) -> vs.VideoNode:
     """
 
     if clip.format.sample_type != vs.INTEGER:
-        raise TypeError(funcName + ': \"clip\" must be an integer clip!')
+        raise TypeError('mdering: \"clip\" must be an integer clip!')
 
     bits = clip.format.bits_per_sample
     thr = scale(thr, bits)
@@ -236,12 +230,12 @@ def mdering(clip: vs.VideoNode, thr: float = 2) -> vs.VideoNode:
     rg4_1 = core.std.Median(clip)
 
     if bits <= 12:
-        rg4_2 = median_blur(clip, radius=2)
+        rg4_2 = median_blur(clip, radius=2, tools=tools)
     else:
         rg4_2 = core.fmtc.bitdepth(clip, bits=12, dmode=1)
-        rg4_2 = median_blur(rg4_2, radius=2).fmtc.bitdepth(bits=bits)
-        rg4_2 = LimitFilter(clip, rg4_2, thr=0.0625, elast=2)
-    EXPR = get_expr()
+        rg4_2 = median_blur(rg4_2, radius=2, tools=tools).fmtc.bitdepth(bits=bits)
+        rg4_2 = LimitFilter(clip, rg4_2, thr=0.0625, elast=2, tools=tools)
+    EXPR = get_expr(tools)
     minblur_1 = EXPR([clip, rg11_1, rg4_1], ['x y - x z - xor x x y - abs x z - abs < y z ? ?'])
     minblur_2 = EXPR([clip, rg11_2, rg4_2], ['x y - x z - xor x x y - abs x z - abs < y z ? ?'])
     dering = EXPR([clip, minblur_1, minblur_2], ['y z - abs {thr} <= y x <= and y x ?'.format(thr=thr)])
@@ -325,12 +319,11 @@ def _limit_filter_expr(defref, thr, elast, largen_thr, value_range):
     
     
 
-def _expr2(clips: vs.VideoNode | list[vs.VideoNode], expr: str | list[str]) -> vs.VideoNode:
-    """Expr — prefers akarin → cranexpr → std."""
-    if hasattr(core, "akarin"):
-        return core.akarin.Expr(clips, expr)
-    if hasattr(core, "cranexpr"):
-        return core.cranexpr.Expr(clips, expr)
+def _expr2(clips: vs.VideoNode | list[vs.VideoNode], expr: str | list[str], tools=None) -> vs.VideoNode:
+    """Expr — akarin or cranexpr (tools['expr'] picks between them); std cannot evaluate these expressions."""
+    name = pick_tool(tools, 'expr', ('akarin', 'cranexpr'))
+    if name is not None:
+        return getattr(core, name).Expr(clips, expr)
     raise RuntimeError(
             "AntiRingLR requires akarin or cranexpr — "
             "none found. Install akarin or cranexpr into your VS plugins folder."
@@ -477,7 +470,7 @@ def _ar_expr(mode: str, weightL: float, offsetL: int, weightR: float, offsetR: i
     return "".join(blocks) + "x + "
 
 
-def _ar_apply(cl: vs.VideoNode, planes: str, expr: str) -> vs.VideoNode:
+def _ar_apply(cl: vs.VideoNode, planes: str, expr: str, tools=None) -> vs.VideoNode:
     """Run expr on the requested planes; the output format matches the input."""
     fmt_in = cl.format
     is_gray = fmt_in.color_family == vs.GRAY
@@ -501,7 +494,7 @@ def _ar_apply(cl: vs.VideoNode, planes: str, expr: str) -> vs.VideoNode:
     expr_c = expr if planes in ("chroma", "all") else "x"
     expr_list = [expr_y] if is_gray else [expr_y, expr_c, expr_c]
 
-    result = core.resize.Bicubic(_expr2(cl_f, expr_list), format=fmt_in, range_in_s="full", range_s="full")
+    result = core.resize.Bicubic(_expr2(cl_f, expr_list, tools), format=fmt_in, range_in_s="full", range_s="full")
     return core.std.CopyFrameProps(result, cl)
 
 
@@ -515,6 +508,7 @@ def AntiRingLR(
     knee: float = 0.7,
     pr2: float = 0.5,
     pr3: float = 0.5,
+    tools=None,
 ) -> vs.VideoNode:
     """
     Hans' Ringing Remover — VapourSynth port.
@@ -533,7 +527,7 @@ def AntiRingLR(
     pr2     : Protection for radius-2 signal components (0.0 – 1.5).
     pr3     : Protection for radius-3 signal components (0.0 – 1.5).
     """
-    return _ar_apply(cl, planes, _ar_expr("LR", weightL, offsetL, weightR, offsetR, knee, pr2, pr3))
+    return _ar_apply(cl, planes, _ar_expr("LR", weightL, offsetL, weightR, offsetR, knee, pr2, pr3), tools=tools)
 
 
 
@@ -546,7 +540,8 @@ def AntiRingLRUD(
     offsetR: int = 1,
     knee: float = 0.7,
     pr2: float = 0.5,
-    pr3: float = 0.5
+    pr3: float = 0.5,
+    tools=None
 ) -> vs.VideoNode:
     """
     Hans' Ringing Remover — horizontal + vertical pass.
@@ -558,14 +553,14 @@ def AntiRingLRUD(
     result = AntiRingLR(cl, planes=planes,
                         weightL=weightL, offsetL=offsetL,
                         weightR=weightR, offsetR=offsetR,
-                        knee=knee, pr2=pr2, pr3=pr3)
+                        knee=knee, pr2=pr2, pr3=pr3, tools=tools)
 
     # Pass 2 — vertical ringing via 90° rotation
     rotated = core.std.Transpose(result)
     rotated = AntiRingLR(rotated, planes=planes,
                          weightL=weightL, offsetL=offsetL,
                          weightR=weightR, offsetR=offsetR,
-                         knee=knee, pr2=pr2, pr3=pr3)
+                         knee=knee, pr2=pr2, pr3=pr3, tools=tools)
     result = core.std.Transpose(rotated)
 
     return result
@@ -582,6 +577,7 @@ def AntiRingLR2(
     knee: float = 0.7,
     pr2: float = 0.5,
     pr3: float = 0.5,
+    tools=None,
 ) -> vs.VideoNode:
     """
     Hans' Ringing Remover v2
@@ -601,7 +597,7 @@ def AntiRingLR2(
     pr2     : Protection for radius-2 signal components (0.0 – 1.5).
     pr3     : Protection for radius-3 signal components (0.0 – 1.5).
     """
-    return _ar_apply(cl, planes, _ar_expr("LR2", weightL, offsetL, weightR, offsetR, knee, pr2, pr3))
+    return _ar_apply(cl, planes, _ar_expr("LR2", weightL, offsetL, weightR, offsetR, knee, pr2, pr3), tools=tools)
 
 
 def AntiRingL2R2(
@@ -614,6 +610,7 @@ def AntiRingL2R2(
     knee: float = 0.7,
     pr2: float = 0.5,
     pr3: float = 0.5,
+    tools=None,
 ) -> vs.VideoNode:
     """
     Hans' Ringing Remover — two correction lobes on each side.
@@ -635,7 +632,7 @@ def AntiRingL2R2(
     pr2     : Protection for radius-2 signal components (0.0 – 1.5).
     pr3     : Protection for radius-3 signal components (0.0 – 1.5).
     """
-    return _ar_apply(cl, planes, _ar_expr("L2R2", weightL, offsetL, weightR, offsetR, knee, pr2, pr3))
+    return _ar_apply(cl, planes, _ar_expr("L2R2", weightL, offsetL, weightR, offsetR, knee, pr2, pr3), tools=tools)
 
 
 def AntiRing22LR(
@@ -648,6 +645,7 @@ def AntiRing22LR(
     knee: float = 0.7,
     pr2: float = 0.5,
     pr3: float = 0.5,
+    tools=None,
 ) -> vs.VideoNode:
     """
     Hans' Ringing Remover — two correction lobes on each side, with the
@@ -669,7 +667,7 @@ def AntiRing22LR(
     pr2     : Protection for radius-2 signal components (0.0 – 1.5).
     pr3     : Protection for radius-3 signal components (0.0 – 1.5).
     """
-    return _ar_apply(cl, planes, _ar_expr("22LR", weightL, offsetL, weightR, offsetR, knee, pr2, pr3))
+    return _ar_apply(cl, planes, _ar_expr("22LR", weightL, offsetL, weightR, offsetR, knee, pr2, pr3), tools=tools)
 
 
 
@@ -683,6 +681,7 @@ def AntiRingLR2UD(
     knee: float = 0.7,
     pr2: float = 0.5,
     pr3: float = 0.5,
+    tools=None,
 ) -> vs.VideoNode:
     """
     Hans' Ringing Remover v2 — horizontal + vertical pass.
@@ -698,13 +697,13 @@ def AntiRingLR2UD(
     result = AntiRingLR2(cl, planes=planes,
                          weightL=weightL, offsetL=offsetL,
                          weightR=weightR, offsetR=offsetR,
-                         knee=knee, pr2=pr2, pr3=pr3)
+                         knee=knee, pr2=pr2, pr3=pr3, tools=tools)
 
     rotated = core.std.Transpose(result)
     rotated = AntiRingLR2(rotated, planes=planes,
                           weightL=weightL, offsetL=offsetL,
                           weightR=weightR, offsetR=offsetR,
-                          knee=knee, pr2=pr2, pr3=pr3)
+                          knee=knee, pr2=pr2, pr3=pr3, tools=tools)
     return core.std.Transpose(rotated)
     
     

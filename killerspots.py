@@ -1,5 +1,6 @@
 import vapoursynth as vs
-from misc import MV
+from misc import get_mv
+from helpers import tool_function
 
 # dependencies:
 # RemoveGrain (http://www.vapoursynth.com/doc/plugins/rgvs.html) or zsmooth (https://github.com/adworacz/zsmooth)
@@ -15,8 +16,9 @@ from misc import MV
 # Adapted by GMJCZP
 # Requirements: MVTools, RGTools, RemoveDirt
 
-def KillerSpots(clip: vs.VideoNode, limit: int=10, advanced: bool=False):
-  core = vs.core  
+def KillerSpots(clip: vs.VideoNode, limit: int=10, advanced: bool=False, tools=None):
+  core = vs.core
+  MV = get_mv(tools)
   # advanced: Use 'False' for best speed and original KillerSpots. Use 'True' to specify a 'limit'. Default True;
   # limit: default 10, spot removal limit (for advanced=true only)
   osup = MV.Super(clip=clip, pel=2, sharp=2, blksize=8, overlap=4)
@@ -26,23 +28,16 @@ def KillerSpots(clip: vs.VideoNode, limit: int=10, advanced: bool=False):
   fc1  = MV.Compensate(clip, osup, fv1)
   clip = core.std.Interleave([fc1, clip, bc1])
   if advanced:
-    clip = RemoveDirtMod(clip, limit)
+    clip = RemoveDirtMod(clip, limit, tools=tools)
   else:
-    if hasattr(core,'zsmooth'):
-      clip = core.zsmooth.Clense(clip)
-    else:
-      clip = core.rgvs.Clense(clip)
+    clip = tool_function(tools, 'rg', 'Clense')(clip)
   clip = core.std.SelectEvery(clip=clip, cycle=3, offsets=1)
   return clip;
 
 # From function RemoveDirt, original adaptation thanks to johnmeyer
-def RemoveDirtMod(clip: vs.VideoNode, limit: int =10):
-  core = vs.core  
-  if hasattr(core, 'zsmooth'):
-    clensed = core.zsmooth.Clense(clip)
-    alt = core.zsmooth.RemoveGrain(clip,mode=1)
-  else:
-    clensed = core.rgvs.Clense(clip)
-    alt = core.rgvs.RemoveGrain(clip,mode=1)
+def RemoveDirtMod(clip: vs.VideoNode, limit: int =10, tools=None):
+  core = vs.core
+  clensed = tool_function(tools, 'rg', 'Clense')(clip)
+  alt = tool_function(tools, 'rg', 'RemoveGrain')(clip,mode=1)
   clip = core.rdvs.RestoreMotionBlocks(clensed, clip, alternative=alt, pthreshold=4, cthreshold=6, gmthreshold=40, dist=3, dmode=2, noise=limit, noisy=12)
   return clip

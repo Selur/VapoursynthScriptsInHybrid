@@ -6,7 +6,147 @@ core = vs.core
 
 import math
 import warnings
-from typing import Optional, Union, Sequence, Dict, Any
+from typing import Optional, Union, Sequence, Dict, Any, Mapping, Callable
+
+## Tool choice -----------------------------------------------------------------------------------
+# Family -> {value: (namespace, function)}. The value is what a `tools` dict names; the function is
+# only given where the namespace alone does not say whether the implementation is there.
+TOOLS: Dict[str, Dict[str, tuple]] = {
+    'mv':             {'mvutensils': ('mvu', None), 'mvsf': ('mvsf', None), 'mv': ('mv', None)},
+    'expr':           {'akarin': ('akarin', None), 'cranexpr': ('cranexpr', None), 'std': ('std', None)},
+    'rg':             {'zsmooth': ('zsmooth', None), 'rgsf': ('rgsf', None), 'rgvs': ('rgvs', None)},
+    'median':         {'zsmooth': ('zsmooth', 'Median'), 'ctmf': ('ctmf', None), 'std': ('std', None)},
+    'tmedian':        {'zsmooth': ('zsmooth', 'TemporalMedian'), 'tmedian': ('tmedian', None)},
+    'ttempsmooth':    {'zsmooth': ('zsmooth', 'TTempSmooth'), 'ttmpsm': ('ttmpsm', None)},
+    'fluxsmooth':     {'zsmooth': ('zsmooth', 'FluxSmoothT'), 'flux': ('flux', None)},
+    'temporalsoften': {'zsmooth': ('zsmooth', 'TemporalSoften'), 'focus2': ('focus2', None), 'focus': ('focus', None)},
+    'boxblur':        {'vszip': ('vszip', 'BoxBlur'), 'std': ('std', 'BoxBlur')},
+    'limiter':        {'vszip': ('vszip', 'Limiter'), 'std': ('std', None)},
+    'planestats':     {'vszip': ('vszip', 'PlaneMinMax'), 'std': ('std', None)},
+    'nnedi3':         {'sneedif': ('sneedif', None), 'nnedi3vk': ('nnedi3vk', None), 'vszipcu': ('vszipcu', 'NNEDI3'),
+                       'nnedi3cl': ('nnedi3cl', None), 'znedi3': ('znedi3', None), 'nnedi3': ('nnedi3', None)},
+    'eedi3':          {'eedi3vk2': ('eedi3vk2', 'EEDI3'), 'vszipcu': ('vszipcu', 'EEDI3'), 'vszipcl': ('vszipcl', 'EEDI3'),
+                       'eedi3vk': ('eedi3vk', 'EEDI3'), 'eedi3cl': ('eedi3m', 'EEDI3CL'), 'vszip': ('vszip', 'EEDI3'),
+                       'eedi3m': ('eedi3m', 'EEDI3')},
+    'eedi2':          {'eedi2': ('eedi2', None), 'eedi2cuda': ('eedi2cuda', None)},
+    'dfttest':        {'vszipcu': ('vszipcu', 'DFTTest'), 'dfttest2': ('dfttest2', None), 'dfttest': ('dfttest', None)},
+    'nlmeans':        {'nlm_ispc': ('nlm_ispc', None), 'nlm_cuda': ('nlm_cuda', None), 'vszipcu': ('vszipcu', 'NLMeans'),
+                       'vszipcl': ('vszipcl', 'NLMeans'), 'knlm': ('knlm', None)},
+    'bm3d':           {'bm3dcuda': ('bm3dcuda', None), 'bm3dhip': ('bm3dhip', None), 'bm3dmetal': ('bm3dmetal', None),
+                       'bm3dcpu': ('bm3dcpu', None), 'bm3d': ('bm3d', None)},
+    'bilateral':      {'bilateralgpu_rtc': ('bilateralgpu_rtc', None), 'bilateralgpu': ('bilateralgpu', None),
+                       'vszipcl': ('vszipcl', 'Bilateral'), 'vszipcu': ('vszipcu', 'Bilateral'),
+                       'vszip': ('vszip', 'Bilateral'), 'bilateral': ('bilateral', None)},
+    'dctfilter':      {'oxidctf': ('oxidctf', None), 'zsmooth': ('zsmooth', 'DCTFilter'), 'dctf': ('dctf', None)},
+    'warp':           {'warp': ('warp', None), 'awarp': ('awarp', None)},
+    'edgemasks':      {'edgemasks': ('edgemasks', None), 'std': ('std', None)},
+    'tcanny':         {'tcanny': ('tcanny', None), 'std': ('std', None)},
+    'fft3d':          {'neo_fft3d': ('neo_fft3d', None), 'fft3dfilter': ('fft3dfilter', None)},
+    'f3kdb':          {'vszip': ('vszip', 'Deband'), 'neo_f3kdb': ('neo_f3kdb', None), 'f3kdb': ('f3kdb', None)},
+    'scd':            {'scd': ('scd', None), 'misc': ('misc', 'SCDetect'), 'std': ('std', None)},
+    'hysteresis':     {'hysteresis': ('hysteresis', None), 'misc': ('misc', 'Hysteresis')},
+    'grain':          {'noise': ('noise', None), 'grain': ('grain', None)},
+    'removedirt':     {'removedirt': ('removedirt', 'SCSelect'), 'rdvs': ('rdvs', None)},
+    'vinverse':       {'vinverse': ('vinverse', None), 'std': ('std', None)},
+    'interlace':      {'interlace': ('interlace', None), 'std': ('std', None)},
+    'motionmask':     {'motionmask': ('motionmask', None), 'std': ('std', None)},
+    'msmooth':        {'msmoosh': ('msmoosh', None), 'std': ('std', None)},
+    'text':           {'sub': ('sub', None), 'std': ('std', None)},
+    'cnr':            {'cnr2': ('cnr2', None), 'zsmooth': ('zsmooth', 'Cnr4')},
+    'average':        {'artyfox': ('artyfox', None), 'average': ('average', None)},
+}
+# dfttest2 is a Python module over several namespaces.
+_DFTTEST2_NAMESPACES = ('dfttest2_cuda', 'dfttest2_nvrtc', 'dfttest2_hip', 'dfttest2_hiprtc', 'dfttest2_cpu', 'dfttest2_gcc')
+_unknown_tool_keys_warned = set()
+
+
+def tool_namespace(family: str, name: str) -> str:
+    '''Namespace of implementation `name` of `family`, e.g. ('mv', 'mvutensils') -> 'mvu'.'''
+    return TOOLS[family][name][0]
+
+
+def tool_loaded(family: str, name: str) -> bool:
+    '''True if implementation `name` of `family` is loaded; the std ones always are.'''
+    namespace, function = TOOLS[family][name]
+    if namespace == 'std':
+        return function is None or hasattr(core.std, function)
+    if namespace == 'dfttest2':
+        return any(hasattr(core, ns) for ns in _DFTTEST2_NAMESPACES)
+    if not hasattr(core, namespace):
+        return False
+    return function is None or hasattr(getattr(core, namespace), function)
+
+
+def _check_tool_keys(tools: Mapping[str, str]) -> None:
+    for key in tools:
+        if key not in TOOLS and key not in _unknown_tool_keys_warned:
+            _unknown_tool_keys_warned.add(key)
+            warnings.warn(f'tools: unknown key "{key}" is ignored (known: {", ".join(sorted(TOOLS))})')
+
+
+def pick_tool(tools: Optional[Mapping[str, str]], family: str, order: Sequence[str],
+              usable: Optional[Callable[[str], bool]] = None,
+              candidates: Optional[Sequence[str]] = None) -> Optional[str]:
+    '''Name of the implementation of `family` to use: tools[family] first, then `order`.
+
+    `order` is the caller's own preference and `usable(name)` its check whether an implementation can serve the
+    call (default: loaded); `candidates` are the implementations the call can use at all (default: `order`).
+    A tools entry this call cannot use gives a warning and the normal order; an unknown value raises. Returns
+    None when nothing in `order` is usable - the caller decides what that means.
+    '''
+    usable = usable or (lambda name: tool_loaded(family, name))
+    candidates = order if candidates is None else candidates
+    if tools:
+        _check_tool_keys(tools)
+        wanted = tools.get(family)
+        if wanted is not None:
+            if wanted not in TOOLS[family]:
+                raise vs.Error(f'tools: "{wanted}" is no {family} implementation, use one of {", ".join(TOOLS[family])}')
+            if wanted in candidates and usable(wanted):
+                return wanted
+            reason = 'is not loaded' if not tool_loaded(family, wanted) else 'cannot serve this call'
+            warnings.warn(f'tools: {family} "{wanted}" {reason}, using the default order')
+    for name in order:
+        if usable(name):
+            return name
+    return None
+
+
+# Default order for tool_function() and the functions whose name differs between implementations.
+_FUNCTION_ORDER = {
+    'rg': ('zsmooth', 'rgvs'), 'fluxsmooth': ('zsmooth', 'flux'), 'tmedian': ('zsmooth', 'tmedian'),
+    'dctfilter': ('oxidctf', 'zsmooth', 'dctf'), 'boxblur': ('vszip', 'std'), 'limiter': ('vszip', 'std'),
+    'hysteresis': ('hysteresis', 'misc'), 'grain': ('noise', 'grain'), 'fft3d': ('neo_fft3d', 'fft3dfilter'),
+}
+_FUNCTION_NAMES = {
+    ('flux', 'FluxSmoothT'): 'SmoothT', ('flux', 'FluxSmoothST'): 'SmoothST',
+    ('fft3dfilter', 'FFT3D'): 'FFT3DFilter',
+}
+
+
+def tool_function(tools: Optional[Mapping[str, str]], family: str, function: str,
+                  order: Optional[Sequence[str]] = None):
+    '''`function` of the implementation of `family` to use, for families whose implementations take the same arguments.
+
+    tool_function(tools, 'rg', 'Repair') is core.zsmooth.Repair or core.rgvs.Repair; the name is the one of the first
+    implementation in the order (flux.SmoothT for 'FluxSmoothT', fft3dfilter.FFT3DFilter for 'FFT3D'). Without anything
+    usable it is the last one in the order, so the error names the plugin the caller asked for last.
+    '''
+    order = tuple(order or _FUNCTION_ORDER[family])
+
+    def name_in(value):
+        namespace = tool_namespace(family, value)
+        return namespace, _FUNCTION_NAMES.get((namespace, function), function)
+
+    def usable(value):
+        namespace, name = name_in(value)
+        return hasattr(core, namespace) and hasattr(getattr(core, namespace), name) if namespace != 'std' \
+            else hasattr(core.std, name)
+
+    value = pick_tool(tools, family, order, usable) or order[-1]
+    namespace, name = name_in(value)
+    return getattr(getattr(core, namespace), name)
+
 
 class Range:
     LIMITED = vs.RANGE_LIMITED
@@ -216,7 +356,8 @@ def Padding(clip: vs.VideoNode, left: int = 0, right: int = 0, top: int = 0, bot
 
     return clip.resize.Point(width, height, src_left=-left, src_top=-top, src_width=width, src_height=height)
 
-def DitherLumaRebuild(src: vs.VideoNode, s0: float = 2.0, c: float = 0.0625, chroma: bool = True, tv_range: bool = True) -> vs.VideoNode:
+def DitherLumaRebuild(src: vs.VideoNode, s0: float = 2.0, c: float = 0.0625, chroma: bool = True, tv_range: bool = True,
+                      tools: Optional[Mapping[str, str]] = None) -> vs.VideoNode:
     '''Converts luma (and chroma) to PC levels, and optionally allows tweaking for pumping up the darks. (for the clip to be fed to motion search only)'''
     # tv_range=False: the input is already full range, only the dark-boosting curve is applied and chroma is left alone.
     if not isinstance(src, vs.VideoNode):
@@ -240,8 +381,24 @@ def DitherLumaRebuild(src: vs.VideoNode, s0: float = 2.0, c: float = 0.0625, chr
     else:
         t, out = f'x {peak} / 0 max 1 min', f'{peak} *'
     e = f'{k} {1 + c} {(1 + c) * c} {t} {c} + / - * {t} 1 {k} - * + ' + out
-    EXPR = get_expr()
+    EXPR = get_expr(tools)
     return EXPR(src, expr=e if is_gray else [e, f'x {neutral} - 128 * 112 / {neutral} +' if chroma and is_integer and tv_range else ''])
+
+def _caller_name(num_stacks: int) -> str:
+    import inspect
+    stack = inspect.stack()
+    return stack[num_stacks + 2].function if len(stack) > num_stacks + 2 else '?'
+
+
+def type_error(message: str, num_stacks: int = 1) -> TypeError:
+    '''TypeError naming the function num_stacks levels up, as mvsfunc's helper of the same name.'''
+    return TypeError(f'[{_caller_name(num_stacks)}] {message}')
+
+
+def value_error(message: str, num_stacks: int = 1) -> ValueError:
+    '''ValueError naming the function num_stacks levels up, as mvsfunc's helper of the same name.'''
+    return ValueError(f'[{_caller_name(num_stacks)}] {message}')
+
 
 def is_limited_range(clip: vs.VideoNode, default: bool = True) -> bool:
     '''True if frame 0 is tagged as limited (TV) range; `default` if the clip carries no range property.'''
@@ -250,26 +407,48 @@ def is_limited_range(clip: vs.VideoNode, default: bool = True) -> bool:
         value = frame.props.get(prop_name)
     return default if value is None else value == vs.RANGE_LIMITED
 
-def get_expr():
-    '''Return the best Expr backend available, in order of preference: akarin, cranexpr, std.'''
-    if hasattr(core, 'akarin'):
-        return core.akarin.Expr
-    if hasattr(core, 'cranexpr'):
-        return core.cranexpr.Expr
-    return core.std.Expr
+def _pow_guard(expr: str) -> str:
+    '''Rewrite pow/** so a base <= 0 with a non-integer exponent gives 0 like std.Expr (akarin 1.5.0 returns ~FLT_MAX).'''
+    tokens = expr.split()
+    if 'pow' not in tokens and '**' not in tokens:
+        return expr
+    out = []
+    for tok in tokens:
+        if tok not in ('pow', '**'):
+            out.append(tok)
+            continue
+        try:
+            exponent = float(out[-1])
+        except (IndexError, ValueError):
+            exponent = None
+        if exponent is not None and exponent.is_integer():
+            out.append(tok)
+        elif exponent is not None:
+            literal = out.pop()
+            out += ['powb!', 'powb@', '0', '<=', '0', 'powb@', literal, 'pow', '?']
+        else:
+            out += ['powe!', 'powb!', 'powb@', '0', '<=', 'powe@', 'powe@', 'trunc', '=', 'not', 'and', '0', 'powb@', 'powe@', 'pow', '?']
+    return ' '.join(out)
 
-def get_rg(is_float: bool = False):
-    '''Return the best RemoveGrain implementation available, in order of preference: zsmooth, rgsf (float only), rgvs.'''
-    if hasattr(core, 'zsmooth'):
-        return core.zsmooth.RemoveGrain
-    if is_float and hasattr(core, 'rgsf'):
-        return core.rgsf.RemoveGrain
-    return core.rgvs.RemoveGrain
+def _akarin_expr(clips, expr, *args, **kwargs):
+    '''akarin.Expr with the pow workaround of _pow_guard.'''
+    expr = [_pow_guard(e) for e in expr] if isinstance(expr, (list, tuple)) else _pow_guard(expr)
+    return core.akarin.Expr(clips, expr, *args, **kwargs)
+
+def get_expr(tools: Optional[Mapping[str, str]] = None):
+    '''Return the Expr backend: tools['expr'], else the best available of akarin, cranexpr, std.'''
+    name = pick_tool(tools, 'expr', ('akarin', 'cranexpr', 'std'))
+    return _akarin_expr if name == 'akarin' else getattr(core, tool_namespace('expr', name)).Expr
+
+def get_rg(is_float: bool = False, tools: Optional[Mapping[str, str]] = None):
+    '''Return the RemoveGrain implementation: tools['rg'], else zsmooth, rgsf (float only), rgvs.'''
+    name = pick_tool(tools, 'rg', ('zsmooth', 'rgsf', 'rgvs') if is_float else ('zsmooth', 'rgvs'))
+    return getattr(core, tool_namespace('rg', name or 'rgvs')).RemoveGrain
 
 def BoxFilter(input: vs.VideoNode, radius: int = 16, radius_v: Optional[int] = None, planes: Optional[Union[int, Sequence[int]]] = None,
               fmtc_conv: int = 0, radius_thr: Optional[int] = None,
               resample_args: Optional[Dict[str, Any]] = None, keep_bits: bool = True,
-              depth_args: Optional[Dict[str, Any]] = None
+              depth_args: Optional[Dict[str, Any]] = None, tools: Optional[Mapping[str, str]] = None
               ) -> vs.VideoNode:
     '''Box filter
 
@@ -311,6 +490,8 @@ def BoxFilter(input: vs.VideoNode, radius: int = 16, radius_v: Optional[int] = N
             Keys should match helpers.Depth's signature (range, range_in, dither_type)"
             Default is {}.
 
+        tools: (dict) tools['boxblur'] ('vszip' or 'std') picks the BoxBlur implementation.
+
     '''
 
     funcName = 'BoxFilter'
@@ -338,6 +519,7 @@ def BoxFilter(input: vs.VideoNode, radius: int = 16, radius_v: Optional[int] = N
     if depth_args is None:
         depth_args = {}
 
+    boxblur = pick_tool(tools, 'boxblur', ('vszip', 'std'))
     planes2 = [(3 if i in planes else 2) for i in range(input.format.num_planes)]
     width = radius * 2 - 1
     width_v = radius_v * 2 - 1
@@ -358,7 +540,7 @@ def BoxFilter(input: vs.VideoNode, radius: int = 16, radius_v: Optional[int] = N
                     cnorm=False, fh=-1, fv=-1, center=False, **resample_args)
                 return flt # No bitdepth conversion is required since fmtc.resample outputs the same bitdepth as input
 
-            elif hasattr(core, 'vszip'):
+            elif boxblur == 'vszip':
                 return core.vszip.BoxBlur(input, hradius=radius-1, vradius=radius_v-1, planes=planes)
 
             elif core.core_version.release_major >= 39:
@@ -383,7 +565,7 @@ def BoxFilter(input: vs.VideoNode, radius: int = 16, radius_v: Optional[int] = N
                     flt = Depth(flt, bits=input.format.bits_per_sample, **depth_args)
                 return flt
 
-            elif hasattr(core, 'vszip'):
+            elif boxblur == 'vszip':
                 return core.vszip.BoxBlur(input, hradius=radius-1, vradius=radius_v-1, planes=planes)
 
             elif hasattr(core.std, 'BoxBlur'):
@@ -427,7 +609,7 @@ def _nnedi3CanRun(namespace: str, kwargs: Dict[str, Any]) -> bool:
 
 
 def NNEDI3(clip: vs.VideoNode, gpu: Optional[bool] = None, device: Optional[int] = None,
-           **kwargs) -> vs.VideoNode:
+           tools: Optional[Mapping[str, str]] = None, **kwargs) -> vs.VideoNode:
     '''Calls the NNEDI3 implementation that is loaded.
 
     Looked for in this order, the first one that is loaded and can serve the call wins:
@@ -440,15 +622,15 @@ def NNEDI3(clip: vs.VideoNode, gpu: Optional[bool] = None, device: Optional[int]
     Args:
         gpu: The caller's own opencl/gpu switch. Only reorders the search.
         device: Device number, passed on under whatever name the implementation uses.
+        tools: tools['nnedi3'] names the implementation to use; `gpu` then has no effect.
 
     `pscrn` above 2 and `dw` are not available everywhere - a call using them skips the
     implementations that cannot serve it.
     '''
     order = (_NNEDI3_CPU + _NNEDI3_GPU) if gpu is False else (_NNEDI3_GPU + _NNEDI3_CPU)
     known = {ns: (fn, dev, extra) for ns, fn, dev, extra in _NNEDI3_IMPLS}
-    for namespace in order:
-        if not _nnedi3CanRun(namespace, kwargs):
-            continue
+    namespace = pick_tool(tools, 'nnedi3', order, lambda name: _nnedi3CanRun(name, kwargs))
+    if namespace is not None:
         function, deviceArg, extras = known[namespace]
         args = {k: v for k, v in kwargs.items() if k in _NNEDI3_COMMON or k in extras}
         # Callers use -1 for "let it choose"; nnedi3vk and vszipcu reject negative ids outright,
@@ -488,8 +670,32 @@ def _hasFunction(namespace: str, function: str) -> bool:
     return hasattr(core, namespace) and hasattr(getattr(core, namespace), function)
 
 
+def _eedi3_args(namespace: str, function: str, clip: vs.VideoNode, kwargs: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    '''The arguments namespace.function gets for this call, None if it cannot serve it.'''
+    if not _hasFunction(namespace, function):
+        return None
+    known = {(ns, fn): (dev, extra) for ns, fn, dev, extra in _EEDI3_IMPLS}
+    extras = known[(namespace, function)][1]
+    allowed = _EEDI3_COMMON + extras
+    args = dict(kwargs)
+    if 'planes' not in extras and 'planes' in args:
+        wanted = args['planes']
+        if isinstance(wanted, int): wanted = [wanted]
+        if sorted(wanted) != list(range(clip.format.num_planes)):
+            return None           # a real restriction this implementation cannot express
+        del args['planes']        # asks for every plane, which is what it does anyway
+    if any(k not in allowed for k in args):
+        return None
+    if 'mclip' in args:
+        wantsGray = _EEDI3_MCLIP.get(namespace) == 'gray'
+        isGray = args['mclip'].format.color_family == vs.GRAY
+        if wantsGray != isGray:
+            return None           # this one would reject the mask the caller built
+    return args
+
+
 def EEDI3(clip: vs.VideoNode, gpu: Optional[bool] = None, device: Optional[int] = None,
-          **kwargs) -> vs.VideoNode:
+          tools: Optional[Mapping[str, str]] = None, **kwargs) -> vs.VideoNode:
     '''Calls the EEDI3 implementation that is loaded.
 
     Looked for in this order, the first one that is loaded and can serve the call wins:
@@ -503,30 +709,17 @@ def EEDI3(clip: vs.VideoNode, gpu: Optional[bool] = None, device: Optional[int] 
     (they always process every plane), and the CUDA/OpenCL ones no `mclip`. A call that uses one of
     those skips the implementations that cannot serve it, so the picture stays the same. A `planes`
     that names *all* planes is dropped instead: it asks for what those implementations do anyway.
+    tools['eedi3'] names the implementation to use ('eedi3cl' is eedi3m.EEDI3CL); `gpu` then has no effect.
     '''
     kwargs = {k: v for k, v in kwargs.items() if v is not None}
-    allPlanes = list(range(clip.format.num_planes))
     order = (_EEDI3_CPU + _EEDI3_GPU) if gpu is False else (_EEDI3_GPU + _EEDI3_CPU)
-    known = {(ns, fn): (dev, extra) for ns, fn, dev, extra in _EEDI3_IMPLS}
-    for namespace, function in order:
-        if not _hasFunction(namespace, function):
-            continue
-        deviceArg, extras = known[(namespace, function)]
-        allowed = _EEDI3_COMMON + extras
-        args = dict(kwargs)
-        if 'planes' not in extras and 'planes' in args:
-            wanted = args['planes']
-            if isinstance(wanted, int): wanted = [wanted]
-            if sorted(wanted) != allPlanes:
-                continue          # a real restriction this implementation cannot express
-            del args['planes']    # asks for every plane, which is what it does anyway
-        if any(k not in allowed for k in args):
-            continue
-        if 'mclip' in args:
-            wantsGray = _EEDI3_MCLIP.get(namespace) == 'gray'
-            isGray = args['mclip'].format.color_family == vs.GRAY
-            if wantsGray != isGray:
-                continue      # this one would reject the mask the caller built
+    by_name = {name: nf for name, nf in TOOLS['eedi3'].items()}
+    names = [next(name for name, nf in by_name.items() if nf == pair) for pair in order]
+    name = pick_tool(tools, 'eedi3', names, lambda n: _eedi3_args(*by_name[n], clip, kwargs) is not None)
+    if name is not None:
+        namespace, function = by_name[name]
+        args = _eedi3_args(namespace, function, clip, kwargs)
+        deviceArg = {(ns, fn): dev for ns, fn, dev, _ in _EEDI3_IMPLS}[(namespace, function)]
         if deviceArg is not None and device is not None and device >= 0:
             args[deviceArg] = device
         return getattr(getattr(core, namespace), function)(clip, **args)
@@ -561,7 +754,8 @@ def _dfttest2CanRun(kwargs: Dict[str, Any]) -> bool:
     return any(hasattr(core, name) for name in _DFTTEST2_ANY_BLOCK)
 
 
-def DFTTest(clip: vs.VideoNode, cuda: Optional[bool] = None, **kwargs) -> vs.VideoNode:
+def DFTTest(clip: vs.VideoNode, cuda: Optional[bool] = None, tools: Optional[Mapping[str, str]] = None,
+            **kwargs) -> vs.VideoNode:
     '''Calls the first DFTTest implementation that is loaded, GPU ones first.
 
     Looked for in this order: core.vszipcu.DFTTest (CUDA), dfttest2.DFTTest (CUDA) and
@@ -571,18 +765,23 @@ def DFTTest(clip: vs.VideoNode, cuda: Optional[bool] = None, **kwargs) -> vs.Vid
     Args:
         cuda: False forces the CPU implementation, True and None look for a GPU one first.
             Kept for the callers that have their own cuda/opencl/gpu switch.
+        tools: tools['dfttest'] ('vszipcu', 'dfttest2' or 'dfttest') names the implementation; `cuda` then has
+            no effect.
 
     An implementation is only used when it can actually handle the call: neither GPU one takes
     every parameter, and most of their backends are fixed to a spatial block size of 16. Calls
     they cannot serve use the CPU version, which then has to be loaded as well.
     '''
-    if cuda is not False:
-        if _vszipcuCanRun(kwargs):
-            return core.vszipcu.DFTTest(clip, **kwargs)
-        if _dfttest2CanRun(kwargs):
-            import dfttest2
-            # Let dfttest2 pick its backend: NVRTC where it fits, cuFFT for everything else.
-            return dfttest2.DFTTest(clip, **kwargs)
+    can_run = {'vszipcu': _vszipcuCanRun, 'dfttest2': _dfttest2CanRun, 'dfttest': lambda _: hasattr(core, 'dfttest')}
+    everything = ('vszipcu', 'dfttest2', 'dfttest')
+    order = ('dfttest',) if cuda is False else everything
+    name = pick_tool(tools, 'dfttest', order, lambda n: can_run[n](kwargs), candidates=everything)
+    if name == 'vszipcu':
+        return core.vszipcu.DFTTest(clip, **kwargs)
+    if name == 'dfttest2':
+        import dfttest2
+        # Let dfttest2 pick its backend: NVRTC where it fits, cuFFT for everything else.
+        return dfttest2.DFTTest(clip, **kwargs)
     return core.dfttest.DFTTest(clip, **kwargs)
 
 
@@ -592,7 +791,7 @@ _BM3D_IMPLEMENTATIONS = ('bm3dcuda', 'bm3dhip', 'bm3dmetal', 'bm3dcpu')
 
 def BM3D(clip: vs.VideoNode, sigma: Sequence[float], radius: int = 0, block_step: int = 8, bm_range: int = 9,
          ps_num: int = 2, ps_range: int = 4, chroma: bool = False, device_id: Optional[int] = None,
-         backend: Optional[str] = None) -> vs.VideoNode:
+         backend: Optional[str] = None, tools: Optional[Mapping[str, str]] = None) -> vs.VideoNode:
     '''Basic BM3D estimate (aggregated when radius > 0) on the BM3D plugin that is loaded.
 
     The clip must be 32-bit float, chroma=True (CBM3D, block matching on luma) needs YUV444PS; the result is
@@ -601,11 +800,16 @@ def BM3D(clip: vs.VideoNode, sigma: Sequence[float], radius: int = 0, block_step
     followed by bm3dcpu; it matters where every plugin is autoloaded (Linux, macOS), with explicit loading only
     the chosen one is there anyway. A GPU plugin that cannot create its filter (no usable card, e.g. an AMD iGPU the bundled ROCm runtime does not support) is skipped with
     a warning, so a GPU choice should be loaded together with bm3dcpu. With the BM3DCUDA plugins, planes with
-    sigma 0 are undefined unless chroma=True.
+    sigma 0 are undefined unless chroma=True. tools['bm3d'] (when backend is not given) moves that implementation to
+    the front if it is loaded, otherwise it warns; everything else keeps the default order.
     '''
     if clip.format.sample_type != vs.FLOAT or clip.format.bits_per_sample != 32:
         raise vs.Error('BM3D: the clip must be 32-bit float')
     order = _BM3D_IMPLEMENTATIONS + ('bm3d',)
+    if backend is None and tools:
+        first = pick_tool(tools, 'bm3d', order)
+        if first is not None:
+            order = (first,) + tuple(name for name in order if name != first)
     if backend is not None:
         if backend not in order:
             raise vs.Error(f'BM3D: unknown backend "{backend}", use one of {", ".join(order)}')
@@ -652,16 +856,18 @@ def NLMeans(
     rclip: Optional[vs.VideoNode] = None,
     device_type: Optional[str] = None,
     device_id: Optional[int] = None,
+    tools: Optional[Mapping[str, str]] = None,
 ) -> vs.VideoNode:
     """Calls the NLMeans implementation that is loaded, with the arguments it understands.
 
     d, a, s, h, channels, wmode, wref and rclip mean the same everywhere. device_type exists in
     knlm alone, device_id in everything but nlm_ispc; a negative device_id means "the plugin
-    picks" and is left out.
+    picks" and is left out. tools['nlmeans'] names the implementation to use.
     """
-    for namespace, name in _NLMEANS_IMPLEMENTATIONS:
-        if not hasattr(core, namespace):
-            continue
+    functions = dict(_NLMEANS_IMPLEMENTATIONS)
+    namespace = pick_tool(tools, 'nlmeans', list(functions), lambda n: hasattr(core, n))
+    if namespace is not None:
+        name = functions[namespace]
         kwargs = {'d': d, 'a': a, 's': s, 'h': h, 'channels': channels, 'wmode': wmode,
                   'wref': wref, 'rclip': rclip}
         kwargs = {key: value for key, value in kwargs.items() if value is not None}
@@ -685,6 +891,7 @@ def KNLMeansCL(
     wref: Optional[float] = None,
     device_type: Optional[str] = None,
     device_id: Optional[int] = None,
+    tools: Optional[Mapping[str, str]] = None,
 ) -> vs.VideoNode:
     """Runs NLMeans over every plane, in the one or two passes the clip's sampling calls for."""
     if not isinstance(clip, vs.VideoNode):
@@ -693,7 +900,7 @@ def KNLMeansCL(
     if clip.format.color_family not in (vs.YUV, vs.GRAY):
         raise vs.Error('KNLMeansCL: this wrapper is intended to be used only for YUV and GRAY format')
 
-    args = dict(d=d, a=a, s=s, h=h, wmode=wmode, wref=wref, device_type=device_type, device_id=device_id)
+    args = dict(d=d, a=a, s=s, h=h, wmode=wmode, wref=wref, device_type=device_type, device_id=device_id, tools=tools)
     # GRAY has no chroma to walk over, and every implementation only accepts channels='Y'
     # there - 'YUV' wants 4:4:4 and 'UV' wants a YUV clip.
     if clip.format.color_family == vs.GRAY:

@@ -99,11 +99,12 @@ import misc
 import vapoursynth as vs
 import ChangeFPS
 from vapoursynth import core
-from misc import MV
+from misc import get_mv
 from helpers import get_expr
 
 def FrameRateConverter(C, newNum = None, newDen = None, preset = "normal", blkSize = None, blkSizeV = None, frameDouble = None, output = "auto", debug = False, \
-    prefilter = None, maskThr = None, maskOcc = None, skipThr = 45, blendOver = None, skipOver = None, stp = 35, dct = None, dctRe = None, blendRatio = 50, rife = None, rifeModel = None, rifeTta = False, rifeGpu = 0):
+    prefilter = None, maskThr = None, maskOcc = None, skipThr = 45, blendOver = None, skipOver = None, stp = 35, dct = None, dctRe = None, blendRatio = 50, rife = None, rifeModel = None, rifeTta = False, rifeGpu = 0, tools=None):
+    MV = get_mv(tools)
     if not isinstance(C, vs.VideoNode):
         raise vs.Error('FrameRateConverter: This is not a clip')
 
@@ -124,14 +125,16 @@ def FrameRateConverter(C, newNum = None, newDen = None, preset = "normal", blkSi
     defH        = max(C.height, C.width//4*3)
     blkSize     = blkSize or (8 if defH<360 else 12 if defH<750 else 16 if defH<1200 else 24 if defH<1600 else 32)
     blkSizeV    = blkSizeV or blkSize
-    maskThr     = maskThr or (80 if pset==P_RIFE or pset==P_RIFEANIME else 95)
-    maskOcc     = (maskOcc or 125) if maskThr > 0 else 0
-    blendOver   = blendOver or (40 if pset==P_ANIME else 70)
-    skipOver    = skipOver or (140 if pset==P_ANIME else 210)
+    maskThr     = maskThr if maskThr is not None else (80 if pset==P_RIFE or pset==P_RIFEANIME else 95)
+    maskOcc     = (maskOcc if maskOcc is not None else 125) if maskThr > 0 else 0
+    blendOver   = blendOver if blendOver is not None else (40 if pset==P_ANIME else 70)
+    skipOver    = skipOver if skipOver is not None else (140 if pset==P_ANIME else 210)
     calcPrefilter = bool(prefilter)
     prefilter   = prefilter or C
-    rife        = rife or (2 if pset==P_RIFE or pset==P_RIFEANIME else 0)
-    rifeModel   = rifeModel or (2 if pset==P_RIFEANIME else 1)
+    rife        = rife if rife is not None else (2 if pset==P_RIFE or pset==P_RIFEANIME else 0)
+    # model numbers of the rife plugin: 3 = rife-anime, 6 = rife-v2.4
+    rifeModel   = rifeModel if rifeModel is not None else (3 if pset==P_RIFEANIME else 6)
+    artifactMask = maskThr > 0
     if rife>0 and frameDouble:
         rife = 1
 
@@ -139,8 +142,8 @@ def FrameRateConverter(C, newNum = None, newDen = None, preset = "normal", blkSi
     if pset == P_ANIME or pset == P_RIFE or pset == P_RIFEANIME:
         pset = P_SLOW
     recalculate = pset <= P_FAST
-    dctRe       = (dctRe or dct or (1 if pset<=P_SLOWEST else 4 if pset<=P_NORMAL else 0)) if recalculate else 0
-    dct         = dct or 1 if pset<=P_SLOWEST else 4 if pset<=P_SLOW else 1
+    dctRe       = (dctRe if dctRe is not None else dct if dct is not None else (1 if pset<=P_SLOWEST else 4 if pset<=P_NORMAL else 0)) if recalculate else 0
+    dct         = dct if dct is not None else (1 if pset<=P_SLOWEST else 4 if pset<=P_SLOW else 1)
     calcDiff    = pset <= P_SLOWER
     dctDiff     = 0 if pset<=P_SLOWEST else 1
 
@@ -148,7 +151,7 @@ def FrameRateConverter(C, newNum = None, newDen = None, preset = "normal", blkSi
         raise vs.Error(f"FrameRateConverter: maskThr must be between 0 and 255 {maskThr:n}")
     if maskOcc < 0 or maskOcc > 255:
         raise vs.Error(f"FrameRateConverter: maskOcc must be between 0 and 255 {maskOcc:n}")
-    if skipThr >= maskThr:
+    if artifactMask and skipThr >= maskThr:
         raise vs.Error("FrameRateConverter: skipThr must be lower (stronger) than maskThr")
     if blendOver < 0 or blendOver > 255:
         raise vs.Error(f"FrameRateConverter: blendOver must be between 0 and 255 {blendOver:n}")
@@ -184,49 +187,62 @@ def FrameRateConverter(C, newNum = None, newDen = None, preset = "normal", blkSi
     dct_pow = 1 if not recalculate else 1 if dctRe==2 else 1 if dctRe==3 else 1.073 if dctRe==4 else 1.16 if dctRe==1 else 1
 
     ## jm_fps interpolation
-    superfilt = MV.Super(prefilter, hpad=16, vpad=16, sharp=1, rfilter=4, blksize=blkSize, overlap = (blkSize//4+1)//2*2 if blkSize>4 else 0) # all levels for MAnalyse
-    super = MV.Super(C, hpad=16, vpad=16, levels=1, sharp=1, rfilter=4, blksize=blkSize//2, overlap = (blkSize//8+1)//2*2 if blkSize/2>4 else 0) if calcPrefilter else superfilt # one level is enough for MRecalculate
-    bak = bak2 = MV.Analyse(superfilt, isb=True, blksize=blkSize, blksizev=blkSizeV, overlap = (blkSize//4+1)//2*2 if blkSize>4 else 0, overlapv = (blkSizeV//4+1)//2*2 if blkSizeV>4 else 0, search=3, dct=dct)
-    fwd = fwd2 = MV.Analyse(superfilt, isb=False, blksize=blkSize, blksizev=blkSizeV, overlap = (blkSize//4+1)//2*2 if blkSize>4 else 0, overlapv = (blkSizeV//4+1)//2*2 if blkSizeV>4 else 0, search=3, dct=dct)
+    ovl = lambda b: (b//4+1)//2*2 if b>4 else 0
+    # block geometry of the vectors Recalculate and FlowFPS work with; mvutensils pads the super clip for it
+    reBlk, reBlkV = (blkSize//2, blkSizeV//2) if recalculate else (blkSize, blkSizeV)
+    superfilt = MV.Super(prefilter, hpad=16, vpad=16, sharp=1, rfilter=4, blksize=blkSize, blksizev=blkSizeV, overlap=ovl(blkSize), overlapv=ovl(blkSizeV)) # all levels for MAnalyse
+    if calcPrefilter or (recalculate and MV.use_mvu):
+        super = MV.Super(C, hpad=16, vpad=16, levels=1, sharp=1, rfilter=4, blksize=reBlk, blksizev=reBlkV, overlap=ovl(reBlk), overlapv=ovl(reBlkV)) # one level is enough for MRecalculate
+    else:
+        super = superfilt
+    bak = bak2 = MV.Analyse(superfilt, isb=True, blksize=blkSize, blksizev=blkSizeV, overlap=ovl(blkSize), overlapv=ovl(blkSizeV), search=3, dct=dct)
+    fwd = fwd2 = MV.Analyse(superfilt, isb=False, blksize=blkSize, blksizev=blkSizeV, overlap=ovl(blkSize), overlapv=ovl(blkSizeV), search=3, dct=dct)
     if recalculate:
-        fwd = MV.Recalculate(super, fwd, blksize=blkSize//2, blksizev=blkSizeV//2, overlap = (blkSize//8+1)//2*2 if blkSize/2>4 else 0, overlapv = (blkSizeV/8+1)//2*2 if blkSizeV/2>4 else 0, thsad=100, dct=dctRe)
-        bak = MV.Recalculate(super, bak, blksize=blkSize//2, blksizev=blkSizeV//2, overlap = (blkSize//8+1)//2*2 if blkSize/2>4 else 0, overlapv = (blkSizeV/8+1)//2*2 if blkSizeV/2>4 else 0, thsad=100, dct=dctRe)
+        fwd = MV.Recalculate(super, fwd, blksize=reBlk, blksizev=reBlkV, overlap=ovl(reBlk), overlapv=ovl(reBlkV), thsad=100, dct=dctRe)
+        bak = MV.Recalculate(super, bak, blksize=reBlk, blksizev=reBlkV, overlap=ovl(reBlk), overlapv=ovl(reBlkV), thsad=100, dct=dctRe)
     Flow = MV.FlowFPS(C, super, bak, fwd, num=newNum, den=newDen, blend=False, ml=200, mask=2, thscd2=255)
 
+    # the masks are built at 8 bit, the scale all thresholds below are meant for
+    C8 = C if C.format.sample_type == vs.INTEGER and C.format.bits_per_sample == 8 else \
+        C.resize.Point(format=C.format.replace(sample_type=vs.INTEGER, bits_per_sample=8))
+    maskFormat = core.query_video_format(vs.GRAY, C.format.sample_type, C.format.bits_per_sample, 0, 0)
+    def lift(mask):
+        return mask if mask.format.id == maskFormat.id else mask.resize.Point(format=maskFormat.id, range_in_s="full", range_s="full")
+
     ## "EM" - error or artifact mask
-    EM = EMfwd = EMocc = EM = Blank
+    EM = EMfwd = EMocc = EMstp = Blank
     # Mask: SAD
-    if maskThr > 0:
-        EM = ToGray(MV.Mask(C, bak, ml=255, kind=1, gamma=1/gam, ysc=255, thscd2=skipOver))
+    if artifactMask:
+        EM = Mask8(C, C8, bak, ml=255, kind=1, gamma=1/gam, ysc=255, thscd2=skipOver, tools=tools)
         # Mask: Temporal blending
-        EMfwd = ToGray(MV.Mask(C, fwd, ml=255, kind=1, gamma=1/gam, thscd2=skipOver))
-        EM = misc.Overlay(EM, EMfwd, opacity=.6, mode="lighten")
-    EXPR = get_expr()
+        EMfwd = Mask8(C, C8, fwd, ml=255, kind=1, gamma=1/gam, thscd2=skipOver, tools=tools)
+        EM = misc.Overlay(EM, EMfwd, opacity=.6, mode="lighten", tools=tools)
+    EXPR = get_expr(tools)
     # Mask: Occlusion
     if maskOcc > 0:
-        EMocc = ToGray(MV.Mask(C, bak, ml=maskOcc, kind=2, gamma=1/gam, ysc=255, thscd2=skipOver).std.Minimum())
-        EM = misc.Overlay(EM, EMocc, opacity=.7, mode="lighten")
+        EMocc = Mask8(C, C8, bak, ml=maskOcc, kind=2, gamma=1/gam, ysc=255, thscd2=skipOver, tools=tools).std.Minimum()
+        EM = misc.Overlay(EM, EMocc, opacity=.7, mode="lighten", tools=tools)
     if dct_mult!=1 or dct_pow!=1:
        EM = EXPR(EM, f"x {dct_mult} * {dct_pow} pow")
 
     ## For calcDiff, calculate a 2nd version and create mask to restore from 2nd version the areas that look better
     if calcDiff:
         EM2 = EMfwd2 = EMocc2 = EM2 = Blank
-        bakA = MV.Analyse(superfilt, isb=True, blksize=blkSize, blksizev=blkSizeV, overlap = (blkSize//4+1)//2*2 if blkSize>4 else 0, overlapv = (blkSizeV//4+1)//2*2 if blkSizeV>4 else 0, search=3, dct=dctDiff)
-        fwdA = MV.Analyse(superfilt, isb=False, blksize=blkSize, blksizev=blkSizeV, overlap = (blkSize//4+1)//2*2 if blkSize>4 else 0, overlapv = (blkSizeV//4+1)//2*2 if blkSizeV>4 else 0, search=3, dct=dctDiff)
+        bakA = MV.Analyse(superfilt, isb=True, blksize=blkSize, blksizev=blkSizeV, overlap=ovl(blkSize), overlapv=ovl(blkSizeV), search=3, dct=dctDiff)
+        fwdA = MV.Analyse(superfilt, isb=False, blksize=blkSize, blksizev=blkSizeV, overlap=ovl(blkSize), overlapv=ovl(blkSizeV), search=3, dct=dctDiff)
         if recalculate:
-            fwd2 = MV.Recalculate(super, fwdA, blksize=blkSize//2, blksizev=blkSizeV//2, overlap = (blkSize//8+1)//2*2 if blkSize//2>4 else 0, overlapv = (blkSizeV//8+1)//2*2 if blkSizeV//2>4 else 0, thsad=100, dct=dctDiff)
-            bak2 = MV.Recalculate(super, bakA, blksize=blkSize//2, blksizev=blkSizeV//2, overlap = (blkSize//8+1)//2*2 if blkSize//2>4 else 0, overlapv = (blkSizeV//8+1)//2*2 if blkSizeV//2>4 else 0, thsad=100, dct=dctDiff)
+            fwd2 = MV.Recalculate(super, fwdA, blksize=reBlk, blksizev=reBlkV, overlap=ovl(reBlk), overlapv=ovl(reBlkV), thsad=100, dct=dctDiff)
+            bak2 = MV.Recalculate(super, bakA, blksize=reBlk, blksizev=reBlkV, overlap=ovl(reBlk), overlapv=ovl(reBlkV), thsad=100, dct=dctDiff)
         Flow2 = MV.FlowFPS(C, super, bak2, fwd2, num=newNum, den=newDen, blend=False, ml=200, mask=2, thscd2=255)
 
         # Get raw mask again
-        if maskThr > 0:
-            EM2 = ToGray(MV.Mask(C, bak2, ml=255, kind=1, gamma=1/gam, ysc=255, thscd2=skipOver))
-            EMfwd2 = ToGray(MV.Mask(C, fwd2, ml=255, kind=1, gamma=1/gam, thscd2=skipOver))
-            EM2 = misc.Overlay(EM2, EMfwd2, opacity=.6, mode="lighten")
+        if artifactMask:
+            EM2 = Mask8(C, C8, bak2, ml=255, kind=1, gamma=1/gam, ysc=255, thscd2=skipOver, tools=tools)
+            EMfwd2 = Mask8(C, C8, fwd2, ml=255, kind=1, gamma=1/gam, thscd2=skipOver, tools=tools)
+            EM2 = misc.Overlay(EM2, EMfwd2, opacity=.6, mode="lighten", tools=tools)
         if maskOcc > 0:
-            EMocc2 = ToGray(MV.Mask(C, bak2, ml=maskOcc, kind=2, gamma=1/gam, ysc=255, thscd2=skipOver).std.Minimum())
-            EM2 = misc.Overlay(EM2, EMocc2, opacity=.7, mode="lighten")
+            EMocc2 = Mask8(C, C8, bak2, ml=maskOcc, kind=2, gamma=1/gam, ysc=255, thscd2=skipOver, tools=tools).std.Minimum()
+            EM2 = misc.Overlay(EM2, EMocc2, opacity=.7, mode="lighten", tools=tools)
 
         # Get difference mask between two versions
         EMdiff = EXPR([EM, EM2], "x y -") \
@@ -240,7 +256,7 @@ def FrameRateConverter(C, newNum = None, newDen = None, preset = "normal", blkSi
         # Apply mask to Flow / EM
         if outFps:
             EMdiff = ChangeFPS.ChangeFPS(EMdiff, newNum, newDen)
-        Flow = core.std.MaskedMerge(Flow, Flow2, EMdiff)
+        Flow = core.std.MaskedMerge(Flow, Flow2, lift(EMdiff))
         EM = core.std.MaskedMerge(EM, EM2, EMdiff)
 
     # Last mask frame is white. Replace with previous frame.
@@ -264,7 +280,7 @@ def FrameRateConverter(C, newNum = None, newDen = None, preset = "normal", blkSi
     
     # Mask: Stripes
     if stp:
-        EMstp = StripeMask(C, blksize=blkSize, blksizev=blkSizeV, str=min(skipThr*2+20, 255), strf=min(skipThr+10, 255))
+        EMstp = StripeMask(C8, blksize=blkSize, blksizev=blkSizeV, str=min(skipThr*2+20, 255), strf=min(skipThr+10, 255), tools=tools)
         EMstp = EMstp.resize.Bicubic(round(C.width/blkSize)*4, round(C.height/blkSizeV)*4) \
             .frc.ContinuousMask(22)
         EMstp = EMstp.resize.Bicubic(EMstp.width//2, EMstp.height//2) \
@@ -286,9 +302,9 @@ def FrameRateConverter(C, newNum = None, newDen = None, preset = "normal", blkSi
         EM = ChangeFPS.ChangeFPS(EM, newNum, newDen)
         EMskip = ChangeFPS.ChangeFPS(EMskip, newNum, newDen)
         EMstp = ChangeFPS.ChangeFPS(EMstp, newNum, newDen)
-        M = core.std.MaskedMerge(Flow, B, EM)
+        M = core.std.MaskedMerge(Flow, B, lift(EM)) if artifactMask else Flow
         if stp:
-            M = core.std.MaskedMerge(M, B, EMstp)
+            M = core.std.MaskedMerge(M, B, lift(EMstp))
     else:
         M = Flow
 
@@ -304,10 +320,10 @@ def FrameRateConverter(C, newNum = None, newDen = None, preset = "normal", blkSi
 
     # Prepare output=Over: Mask(cyan), Stripes(yellow)
     Overlays = core.std.ShufflePlanes(clips=[Blank, EM, EM], planes=[0, 0, 0], colorfamily=vs.RGB)
-    FlowOver = misc.Overlay(Flow.resize.Point(format=vs.RGB24, matrix_in_s="709"), Overlays, mode="addition", opacity=0.6)
+    FlowOver = misc.Overlay(Flow.resize.Point(format=vs.RGB24, matrix_in_s="709"), Overlays, mode="addition", opacity=0.6, tools=tools)
     if stp:
         Overlays = core.std.ShufflePlanes(clips=[EMstp, EMstp, Blank], planes=[0, 0, 0], colorfamily=vs.RGB)
-        FlowOver = misc.Overlay(FlowOver, Overlays, mode="addition", opacity=0.5)
+        FlowOver = misc.Overlay(FlowOver, Overlays, mode="addition", opacity=0.5, tools=tools)
 
     # output modes
     if oput == O_AUTO:                              # auto: artifact masking
@@ -363,6 +379,19 @@ def FrameRateConverter(C, newNum = None, newDen = None, preset = "normal", blkSi
         EMstpLuma = EMstp.std.PlaneStats(plane=0)
         R = R.std.FrameEval(functools.partial(setDebugOutput, R=R), prop_src=[EMskipLuma, RawLuma, EMLuma, EMdiffLuma, EMstpLuma])
     return R
+
+
+def Mask8(C, C8, vectors, kind, ml, tools=None, **kwargs):
+    '''MV.Mask as full range Gray8.'''
+    MV = get_mv(tools)
+    if MV.use_mvu or C.format.sample_type == vs.FLOAT:
+        mask = MV.Mask(C, vectors, kind=kind, ml=ml, **kwargs)
+    else:
+        # mvtools' Mask takes 8-bit clips only and measures the SAD at the vectors' bit depth
+        scale = 1 << (vectors.format.bits_per_sample - 8) if kind == 1 else 1
+        mask = MV.Mask(C8, vectors, kind=kind, ml=ml * scale, **kwargs)
+    mask = ToGray(mask)
+    return mask if mask.format.id == vs.GRAY8 else mask.resize.Point(format=vs.GRAY8, range_in_s="full", range_s="full")
 
 
 def ToGray(C):
@@ -434,7 +463,7 @@ def GaussianBlur42(C, var = None, rad = None, vvar = None, vrad = None, p = None
 ##
 ## @ strf        - The grey color of the masked areas from the next frame.
 ##
-def StripeMask(clip, blksize = 16, blksizev = None, str = 200, strf = 0):
+def StripeMask(clip, blksize = 16, blksizev = None, str = 200, strf = 0, tools=None):
     if not isinstance(clip, vs.VideoNode):
         raise vs.Error('StripeMask: This is not a clip')
 
@@ -443,7 +472,7 @@ def StripeMask(clip, blksize = 16, blksizev = None, str = 200, strf = 0):
     blksize *= 1.25
     blksizev *= 1.25
     mask2 = clip.frc.StripeMaskPass(blksize=blksize, blksizev=blksizev, overlap=blksize//2+1, overlapv=blksizev//2+1, thr=42, range=214, gamma=2.2, comp=5, str=str)
-    EXPR = get_expr()
+    EXPR = get_expr(tools)
     if strf > 0:
         mask1f = mask1.std.DeleteFrames(frames=[0]).std.DuplicateFrames(frames=[clip.num_frames-2])
         mask2f = mask2.std.DeleteFrames(frames=[0]).std.DuplicateFrames(frames=[clip.num_frames-2])

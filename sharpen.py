@@ -6,8 +6,8 @@ import importlib
 from functools import partial
 from typing import Optional, Union, Sequence
 
-from misc import MinBlur, mt_clamp
-from helpers import GetPlane, cround, scale, clamp, Padding, DFTTest, get_expr, get_rg
+from misc import MinBlur, mt_clamp, AverageFrames
+from helpers import GetPlane, cround, scale, clamp, Padding, DFTTest, get_expr, get_rg, pick_tool, tool_function, tool_loaded, m4
 from color import LimitFilter
 
 ################################################################################################
@@ -303,7 +303,8 @@ from color import LimitFilter
 ###
 ################################################################################################
 def LSFmod(input, strength=None, Smode=None, Smethod=None, kernel=11, preblur=None, secure=None, source=None, Szrp=16, Spwr=None, SdmpLo=None, SdmpHi=None, Lmode=None, overshoot=None, undershoot=None,
-           overshoot2=None, undershoot2=None, soft=None, soothe=None, keep=None, edgemode=0, edgemaskHQ=None, ss_x=None, ss_y=None, dest_x=None, dest_y=None, defaults='fast', cuda=False):
+           overshoot2=None, undershoot2=None, soft=None, soothe=None, keep=None, edgemode=0, edgemaskHQ=None, ss_x=None, ss_y=None, dest_x=None, dest_y=None, defaults='fast', cuda=False,
+           tools=None):
     # cuda: True looks for a GPU DFTTest implementation (vszipcu, then dfttest2), False stays on CPU.
     if not isinstance(input, vs.VideoNode):
         raise vs.Error('LSFmod: this is not a clip')
@@ -377,9 +378,8 @@ def LSFmod(input, strength=None, Smode=None, Smethod=None, kernel=11, preblur=No
         dest_x = ox
     if dest_y is None:
         dest_y = oy
-    has_zsmooth = hasattr(core,'zsmooth')
     if kernel == 4:
-        RemoveGrain = partial(core.zsmooth.Median) if has_zsmooth else partial(core.std.Median)
+        RemoveGrain = partial(core.zsmooth.Median) if pick_tool(tools, 'median', ('zsmooth', 'std')) == 'zsmooth' else partial(core.std.Median)
     elif kernel in [11, 12]:
         RemoveGrain = partial(core.std.Convolution, matrix=[1, 2, 1, 2, 4, 2, 1, 2, 1])
     elif kernel == 19:
@@ -387,7 +387,7 @@ def LSFmod(input, strength=None, Smode=None, Smethod=None, kernel=11, preblur=No
     elif kernel == 20:
         RemoveGrain = partial(core.std.Convolution, matrix=[1, 1, 1, 1, 1, 1, 1, 1, 1])
     else:
-        RG = get_rg()
+        RG = get_rg(tools=tools)
         RemoveGrain = partial(RG, mode=[kernel])
 
     if soft == -1:
@@ -410,16 +410,16 @@ def LSFmod(input, strength=None, Smode=None, Smethod=None, kernel=11, preblur=No
     if not isGray:
         tmp_orig = tmp
         tmp = GetPlane(tmp, 0)
-    EXPR = get_expr()
+    EXPR = get_expr(tools)
     if preblur <= -1:
         pre = tmp
     elif preblur >= 3:
         expr = 'x {i} < {peak} x {j} > 0 {peak} x {i} - {peak} {j} {i} - / * - ? ?'.format(i=scale(16, peak), j=scale(75, peak), peak=peak)
         
-        smoothed = DFTTest(tmp, cuda=cuda, tbsize=1, slocation=[0.0,4.0, 0.2,9.0, 1.0,15.0])
+        smoothed = DFTTest(tmp, cuda=cuda, tbsize=1, slocation=[0.0,4.0, 0.2,9.0, 1.0,15.0], tools=tools)
         pre = core.std.MaskedMerge(smoothed, tmp, EXPR(tmp, expr=[expr]))
     else:
-        pre = MinBlur(tmp, r=preblur)
+        pre = MinBlur(tmp, r=preblur, tools=tools)
 
     dark_limit = pre.std.Minimum()
     bright_limit = pre.std.Maximum()
@@ -455,9 +455,9 @@ def LSFmod(input, strength=None, Smode=None, Smethod=None, kernel=11, preblur=No
             normsharp = core.std.MakeDiff(tmp, core.std.MakeDiff(pre, normsharp))
 
     ### LIMIT
-    normal = mt_clamp(normsharp, bright_limit, dark_limit, scale(overshoot, peak), scale(undershoot, peak))
-    second = mt_clamp(normsharp, bright_limit, dark_limit, scale(overshoot2, peak), scale(undershoot2, peak))
-    zero = mt_clamp(normsharp, bright_limit, dark_limit, 0, 0)
+    normal = mt_clamp(normsharp, bright_limit, dark_limit, scale(overshoot, peak), scale(undershoot, peak), tools=tools)
+    second = mt_clamp(normsharp, bright_limit, dark_limit, scale(overshoot2, peak), scale(undershoot2, peak), tools=tools)
+    zero = mt_clamp(normsharp, bright_limit, dark_limit, 0, 0, tools=tools)
 
     if edgemaskHQ:
         edge = tmp.std.Sobel(scale=2)
@@ -466,10 +466,7 @@ def LSFmod(input, strength=None, Smode=None, Smethod=None, kernel=11, preblur=No
     edge = EXPR(edge, expr=[f'x {1 / factor if isInteger else factor} * {128 if edgemaskHQ else 32} / 0.86 pow 255 * {factor if isInteger else 1 / factor} *'])
 
     if Lmode < 0:
-      if hasattr(core,'zsmooth'):
-        limit1 = core.zsmooth.Repair(normsharp, tmp, mode=[abs(Lmode)])
-      else:
-        limit1 = core.rgvs.Repair(normsharp, tmp, mode=[abs(Lmode)])
+      limit1 = tool_function(tools, 'rg', 'Repair')(normsharp, tmp, mode=[abs(Lmode)])
     elif Lmode == 0:
         limit1 = normsharp
     elif Lmode == 1:
@@ -499,7 +496,7 @@ def LSFmod(input, strength=None, Smode=None, Smethod=None, kernel=11, preblur=No
     ### SOOTHE
     if soothe:
         diff = core.std.MakeDiff(tmp, PP1)
-        diff = EXPR([diff, AverageFrames(diff, weights=[1] * 3, scenechange=32 / 255)],
+        diff = EXPR([diff, AverageFrames(diff, weights=[1] * 3, scenechange=32 / 255, tools=tools)],
                              expr=[f'x {neutral} - y {neutral} - * 0 < x {neutral} - 100 / {keep} * {neutral} + x {neutral} - abs y {neutral} - abs > x {keep} * y {100 - keep} * + 100 / x ? ?'])
         PP2 = core.std.MakeDiff(tmp, diff)
     else:
@@ -531,16 +528,13 @@ def LSFmod(input, strength=None, Smode=None, Smethod=None, kernel=11, preblur=No
 
         shrpD = core.std.MakeDiff(In, out, planes=[0])
         expr = f'x {neutral} - abs y {neutral} - abs < x y ?'
-        if hasattr(core,'zsmooth'):
-          shrpL = EXPR([core.zsmooth.Repair(shrpD, core.std.MakeDiff(In, src, planes=[0]), mode=[1] if isGray else [1, 0]), shrpD], expr=[expr] if isGray else [expr, ''])
-        else:
-          shrpL = EXPR([core.rgvs.Repair(shrpD, core.std.MakeDiff(In, src, planes=[0]), mode=[1] if isGray else [1, 0]), shrpD], expr=[expr] if isGray else [expr, ''])
+        shrpL = EXPR([tool_function(tools, 'rg', 'Repair')(shrpD, core.std.MakeDiff(In, src, planes=[0]), mode=[1] if isGray else [1, 0]), shrpD], expr=[expr] if isGray else [expr, ''])
         return core.std.MakeDiff(In, shrpL, planes=[0])
     else:
         return out
 
 
-def FineSharp(clip, mode=1, sstr=2.5, cstr=None, xstr=0, lstr=1.5, pstr=1.28, ldmp=None, hdmp=0.01, rep=12):
+def FineSharp(clip, mode=1, sstr=2.5, cstr=None, xstr=0, lstr=1.5, pstr=1.28, ldmp=None, hdmp=0.01, rep=12, tools=None):
     """
     Original author: Didée (https://forum.doom9.org/showthread.php?t=166082)
     Small and relatively fast realtime-sharpening function, for 1080p,
@@ -575,11 +569,8 @@ def FineSharp(clip, mode=1, sstr=2.5, cstr=None, xstr=0, lstr=1.5, pstr=1.28, ld
     mid = 0 if isFLOAT else 1 << (bd - 1)
     i = 0.00392 if isFLOAT else 1 << (bd - 8)
     xy = 'x y - {} /'.format(i) if bd != 8 else 'x y -'
-    has_zsmooth = hasattr(core,'zsmooth')
-    if has_zsmooth:
-      R = core.zsmooth.Repair
-    else:
-      R = core.rgsf.Repair if isFLOAT else core.rgvs.Repair
+    has_zsmooth = pick_tool(tools, 'median', ('zsmooth', 'std')) == 'zsmooth'
+    R = tool_function(tools, 'rg', 'Repair', ('zsmooth', 'rgsf', 'rgvs') if isFLOAT else ('zsmooth', 'rgvs'))
     mat1 = [1, 2, 1, 2, 4, 2, 1, 2, 1]
     mat2 = [1, 1, 1, 1, 1, 1, 1, 1, 1]
     
@@ -603,7 +594,7 @@ def FineSharp(clip, mode=1, sstr=2.5, cstr=None, xstr=0, lstr=1.5, pstr=1.28, ld
         return clip
 
     tmp = core.std.ShufflePlanes(clip, [0], vs.GRAY) if color in [vs.YUV] else clip
-    EXPR = get_expr()
+    EXPR = get_expr(tools)
     if abs(mode) == 1:
         c2 = core.std.Convolution(tmp, matrix=mat1).zsmooth.Median() if has_zsmooth else core.std.Convolution(tmp, matrix=mat1).std.Median()
     else:
@@ -630,7 +621,7 @@ def FineSharp(clip, mode=1, sstr=2.5, cstr=None, xstr=0, lstr=1.5, pstr=1.28, ld
 
     return core.std.ShufflePlanes([shrp, clip], [0, 1, 2], color) if color in [vs.YUV] else shrp
 
-def DetailSharpen(clip, z=4, sstr=1.5, power=4, ldmp=1, mode=1, med=False):
+def DetailSharpen(clip, z=4, sstr=1.5, power=4, ldmp=1, mode=1, med=False, tools=None):
     """
     From: https://forum.doom9.org/showthread.php?t=163598
     Didée: Wanna some sharpening that causes no haloing, without any edge masking?
@@ -665,15 +656,15 @@ def DetailSharpen(clip, z=4, sstr=1.5, power=4, ldmp=1, mode=1, med=False):
     else:
         blur = core.std.Convolution(tmp, matrix=[1, 2, 1, 2, 4, 2, 1, 2, 1])
     if med:
-        blur = blur.zsmooth.Median() if hasattr(core,'zsmooth') else blur.std.Median()
+        blur = blur.zsmooth.Median() if pick_tool(tools, 'median', ('zsmooth', 'std')) == 'zsmooth' else blur.std.Median()
 
     expr = 'x y = x dup {} dup dup abs {} / {} pow swap2 abs {} + / * {} * + ?'
-    EXPR = get_expr()
+    EXPR = get_expr(tools)
     tmp = EXPR([tmp, blur], [expr.format(xy, z, 1/power, ldmp, sstr*z*i)])
 
     return core.std.ShufflePlanes([tmp, clip], [0, 1, 2], color) if color in [vs.YUV] else tmp
 
-def psharpen(clip, strength=25, threshold=75, ss_x=1.0, ss_y=1.0, dest_x=None, dest_y=None):
+def psharpen(clip, strength=25, threshold=75, ss_x=1.0, ss_y=1.0, dest_x=None, dest_y=None, tools=None):
     """From http://forum.doom9.org/showpost.php?p=683344&postcount=28
 
     Sharpening function similar to LimitedSharpenFaster.
@@ -713,7 +704,7 @@ def psharpen(clip, strength=25, threshold=75, ss_x=1.0, ss_y=1.0, dest_x=None, d
 
     max_ = core.std.Maximum(clip)
     min_ = core.std.Minimum(clip)
-    EXPR = get_expr()
+    EXPR = get_expr(tools)
     nmax = EXPR([max_, min_], ["x y -"])
     nval = EXPR([clip, min_], ["x y -"])
 
@@ -794,7 +785,7 @@ def spline(x, coordinates):
     
 def ContraSharpening(
     denoised: vs.VideoNode, original: vs.VideoNode, radius: Optional[int] = None, rep: int = 1,
-    planes: Optional[Union[int, Sequence[int]]] = None
+    planes: Optional[Union[int, Sequence[int]]] = None, tools=None
 ) -> vs.VideoNode:
     '''
     contra-sharpening: sharpen the denoised clip, but don't add more to any pixel than what was removed previously.
@@ -838,7 +829,7 @@ def ContraSharpening(
     matrix2 = [1, 1, 1, 1, 1, 1, 1, 1, 1]
 
     # damp down remaining spots of the denoised clip
-    s = MinBlur(denoised, radius, planes)
+    s = MinBlur(denoised, radius, planes, tools=tools)
     # the difference achieved by the denoising
     allD = core.std.MakeDiff(original, denoised, planes=planes)
 
@@ -851,19 +842,16 @@ def ContraSharpening(
     # the difference of a simple kernel blur
     ssD = core.std.MakeDiff(s, RG11, planes=planes)
     # limit the difference to the max of what the denoising removed locally
-    if hasattr(core,'zsmooth'):
-      ssDD = core.zsmooth.Repair(ssD, allD, mode=[rep if i in planes else 0 for i in plane_range])
-    else:
-      ssDD = core.rgvs.Repair(ssD, allD, mode=[rep if i in planes else 0 for i in plane_range])
+    ssDD = tool_function(tools, 'rg', 'Repair')(ssD, allD, mode=[rep if i in planes else 0 for i in plane_range])
     # abs(diff) after limiting may not be bigger than before
-    EXPR = get_expr()
+    EXPR = get_expr(tools)
     ssDD = EXPR([ssDD, ssD], expr=[f'x {neutral} - abs y {neutral} - abs < x y ?' if i in planes else '' for i in plane_range])
     # apply the limited difference (sharpening is just inverse blurring)
     last = core.std.MergeDiff(denoised, ssDD, planes=planes)
     return last.std.Crop(pad, pad, pad, pad)
    
     
-def UnsharpMask(clip: vs.VideoNode, strength: int = 64, radius: int = 3, threshold: int = 8) -> vs.VideoNode:
+def UnsharpMask(clip: vs.VideoNode, strength: int = 64, radius: int = 3, threshold: int = 8, tools=None) -> vs.VideoNode:
     """Unsharp masking for sharpening a clip.
     It's a sharpening method based on subtracting a blurred version of an image from the original and boosting the difference.
 
@@ -880,7 +868,7 @@ def UnsharpMask(clip: vs.VideoNode, strength: int = 64, radius: int = 3, thresho
     """
 
     # Choose Expr function: prefer akarin.Expr if available for faster execution
-    expr_func = get_expr()
+    expr_func = get_expr(tools)
 
     # Validate input parameters to avoid invalid or dangerous values
     if strength < 0 or strength > 128:
@@ -901,10 +889,7 @@ def UnsharpMask(clip: vs.VideoNode, strength: int = 64, radius: int = 3, thresho
 
     # Create a blurred version of the clip using a fast box blur
     
-    if hasattr(core,'vszip'):
-      blurclip = clip.vszip.BoxBlur(hradius=radius, vradius=radius, planes=[0])
-    else:
-      blurclip = clip.std.BoxBlur(hradius=radius, vradius=radius, planes=[0])
+    blurclip = tool_function(tools, 'boxblur', 'BoxBlur')(clip, hradius=radius, vradius=radius, planes=[0])
 
     # Define the sharpening expression:
     # - If the absolute difference between original and blurred pixel exceeds threshold,
@@ -943,12 +928,13 @@ def AWarpSharp2(
     type: int = 0,
     depth: list[int] = [16, 8, 8],
     chroma: int = 0,
-    planes: list[int] | None = None
+    planes: list[int] | None = None,
+    tools=None
 ) -> vs.VideoNode:
-    if hasattr(core, 'warp'):
+    if pick_tool(tools, 'warp', ('warp', 'awarp')) == 'warp':
         return core.warp.AWarpSharp2(clip, thresh, blur, type, depth, chroma, planes)
 
-    if not hasattr(core, 'awarp'):
+    if not tool_loaded('warp', 'awarp'):
         raise ValueError("AWarp plugin not found! Install via: pip install vapoursynth-awarp")
 
     is_gray = clip.format.color_family == vs.GRAY

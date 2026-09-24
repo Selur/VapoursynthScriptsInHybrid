@@ -47,9 +47,6 @@ from helpers import get_expr
 
 core = vs.core
 
-# ── Expr backend selection ───────────────────────────────────────────────────
-EXPR = get_expr()
-
 # ─────────────────────────────────────────────────────────────────────────────
 # Internal helpers
 # ─────────────────────────────────────────────────────────────────────────────
@@ -83,13 +80,13 @@ def _get_format_id(color_family, sample_type, bits, subsampling_w, subsampling_h
     return fmt.id
 
 
-def _depth(clip: vs.VideoNode, bits: int) -> vs.VideoNode:
+def _depth(clip: vs.VideoNode, bits: int, tools=None) -> vs.VideoNode:
     """
     Linearly scale an integer clip to a different bit depth.
 
     Downscale includes a +0.5 rounding term before truncation so that the
     result is rounded rather than floored (e.g. 32-bit int -> 16-bit int).
-    Uses the module-level EXPR backend for consistency.
+    tools['expr'] picks the Expr backend.
     """
     fmt = _fmt(clip)
     if fmt.bits_per_sample == bits:
@@ -106,7 +103,7 @@ def _depth(clip: vs.VideoNode, bits: int) -> vs.VideoNode:
     else:
         # Upscale: simple multiply
         expr = f"x {peak_dst} * {peak_src} /"
-    return EXPR([clip], expr, format=fmt_id)
+    return get_expr(tools)([clip], expr, format=fmt_id)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -115,7 +112,8 @@ def _depth(clip: vs.VideoNode, bits: int) -> vs.VideoNode:
 
 def _make_edge_mask(clip: vs.VideoNode,
                     threshold_pct: float,
-                    proc: list) -> vs.VideoNode:
+                    proc: list,
+                    tools=None) -> vs.VideoNode:
     """
     Returns a hard binary edge mask in the same format as `clip`.
     Non-zero pixels = edge detected.
@@ -135,6 +133,7 @@ def _make_edge_mask(clip: vs.VideoNode,
     peak   = _peak(bits)
     th     = max(0, min(peak, int(threshold_pct * peak / 100)))
     is_rgb = fmt.color_family == vs.RGB
+    EXPR   = get_expr(tools)
 
     def _plane_edge(pl: int) -> vs.VideoNode:
         """
@@ -199,7 +198,8 @@ def MSmooth(clip: vs.VideoNode,
             threshold: float = 6.0,
             strength: int = 3,
             mask: bool = False,
-            planes=None) -> vs.VideoNode:
+            planes=None,
+            tools=None) -> vs.VideoNode:
     """
     Drop-in replacement for msmoosh.MSmooth.
 
@@ -220,10 +220,10 @@ def MSmooth(clip: vs.VideoNode,
 
     # >16-bit integer: process at 16-bit and scale back
     if fmt.bytes_per_sample > 2:
-        clip_16 = _depth(clip, 16)
+        clip_16 = _depth(clip, 16, tools)
         result_16 = MSmooth(clip_16, threshold=threshold, strength=strength,
-                            mask=mask, planes=planes)
-        return _depth(result_16, fmt.bits_per_sample)
+                            mask=mask, planes=planes, tools=tools)
+        return _depth(result_16, fmt.bits_per_sample, tools)
 
     if not (0.0 <= threshold <= 100.0):
         raise vs.Error("MSmooth: threshold must be between 0 and 100 %")
@@ -236,7 +236,7 @@ def MSmooth(clip: vs.VideoNode,
     proc       = _plane_list(num_planes, planes)
 
     # ── 1. Edge mask ─────────────────────────────────────────────────────────
-    edge_mask = _make_edge_mask(clip, threshold, proc)
+    edge_mask = _make_edge_mask(clip, threshold, proc, tools=tools)
 
     if mask:
         return edge_mask
@@ -277,7 +277,8 @@ def MSharpen(clip: vs.VideoNode,
              threshold: float = 6.0,
              strength: float = 39.0,
              mask: bool = False,
-             planes=None) -> vs.VideoNode:
+             planes=None,
+             tools=None) -> vs.VideoNode:
     """
     Drop-in replacement for msmoosh.MSharpen.
 
@@ -298,10 +299,10 @@ def MSharpen(clip: vs.VideoNode,
 
     # >16-bit integer: process at 16-bit and scale back
     if fmt.bytes_per_sample > 2:
-        clip_16 = _depth(clip, 16)
+        clip_16 = _depth(clip, 16, tools)
         result_16 = MSharpen(clip_16, threshold=threshold, strength=strength,
-                             mask=mask, planes=planes)
-        return _depth(result_16, fmt.bits_per_sample)
+                             mask=mask, planes=planes, tools=tools)
+        return _depth(result_16, fmt.bits_per_sample, tools)
 
     if not (0.0 <= threshold <= 100.0):
         raise vs.Error("MSharpen: threshold must be between 0 and 100 %")
@@ -314,7 +315,7 @@ def MSharpen(clip: vs.VideoNode,
     proc       = _plane_list(num_planes, planes)
 
     # ── 1. Edge mask ─────────────────────────────────────────────────────────
-    edge_mask = _make_edge_mask(clip, threshold, proc)
+    edge_mask = _make_edge_mask(clip, threshold, proc, tools=tools)
 
     if mask:
         return edge_mask
@@ -346,7 +347,7 @@ def MSharpen(clip: vs.VideoNode,
     )
     # Empty string on unprocessed planes = copy-through in all Expr backends
     plane_exprs = [sharpen_expr if p in proc else "" for p in range(num_planes)]
-    sharpened   = EXPR([clip, blurred], plane_exprs)
+    sharpened   = get_expr(tools)([clip, blurred], plane_exprs)
 
     # ── 4. Masked merge: apply sharpening only at edges ──────────────────────
     # mask=peak (edge) → take `overlay` = sharpened

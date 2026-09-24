@@ -3,7 +3,7 @@ from vapoursynth import core
 
 from typing import Union, Sequence, Optional
 import math
-from helpers import GetPlane, m4, scale, get_expr
+from helpers import GetPlane, m4, scale, get_expr, tool_function
 
 # Taken from old havsfunc
 # Parameters:
@@ -41,6 +41,7 @@ def GrainFactory3(
     th2: int = 56,
     th3: int = 128,
     th4: int = 160,
+    tools: Optional[dict] = None,
 ) -> vs.VideoNode:
 # Validate input.
     if not isinstance(clp, vs.VideoNode):
@@ -114,7 +115,7 @@ def GrainFactory3(
     grainlayer1: vs.VideoNode = clp.std.BlankClip(width=sx1, height=sy1, color=[neutral])
 
     # Use the newer noise plugin if available, otherwise fall back to grain.
-    GRAIN = core.noise.Add if hasattr(core, "noise") else core.grain.Add
+    GRAIN = tool_function(tools, 'grain', 'Add')
     grainlayer1 = GRAIN(grainlayer1, var=g1str, seed=seed)
 
     # Resize the grain back to the original resolution.
@@ -150,7 +151,7 @@ def GrainFactory3(
     expr2: str = f"x {th3} < 0 x {th4} > {peak} {peak} {th4 - th3} / x {th3} - * ? ?"
 
     # Prefer akarin.Expr, then cranexpr, then std.Expr.
-    EXPR = get_expr()
+    EXPR = get_expr(tools)
 
     # Blend dark → midtone → bright grain according to the luma masks.
     grainlayer: vs.VideoNode = core.std.MaskedMerge(core.std.MaskedMerge(grainlayer1, grainlayer2, EXPR(clp, expr=[expr1])), grainlayer3, EXPR(clp, expr=[expr2]))
@@ -158,7 +159,7 @@ def GrainFactory3(
     # Optionally reduce temporal noise by averaging neighbouring frames.
     if temp_avg > 0:
         import misc
-        grainlayer = core.std.Merge(grainlayer, misc.AverageFrames(grainlayer, weights=[1] * 3), weight=[tmpavg])
+        grainlayer = core.std.Merge(grainlayer, misc.AverageFrames(grainlayer, weights=[1] * 3, tools=tools), weight=[tmpavg])
 
     # Optionally add a final layer of fine grain over the result.
     if ontop_grain > 0:

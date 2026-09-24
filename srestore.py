@@ -19,7 +19,8 @@ def sRestoreMUVs(
     speed: Optional[int] = None,
     mode: int = 2,
     thresh: int = 16,
-    dclip: Optional[vs.VideoNode] = None
+    dclip: Optional[vs.VideoNode] = None,
+    tools: Optional[Mapping[str, Any]] = None
 ) -> vs.VideoNode:
     """ srestore v2.7e
     srestore with serialized execution by explicit node processing dependency
@@ -89,7 +90,7 @@ def sRestoreMUVs(
         dclip.height if srad == 4 else int(dclip.height / 2 / srad + 4) * 4
     )
     dclip = dclip.std.Trim(first=2)
-    EXPR = get_expr()
+    EXPR = get_expr(tools)
     if mode < 0:
         dclip = core.std.StackVertical([
             core.std.StackHorizontal([GetPlane(dclip, 1), GetPlane(dclip, 2)]),
