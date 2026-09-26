@@ -306,10 +306,7 @@ def MCTemporalDenoise(i, radius=None, pfMode=3, sigma=None, twopass=None, useTTm
     elif pfMode <= -1:
         p = i
     elif pfMode == 0:
-        if pick_tool(tools, 'fft3d', ('neo_fft3d', 'fft3dfilter')) == 'neo_fft3d':
-            p = i.neo_fft3d.FFT3D(sigma=sigma * 0.8, sigma2=sigma * 0.6, sigma3=sigma * 0.4, sigma4=sigma * 0.2, **fft3d_args)
-        else:                              
-            p = i.fft3dfilter.FFT3DFilter(sigma=sigma * 0.8, sigma2=sigma * 0.6, sigma3=sigma * 0.4, sigma4=sigma * 0.2, **fft3d_args)
+        p = tool_function(tools, 'fft3d', 'FFT3D')(i, sigma=sigma * 0.8, sigma2=sigma * 0.6, sigma3=sigma * 0.4, sigma4=sigma * 0.2, **fft3d_args)
     elif pfMode >= 3:
         p = DFTTest(i, cuda=cuda, tbsize=1,
                     slocation=[0.0,4.0, 0.2,9.0, 1.0,15.0], planes=planes, tools=tools)
@@ -496,10 +493,7 @@ def MCTemporalDenoise(i, radius=None, pfMode=3, sigma=None, twopass=None, useTTm
     if post <= 0:
         smP = smL
     else:
-        if pick_tool(tools, 'fft3d', ('neo_fft3d', 'fft3dfilter')) == 'neo_fft3d':
-            smP = smL.neo_fft3d.FFT3D(sigma=post * 0.8, sigma2=post * 0.6, sigma3=post * 0.4, sigma4=post * 0.2, **fft3d_args)
-        else:                              
-            smP = smL.fft3dfilter.FFT3DFilter(sigma=post * 0.8, sigma2=post * 0.6, sigma3=post * 0.4, sigma4=post * 0.2, **fft3d_args)
+        smP = tool_function(tools, 'fft3d', 'FFT3D')(smL, sigma=post * 0.8, sigma2=post * 0.6, sigma3=post * 0.4, sigma4=post * 0.2, **fft3d_args)
 
     ### EDGECLEANING
     if edgeclean:

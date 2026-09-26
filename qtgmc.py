@@ -833,8 +833,7 @@ def QTGMC(
             else:
                 dnWindow = NLMeans(noiseWindow, d=NoiseTR, h=Sigma, device_id=device, tools=tools)
         else:
-            fft3d_func = noiseWindow.neo_fft3d.FFT3D if pick_tool(tools, 'fft3d', ('neo_fft3d', 'fft3dfilter')) == 'neo_fft3d' else noiseWindow.fft3dfilter.FFT3DFilter
-            dnWindow = fft3d_func(sigma=Sigma, planes=CNplanes, bt=noiseTD, ncpu=FftThreads)
+            dnWindow = tool_function(tools, 'fft3d', 'FFT3D')(noiseWindow, sigma=Sigma, planes=CNplanes, bt=noiseTD, ncpu=FftThreads)
 
 
         # Rework denoised clip to match source format - various code paths here: discard the motion compensation window, discard doubled lines (from point resize)

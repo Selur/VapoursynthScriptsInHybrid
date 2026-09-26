@@ -42,7 +42,7 @@ TOOLS: Dict[str, Dict[str, tuple]] = {
     'warp':           {'warp': ('warp', None), 'awarp': ('awarp', None)},
     'edgemasks':      {'edgemasks': ('edgemasks', None), 'std': ('std', None)},
     'tcanny':         {'tcanny': ('tcanny', None), 'std': ('std', None)},
-    'fft3d':          {'neo_fft3d': ('neo_fft3d', None), 'fft3dfilter': ('fft3dfilter', None)},
+    'fft3d':          {'neo_fft3d': ('neo_fft3d', None), 'neo_fft': ('neo_fft', 'FFT3D'), 'fft3dfilter': ('fft3dfilter', None)},
     'f3kdb':          {'vszip': ('vszip', 'Deband'), 'neo_f3kdb': ('neo_f3kdb', None), 'f3kdb': ('f3kdb', None)},
     'scd':            {'scd': ('scd', None), 'misc': ('misc', 'SCDetect'), 'std': ('std', None)},
     'hysteresis':     {'hysteresis': ('hysteresis', None), 'misc': ('misc', 'Hysteresis')},
@@ -117,7 +117,7 @@ def pick_tool(tools: Optional[Mapping[str, str]], family: str, order: Sequence[s
 _FUNCTION_ORDER = {
     'rg': ('zsmooth', 'rgvs'), 'fluxsmooth': ('zsmooth', 'flux'), 'tmedian': ('zsmooth', 'tmedian'),
     'dctfilter': ('oxidctf', 'zsmooth', 'dctf'), 'boxblur': ('vszip', 'std'), 'limiter': ('vszip', 'std'),
-    'hysteresis': ('hysteresis', 'misc'), 'grain': ('noise', 'grain'), 'fft3d': ('neo_fft3d', 'fft3dfilter'),
+    'hysteresis': ('hysteresis', 'misc'), 'grain': ('noise', 'grain'), 'fft3d': ('neo_fft3d', 'neo_fft', 'fft3dfilter'),
 }
 _FUNCTION_NAMES = {
     ('flux', 'FluxSmoothT'): 'SmoothT', ('flux', 'FluxSmoothST'): 'SmoothST',

@@ -53,7 +53,7 @@ def _repair(clip: vs.VideoNode, ref: vs.VideoNode, mode: int, tools=None) -> vs.
 
 
 def _fft3d(clip: vs.VideoNode, tools=None, **kwargs) -> vs.VideoNode:
-    """FFT3D — tools['fft3d'], else neo_fft3d, else fft3dfilter."""
+    """FFT3D — tools['fft3d'], else neo_fft3d, neo_fft, fft3dfilter."""
     return tool_function(tools, 'fft3d', 'FFT3D')(clip, **kwargs)
 
 
