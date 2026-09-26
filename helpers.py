@@ -436,6 +436,10 @@ def _akarin_expr(clips, expr, *args, **kwargs):
     expr = [_pow_guard(e) for e in expr] if isinstance(expr, (list, tuple)) else _pow_guard(expr)
     return core.akarin.Expr(clips, expr, *args, **kwargs)
 
+def bilateral_port_args(namespace: str, sigma_spatial: float) -> Dict[str, Any]:
+    '''Extra arguments for a GPU bilateral port: bilateralgpu_rtc fails with shared memory above radius 49 (radius ~ 3 * sigma_spatial).'''
+    return {'use_shared_memory': False} if namespace == 'bilateralgpu_rtc' and 3 * sigma_spatial >= 49 else {}
+
 def get_expr(tools: Optional[Mapping[str, str]] = None):
     '''Return the Expr backend: tools['expr'], else the best available of akarin, cranexpr, std.'''
     name = pick_tool(tools, 'expr', ('akarin', 'cranexpr', 'std'))

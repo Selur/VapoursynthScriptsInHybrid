@@ -16,6 +16,7 @@ Required:
                        https://github.com/HolyWu/VapourSynth-EdgeMasks
     core.vszip       – vszip.Bilateral (edge-preserving blur) for MSmooth
                        https://github.com/dnjulek/vapoursynth-zip
+                       (tools['bilateral'] picks bilateral or a GPU port instead)
     core.zsmooth     – zsmooth.RemoveGrain (3×3 weighted blur) for MSharpen
                        https://github.com/adworacz/zsmooth
     core.std         – MaskedMerge, ShufflePlanes (always present)
@@ -43,7 +44,7 @@ MSharpen
 """
 
 import vapoursynth as vs
-from helpers import get_expr
+from helpers import bilateral_port_args, get_expr, pick_tool
 
 core = vs.core
 
@@ -104,6 +105,29 @@ def _depth(clip: vs.VideoNode, bits: int, tools=None) -> vs.VideoNode:
         # Upscale: simple multiply
         expr = f"x {peak_dst} * {peak_src} /"
     return get_expr(tools)([clip], expr, format=fmt_id)
+
+
+_BILATERAL_PORTS = ('bilateralgpu_rtc', 'bilateralgpu', 'vszipcl', 'vszipcu')
+
+
+def _bilateral(clip: vs.VideoNode, sigmaS: float, sigmaR: float, proc: list, tools=None) -> vs.VideoNode:
+    """Bilateral smoothing of the planes in `proc`: tools['bilateral'], else vszip, else bilateral; the GPU ports only on request."""
+    name = pick_tool(tools, 'bilateral', ('vszip', 'bilateral'), candidates=_BILATERAL_PORTS + ('vszip', 'bilateral'))
+    if name is None:
+        raise vs.Error("MSmooth: a bilateral plugin is required (vszip or bilateral)")
+    if name not in _BILATERAL_PORTS:
+        return getattr(core, name).Bilateral(clip, sigmaS=sigmaS, sigmaR=sigmaR, planes=proc, algorithm=0)
+    # Fallback only: the GPU ports take 8/16 bit integer, callers should convert beforehand; 9-15 bit runs at 16 bit here.
+    bits = clip.format.bits_per_sample
+    work = clip if bits in (8, 16) else _depth(clip, 16, tools)
+    # The GPU ports take sigma_spatial/sigma_color on the same scale and filter every plane.
+    smoothed = getattr(core, name).Bilateral(work, sigma_spatial=sigmaS, sigma_color=sigmaR, **bilateral_port_args(name, sigmaS))
+    smoothed = _depth(smoothed, bits, tools)
+    num_planes = clip.format.num_planes
+    if len(proc) < num_planes:
+        smoothed = core.std.ShufflePlanes([smoothed if p in proc else clip for p in range(num_planes)],
+                                          list(range(num_planes)), clip.format.color_family)
+    return smoothed
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -203,7 +227,7 @@ def MSmooth(clip: vs.VideoNode,
     """
     Drop-in replacement for msmoosh.MSmooth.
 
-    Uses vszip.Bilateral as the edge-preserving smoother and std.MaskedMerge
+    Uses a bilateral filter (default vszip) as the edge-preserving smoother and std.MaskedMerge
     to hard-restore edge pixels.
 
     Parameters
@@ -241,7 +265,7 @@ def MSmooth(clip: vs.VideoNode,
     if mask:
         return edge_mask
 
-    # ── 2. Bilateral smooth (vszip.Bilateral) ────────────────────────────────
+    # ── 2. Bilateral smooth (tools['bilateral'], default vszip) ──────────────
     # Map strength (1–25) → sigmaS (2.2 … 18.3).
     # sigmaR tracks threshold so the filter respects the same edge sensitivity.
     # vszip.Bilateral is a faster drop-in for VapourSynth-Bilateral, with an
@@ -249,13 +273,7 @@ def MSmooth(clip: vs.VideoNode,
     sigmaS = 1.5 + (strength - 1) * 0.7          # ~2.2 at s=1, ~18.3 at s=25
     sigmaR = max(0.02, threshold / 100.0 * 0.4)  # colour-range sigma
 
-    smoothed = core.vszip.Bilateral(
-        clip,
-        sigmaS=sigmaS,
-        sigmaR=sigmaR,
-        planes=proc,
-        algorithm=0   # 0 = auto-select O(1) vs O(sigmaS²) based on params
-    )
+    smoothed = _bilateral(clip, sigmaS, sigmaR, proc, tools)
 
     # ── 3. Masked merge: keep original at hard edges ─────────────────────────
     # MaskedMerge(base, overlay, mask):

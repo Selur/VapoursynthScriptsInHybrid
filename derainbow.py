@@ -4,7 +4,7 @@ import vapoursynth as vs
 
 core = vs.core
 
-from helpers import GetPlane, scale, get_expr, pick_tool, tool_function
+from helpers import GetPlane, scale, bilateral_port_args, get_expr, pick_tool, tool_function
 
 try:
     from color import Tweak as _color_tweak  # type: ignore
@@ -68,7 +68,8 @@ def _bilateral(clip: vs.VideoNode, sigmaS: float = 3.0, sigmaR: float = 0.02, gp
                           candidates=_BILATERAL_PORTS + ("vszip", "bilateral"))
     # The GPU ports name the sigmas sigma_spatial/sigma_color, on the same scale as sigmaS/sigmaR.
     if namespace in _BILATERAL_PORTS:
-        return getattr(core, namespace).Bilateral(clip, sigma_spatial=sigmaS, sigma_color=sigmaR, **kwargs)
+        return getattr(core, namespace).Bilateral(clip, sigma_spatial=sigmaS, sigma_color=sigmaR,
+                                                  **bilateral_port_args(namespace, sigmaS), **kwargs)
     if namespace is not None:
         return getattr(core, namespace).Bilateral(clip, sigmaS=sigmaS, sigmaR=sigmaR, **kwargs)
     raise RuntimeError(

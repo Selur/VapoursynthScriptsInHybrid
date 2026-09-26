@@ -3,7 +3,7 @@ from vapoursynth import core
 
 from typing import Any, Dict, Sequence, Union, Optional
 
-from helpers import GetPlane, BoxFilter, DFTTest, get_expr, pick_tool, tool_function, type_error, value_error
+from helpers import GetPlane, BoxFilter, DFTTest, bilateral_port_args, get_expr, pick_tool, tool_function, type_error, value_error
 
 TYPEDICT = {vs.VideoNode: 'clip', int: 'int', float: 'float', bool: 'bool', str: 'str', list: 'list', tuple: 'tuple'}
 from misc import mt_expand_multi, mt_inpand_multi
@@ -177,7 +177,8 @@ def GradFun3(src, thr=None, radius=None, elast=None, mask=None, mode=None, ampo=
                               lambda name: hasattr(core, name))
         if namespace is None:
             raise vs.Error(funcname + ': smode=5 needs bilateralgpu_rtc, bilateralgpu, vszipcl or vszipcu')
-        last = getattr(core, namespace).Bilateral(src, ref=ref, sigma_spatial=r4 / 2, sigma_color=thr_1 / 255)
+        last = getattr(core, namespace).Bilateral(src, ref=ref, sigma_spatial=r4 / 2, sigma_color=thr_1 / 255,
+                                                  **bilateral_port_args(namespace, r4 / 2))
         # The ports filter every plane; the planes not asked for stay untouched, as with smode 2.
         if len(planes) < src.format.num_planes:
             last = core.std.ShufflePlanes([last if p in planes else src for p in range(src.format.num_planes)],
