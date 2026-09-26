@@ -495,6 +495,13 @@ def _ar_apply(cl: vs.VideoNode, planes: str, expr: str, tools=None) -> vs.VideoN
     expr_list = [expr_y] if is_gray else [expr_y, expr_c, expr_c]
 
     result = core.resize.Bicubic(_expr2(cl_f, expr_list, tools), format=fmt_in, range_in_s="full", range_s="full")
+    # Untouched planes come from the input: the 4:4:4 float round trip is not lossless for subsampled chroma.
+    if planes == "luma" and not is_gray:
+        result = core.std.ShufflePlanes([result, cl], planes=[0, 1, 2], colorfamily=vs.YUV)
+    elif planes == "chroma":
+        if is_gray:
+            return cl
+        result = core.std.ShufflePlanes([cl, result], planes=[0, 1, 2], colorfamily=vs.YUV)
     return core.std.CopyFrameProps(result, cl)
 
 
