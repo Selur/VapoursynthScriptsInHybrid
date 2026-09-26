@@ -247,7 +247,6 @@ def SmoothLevels(
 
     # RemoveGrain mode selection
     RG_MAP = {
-        4: core.zsmooth.Median if pick_tool(tools, 'median', ('zsmooth', 'std')) == 'zsmooth' else core.std.Median,
         11: partial(core.std.Convolution, matrix=[1, 2, 1, 2, 4, 2, 1, 2, 1]),
         12: partial(core.std.Convolution, matrix=[1, 2, 1, 2, 4, 2, 1, 2, 1]),
         19: partial(core.std.Convolution, matrix=[1, 1, 1, 1, 0, 1, 1, 1, 1]),
@@ -255,7 +254,9 @@ def SmoothLevels(
     }
     
     RemoveGrain = RG_MAP.get(RGmode)
-    if RemoveGrain is None:
+    if RGmode == 4:
+        RemoveGrain = core.zsmooth.Median if pick_tool(tools, 'median', ('zsmooth', 'std')) == 'zsmooth' else core.std.Median
+    elif RemoveGrain is None:
         RG = get_rg(tools=tools)
         RemoveGrain = partial(RG, mode=[RGmode])
 

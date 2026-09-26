@@ -39,5 +39,6 @@ def RemoveDirtMod(clip: vs.VideoNode, limit: int =10, tools=None):
   core = vs.core
   clensed = tool_function(tools, 'rg', 'Clense')(clip)
   alt = tool_function(tools, 'rg', 'RemoveGrain')(clip,mode=1)
-  clip = core.rdvs.RestoreMotionBlocks(clensed, clip, alternative=alt, pthreshold=4, cthreshold=6, gmthreshold=40, dist=3, dmode=2, noise=limit, noisy=12)
+  restore = tool_function(tools, 'removedirt', 'RestoreMotionBlocks', ('removedirt', 'rdvs'))
+  clip = restore(clensed, clip, alternative=alt, pthreshold=4, cthreshold=6, gmthreshold=40, dist=3, dmode=2, noise=limit, noisy=12)
   return clip
