@@ -673,7 +673,7 @@ def AntiRing22LR(
 
 def AntiRingLR2UD(
     cl: vs.VideoNode,
-    planes: list[int] | None = None,
+    planes: str = "luma",
     weightL: float = 0.25,
     offsetL: int = 1,
     weightR: float = 0.25,
@@ -688,11 +688,8 @@ def AntiRingLR2UD(
     Applies AntiRingLR2 twice: once normally (fixes left/right ringing),
     and once on a 90°-rotated clip (fixes up/down ringing).
 
-    planes : List of plane indices to process. Default [0] = luma only.
+    planes : "luma", "chroma", or "all".
     """
-
-    if planes is None:
-        planes = [0]
 
     result = AntiRingLR2(cl, planes=planes,
                          weightL=weightL, offsetL=offsetL,
