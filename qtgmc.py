@@ -356,7 +356,7 @@ def QTGMC(
 
         opencl: Whether to use the OpenCL version of NNEDI3 and EEDI3.
 
-        device: Sets target OpenCL device.
+        device: GPU for the GPU implementations of NNEDI3, EEDI3, DFTTest and NLMeans.
     '''
     if not isinstance(Input, vs.VideoNode):
         raise vs.Error('QTGMC: this is not a clip')
@@ -826,12 +826,12 @@ def QTGMC(
                                 sample_type=noiseWindow.format.sample_type)
         elif Denoiser == 'dfttest':
           # Takes the first DFTTest implementation that is loaded, GPU ones first.
-          dnWindow = DFTTest(noiseWindow, sigma=Sigma * 4, tbsize=noiseTD, planes=CNplanes, tools=tools)
+          dnWindow = DFTTest(noiseWindow, sigma=Sigma * 4, tbsize=noiseTD, planes=CNplanes, tools=tools, device_id=device)
         elif Denoiser in ['knlm', 'knlmeanscl', 'nlm_cuda', 'nlm_ispc']:
             if ChromaNoise and not is_gray:
-                dnWindow = KNLMeansCL(noiseWindow, d=NoiseTR, h=Sigma, tools=tools)
+                dnWindow = KNLMeansCL(noiseWindow, d=NoiseTR, h=Sigma, device_id=device, tools=tools)
             else:
-                dnWindow = NLMeans(noiseWindow, d=NoiseTR, h=Sigma, tools=tools)
+                dnWindow = NLMeans(noiseWindow, d=NoiseTR, h=Sigma, device_id=device, tools=tools)
         else:
             fft3d_func = noiseWindow.neo_fft3d.FFT3D if pick_tool(tools, 'fft3d', ('neo_fft3d', 'fft3dfilter')) == 'neo_fft3d' else noiseWindow.fft3dfilter.FFT3DFilter
             dnWindow = fft3d_func(sigma=Sigma, planes=CNplanes, bt=noiseTD, ncpu=FftThreads)

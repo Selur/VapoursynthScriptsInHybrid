@@ -29,7 +29,8 @@ TOOLS: Dict[str, Dict[str, tuple]] = {
                        'eedi3vk': ('eedi3vk', 'EEDI3'), 'eedi3cl': ('eedi3m', 'EEDI3CL'), 'vszip': ('vszip', 'EEDI3'),
                        'eedi3m': ('eedi3m', 'EEDI3')},
     'eedi2':          {'eedi2': ('eedi2', None), 'eedi2cuda': ('eedi2cuda', None)},
-    'dfttest':        {'vszipcu': ('vszipcu', 'DFTTest'), 'dfttest2': ('dfttest2', None), 'dfttest': ('dfttest', None)},
+    'dfttest':        {'vszipcu': ('vszipcu', 'DFTTest'), 'dfttest2': ('dfttest2', None), 'dfttest2cpu': ('dfttest2_cpu', None),
+                       'dfttest': ('dfttest', None)},
     'nlmeans':        {'nlm_ispc': ('nlm_ispc', None), 'nlm_cuda': ('nlm_cuda', None), 'vszipcu': ('vszipcu', 'NLMeans'),
                        'vszipcl': ('vszipcl', 'NLMeans'), 'knlm': ('knlm', None)},
     'bm3d':           {'bm3dcuda': ('bm3dcuda', None), 'bm3dhip': ('bm3dhip', None), 'bm3dmetal': ('bm3dmetal', None),
@@ -56,7 +57,7 @@ TOOLS: Dict[str, Dict[str, tuple]] = {
     'average':        {'artyfox': ('artyfox', None), 'average': ('average', None)},
 }
 # dfttest2 is a Python module over several namespaces.
-_DFTTEST2_NAMESPACES = ('dfttest2_cuda', 'dfttest2_nvrtc', 'dfttest2_hip', 'dfttest2_hiprtc', 'dfttest2_cpu', 'dfttest2_gcc')
+_DFTTEST2_NAMESPACES = ('dfttest2_cuda', 'dfttest2_nvrtc', 'dfttest2_hip', 'dfttest2_hiprtc')
 _unknown_tool_keys_warned = set()
 
 
@@ -731,8 +732,8 @@ def EEDI3(clip: vs.VideoNode, gpu: Optional[bool] = None, device: Optional[int] 
 # Parameters core.dfttest.DFTTest knows but the GPU implementations do not.
 _DFTTEST_NOT_IN_VSZIPCU = ('smode', 'tmode', 'tosize', 'nlocation', 'alpha', 'opt')
 _DFTTEST_NOT_IN_DFTTEST2 = ('tmode', 'tosize', 'opt')
-# dfttest2 backends that are fixed to sbsize=16 and tbsize in (1, 3, 5, 7).
-_DFTTEST2_FIXED_BLOCK = ('dfttest2_nvrtc', 'dfttest2_hiprtc', 'dfttest2_cpu', 'dfttest2_gcc')
+# GPU backends of dfttest2 that are fixed to sbsize=16 and tbsize in (1, 3, 5, 7); the CPU one ('dfttest2cpu') is too.
+_DFTTEST2_FIXED_BLOCK = ('dfttest2_nvrtc', 'dfttest2_hiprtc')
 # ... and the ones that take any block size.
 _DFTTEST2_ANY_BLOCK = ('dfttest2_cuda', 'dfttest2_hip')
 
@@ -746,41 +747,70 @@ def _vszipcuCanRun(kwargs: Dict[str, Any]) -> bool:
     return not any(name in kwargs for name in _DFTTEST_NOT_IN_VSZIPCU)
 
 
+def _dfttest2FixedBlock(kwargs: Dict[str, Any]) -> bool:
+    return kwargs.get('sbsize', 16) == 16 and kwargs.get('tbsize', 3) in (1, 3, 5, 7)
+
+
 def _dfttest2CanRun(kwargs: Dict[str, Any]) -> bool:
     if any(name in kwargs for name in _DFTTEST_NOT_IN_DFTTEST2):
         return False
-    if kwargs.get('sbsize', 16) == 16 and kwargs.get('tbsize', 3) in (1, 3, 5, 7):
+    if _dfttest2FixedBlock(kwargs):
         return any(hasattr(core, name) for name in _DFTTEST2_FIXED_BLOCK + _DFTTEST2_ANY_BLOCK)
     return any(hasattr(core, name) for name in _DFTTEST2_ANY_BLOCK)
 
 
+def _dfttest2CpuCanRun(kwargs: Dict[str, Any]) -> bool:
+    return hasattr(core, 'dfttest2_cpu') and _dfttest2FixedBlock(kwargs) \
+        and not any(name in kwargs for name in _DFTTEST_NOT_IN_DFTTEST2)
+
+
+def _dfttest2GpuBackend(kwargs: Dict[str, Any], device_id: int):
+    '''The GPU backend of dfttest2 for this call: the fixed-block kernels where they fit, the FFT ones otherwise.'''
+    import dfttest2
+    if _dfttest2FixedBlock(kwargs):
+        if hasattr(core, 'dfttest2_nvrtc'):
+            return dfttest2.Backend.NVRTC(device_id=device_id)
+        if hasattr(core, 'dfttest2_hiprtc'):
+            return dfttest2.Backend.HIPRTC(device_id=device_id)
+    if hasattr(core, 'dfttest2_cuda'):
+        return dfttest2.Backend.cuFFT(device_id=device_id)
+    return dfttest2.Backend.hipFFT(device_id=device_id)
+
+
 def DFTTest(clip: vs.VideoNode, cuda: Optional[bool] = None, tools: Optional[Mapping[str, str]] = None,
-            **kwargs) -> vs.VideoNode:
+            device_id: Optional[int] = None, **kwargs) -> vs.VideoNode:
     '''Calls the first DFTTest implementation that is loaded, GPU ones first.
 
-    Looked for in this order: core.vszipcu.DFTTest (CUDA), dfttest2.DFTTest (CUDA) and
-    core.dfttest.DFTTest (CPU). Which of them is available is decided by whoever loaded the
-    plugins.
+    Looked for in this order: core.vszipcu.DFTTest (CUDA), dfttest2.DFTTest on a GPU backend (CUDA/HIP) and
+    core.dfttest.DFTTest (CPU). dfttest2's CPU backend is only used when tools['dfttest'] asks for 'dfttest2cpu'.
+    Which of them is available is decided by whoever loaded the plugins.
 
     Args:
         cuda: False forces the CPU implementation, True and None look for a GPU one first.
             Kept for the callers that have their own cuda/opencl/gpu switch.
-        tools: tools['dfttest'] ('vszipcu', 'dfttest2' or 'dfttest') names the implementation; `cuda` then has
-            no effect.
+        tools: tools['dfttest'] ('vszipcu', 'dfttest2', 'dfttest2cpu' or 'dfttest') names the implementation;
+            `cuda` then has no effect.
+        device_id: GPU for the CUDA ports; None or a negative value leaves the choice to the plugin.
+            dfttest2 takes it through its GPU backend.
 
     An implementation is only used when it can actually handle the call: neither GPU one takes
     every parameter, and most of their backends are fixed to a spatial block size of 16. Calls
     they cannot serve use the CPU version, which then has to be loaded as well.
     '''
-    can_run = {'vszipcu': _vszipcuCanRun, 'dfttest2': _dfttest2CanRun, 'dfttest': lambda _: hasattr(core, 'dfttest')}
-    everything = ('vszipcu', 'dfttest2', 'dfttest')
-    order = ('dfttest',) if cuda is False else everything
-    name = pick_tool(tools, 'dfttest', order, lambda n: can_run[n](kwargs), candidates=everything)
+    can_run = {'vszipcu': _vszipcuCanRun, 'dfttest2': _dfttest2CanRun, 'dfttest2cpu': _dfttest2CpuCanRun,
+               'dfttest': lambda _: hasattr(core, 'dfttest')}
+    order = ('dfttest',) if cuda is False else ('vszipcu', 'dfttest2', 'dfttest')
+    name = pick_tool(tools, 'dfttest', order, lambda n: can_run[n](kwargs), candidates=tuple(can_run))
+    on_device = device_id is not None and device_id >= 0
     if name == 'vszipcu':
+        if on_device:
+            kwargs['device_id'] = device_id
         return core.vszipcu.DFTTest(clip, **kwargs)
-    if name == 'dfttest2':
+    if name in ('dfttest2', 'dfttest2cpu'):
         import dfttest2
-        # Let dfttest2 pick its backend: NVRTC where it fits, cuFFT for everything else.
+        if 'backend' not in kwargs:
+            kwargs['backend'] = dfttest2.Backend.CPU() if name == 'dfttest2cpu' \
+                else _dfttest2GpuBackend(kwargs, device_id if on_device else 0)
         return dfttest2.DFTTest(clip, **kwargs)
     return core.dfttest.DFTTest(clip, **kwargs)
 
