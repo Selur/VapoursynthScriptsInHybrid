@@ -474,7 +474,9 @@ def _ar_apply(cl: vs.VideoNode, planes: str, expr: str, tools=None) -> vs.VideoN
     """Run expr on the requested planes; the output format matches the input."""
     fmt_in = cl.format
     is_gray = fmt_in.color_family == vs.GRAY
-    work_fmt = vs.GRAYS if is_gray else vs.YUV444PS
+    # Float with the subsampling of the input: the original runs Expr on the native planes, and the round trip stays lossless.
+    work_fmt = core.query_video_format(fmt_in.color_family, vs.FLOAT, 32,
+                                       fmt_in.subsampling_w, fmt_in.subsampling_h).id
 
     # Full scale in both directions, like the scale_inputs="allf" of the
     # original: an integer step of one is 1/255 in the working clip, for luma
