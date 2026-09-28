@@ -1,3 +1,5 @@
+from __future__ import annotations
+from typing import Mapping, Optional, Sequence
 import vapoursynth as vs
 from vapoursynth import core
 from misc import get_mv
@@ -22,7 +24,7 @@ Replaces duplicate frames with interpolations.
 
 class FillDuplicateFrames:
   # constructor
-  def __init__(self, clip: vs.VideoNode, mode='FillDuplicate', thresh: float=0.001, method: str='SVP', sceneThr: float=0.15, rifeModel: int=22, rifeTTA=False, rifeUHD=False, frames = [], debug: bool=False, device_index: int=0, tools=None):
+  def __init__(self, clip: vs.VideoNode, mode: str = 'FillDuplicate', thresh: float=0.001, method: str='SVP', sceneThr: float=0.15, rifeModel: int=22, rifeTTA: bool = False, rifeUHD: bool = False, frames: Sequence[int] = [], debug: bool=False, device_index: int=0, tools: Optional[Mapping[str, str]] = None) -> None:
       # calculte stats
       self.tools = tools
       self.thresh = thresh
@@ -41,7 +43,7 @@ class FillDuplicateFrames:
       if method == 'Replace' and not frames:
         raise ValueError(f'FillDuplicateFrames: "frames" needs to be set when using \'{self.method}\'!')
 
-  def interpolate(self, n, f):
+  def interpolate(self, n: int, f: vs.VideoFrame) -> vs.VideoNode:
     if self.mode == 'FillDuplicate':
       out = self.get_current_or_interpolate(n)
     elif self.mode == 'FillDrops':
@@ -55,7 +57,7 @@ class FillDuplicateFrames:
       return out.text.Text(text="avg: "+str(f.props['PlaneStatsDiff']),alignment=8)            
     return out
 
-  def interpolateWithRIFE(self, clip, n, start, end):
+  def interpolateWithRIFE(self, clip: vs.VideoNode, n: int, start: int, end: int) -> vs.VideoNode:
     if clip.format.id != vs.RGBS:
       raise ValueError(f'FillDuplicateFrames: "clip" needs to be RGBS when using \'{self.method}\'!')     
         
@@ -66,7 +68,7 @@ class FillDuplicateFrames:
     self.smooth_end   = end
     return self.smooth[n-start]
    
-  def interpolateWithMV(self, clip, n, start, end):   
+  def interpolateWithMV(self, clip: vs.VideoNode, n: int, start: int, end: int) -> vs.VideoNode:   
     num = end - start
     MV = get_mv(self.tools)
     sup = MV.Super(clip, pel=2, hpad=0, vpad=0, blksize=16, overlap=0)
@@ -80,7 +82,7 @@ class FillDuplicateFrames:
       return out.text.Text(text="MV",alignment=9)
     return out
 
-  def interpolateWithSVP(self, clip, n, start, end):   
+  def interpolateWithSVP(self, clip: vs.VideoNode, n: int, start: int, end: int) -> vs.VideoNode:   
     if clip.format.id != vs.YUV420P8:
       raise ValueError(f'FillDuplicateFrames: "clip" needs to be YUV420P8 when using \'{self.method}\'!')
     if self.method.lower() == 'svp_gpu' or self.method == 'SVP':
@@ -97,7 +99,7 @@ class FillDuplicateFrames:
       return out.text.Text(text="SVP",alignment=9)
     return out
   
-  def get_current_or_interpolate(self, n):
+  def get_current_or_interpolate(self, n: int) -> vs.VideoNode:
     if self.is_not_duplicate(n):
       if self.potential_scene_change(n):
         if self.debug:
@@ -148,7 +150,7 @@ class FillDuplicateFrames:
     else:
       raise ValueError(f'FillDuplicateFrames: {self.mode} "method" \'{self.method}\' is not supported atm.')
       
-  def get_current_or_interpolate_for_fill(self, n):
+  def get_current_or_interpolate_for_fill(self, n: int) -> vs.VideoNode:
     if n == 0 or n >= self.clip.num_frames -1:
       if self.debug:
           return self.clip[n].text.Text(text="Input (0)", alignment=9)
@@ -204,7 +206,7 @@ class FillDuplicateFrames:
     else:
       raise ValueError(f'FillDuplicateFrames: {self.mode} "method" \'{self.method}\' is not supported atm.')
 
-  def replaceFrame(self, n):
+  def replaceFrame(self, n: int) -> vs.VideoNode:
    
     if not n in self.frames or n == 0 or n >= self.clip.num_frames -1:
       if self.debug:
@@ -254,14 +256,14 @@ class FillDuplicateFrames:
       raise ValueError(f'FillDuplicateFrames: {self.mode} "method" \'{self.method}\' is not supported atm.')
 
 
-  def is_not_duplicate(self, n):
+  def is_not_duplicate(self, n: int) -> bool:
     return self.clip.get_frame(n).props['PlaneStatsDiff'] > self.thresh
   
-  def potential_scene_change(self, n):
+  def potential_scene_change(self, n: int) -> bool:
     return self.sceneThr > 0 and self.clip.get_frame(n).props['PlaneStatsDiff'] > self.sceneThr
   
   @property
-  def out(self):
+  def out(self) -> vs.VideoNode:
     return core.std.FrameEval(self.clip, self.interpolate, prop_src=self.clip)
     
     

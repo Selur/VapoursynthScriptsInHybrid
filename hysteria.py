@@ -1,3 +1,4 @@
+from __future__ import annotations
 #####################################################
 #                                                   #
 # Hysteria, a line darkening script by Scintilla    #
@@ -75,19 +76,20 @@
 ###################
 
 
+from typing import Mapping, Optional, Sequence
 import vapoursynth as vs
 from helpers import get_expr, tool_function
 
 
-def Hysteria(clip, strength=1.0, usemask=True, lowthresh=6, highthresh=20, luma_cap=191, maxchg=255, minchg=0,
-             planes=[0], luma=True, showmask=False, tools=None):
+def Hysteria(clip: vs.VideoNode, strength: float = 1.0, usemask: bool = True, lowthresh: int = 6, highthresh: int = 20, luma_cap: int = 191, maxchg: int = 255, minchg: int = 0,
+             planes: Sequence[int] = [0], luma: bool = True, showmask: bool = False, tools: Optional[Mapping[str, str]] = None) -> vs.VideoNode:
     core = vs.core
     if not isinstance(clip, vs.VideoNode):
         raise ValueError('This is not a clip')
 
     max_bitval = (1 << clip.format.bits_per_sample) - 1
 
-    def scale(old_value):
+    def scale(old_value: float) -> int:
         return int((old_value * max_bitval) / 255)
 
     # This scales the colordepth dependant parameters

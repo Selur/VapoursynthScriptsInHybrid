@@ -1,3 +1,4 @@
+from __future__ import annotations
 import vapoursynth as vs
 core = vs.core
 

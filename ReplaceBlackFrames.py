@@ -1,3 +1,5 @@
+from __future__ import annotations
+from typing import Mapping, Optional
 import vapoursynth as vs
 from vapoursynth import core
 from misc import SCDetect
@@ -19,14 +21,14 @@ method:
 rifeSC: scene change threshld when RIFE is use for interpolation
 
 When SVP is used input need to be YUV420P8.
-When RIFE is used input need to be RGBS.
+When RIFE is used input need to be RGBS or RGBH.
  
 v0.0.3 added RIFE interpolation
 v0.0.4 RIFE RGBH
 '''
 class ReplaceBlackFrames:
   # constructor
-  def __init__(self, clip: vs.VideoNode, thresh: float=0.1, debug: bool=False, method: str='previous', rifeSC: float=0.15, tools=None):
+  def __init__(self, clip: vs.VideoNode, thresh: float=0.1, debug: bool=False, method: str='previous', rifeSC: float=0.15, scd_thscd1: float=400.0, scd_thscd2: float=130.0, tools: Optional[Mapping[str, str]] = None) -> None:
       self.thresh = thresh
       self.debug = debug
       self.method = method
@@ -38,25 +40,25 @@ class ReplaceBlackFrames:
         raise ValueError(f'ReplaceBlackFrames: "float" needs to fullfill: 0 <= rifeSC <= 1')  
       if (method == 'interpolateSVP' or method == 'interpolateCPU') and (clip.format.id != vs.YUV420P8):
         raise ValueError(f'ReplaceBlackFrames: "clip" color format need to be YUV420P8 when SVP is used!\n{clip.format}')
-      if (method == 'interpolateRIFE') and clip.format.id != vs.RGBS:
-        raise ValueError(f'ReplaceBlackFrames: "clip" color format need to be RGBS when RIFE is used!\n{clip.format}')
+      if (method == 'interpolateRIFE') and clip.format.id not in (vs.RGBS, vs.RGBH):
+        raise ValueError(f'ReplaceBlackFrames: "clip" color format need to be RGBS or RGBH when RIFE is used!\n{clip.format}')
       if (method == 'interpolateRIFE') and rifeSC != 0:
-        clip = SCDetect(clip=clip, threshold=rifeSC, tools=tools)
+        clip = SCDetect(clip=clip, threshold=rifeSC, scd_thscd1=scd_thscd1, scd_thscd2=scd_thscd2, tools=tools)
       self.clip = core.std.PlaneStats(clip)
 
-  def previous(self, n, f):
+  def previous(self, n: int, f: vs.VideoFrame) -> vs.VideoNode:
     out = self.get_current_or_previous(n)
     if self.debug:
       return out.text.Text(text="Org, avg: "+str(f.props['PlaneStatsAverage']),alignment=8)            
     return out
   
-  def interpolate(self, n, f):
+  def interpolate(self, n: int, f: vs.VideoFrame) -> vs.VideoNode:
     out = self.get_current_or_interpolate(n)
     if self.debug:
       return out.text.Text(text="avg: "+str(f.props['PlaneStatsAverage']),alignment=8)            
     return out
 
-  def get_current_or_previous(self, n):
+  def get_current_or_previous(self, n: int) -> vs.VideoNode:
     for i in reversed(range(n+1)):
       if self.is_not_black(i):
         return self.clip[i]
@@ -64,7 +66,7 @@ class ReplaceBlackFrames:
       #all previous are black, return current n frame
       return self.clip[n]
 
-  def interpolateWithRIFE(self, clip, n, start, end, rifeModel=22, rifeTTA=False, rifeUHD=False, rifeThresh=0):
+  def interpolateWithRIFE(self, clip: vs.VideoNode, n: int, start: int, end: int, rifeModel: int = 22, rifeTTA: bool = False, rifeUHD: bool = False, rifeThresh: float = 0) -> vs.VideoNode:
     
     num = end - start
     self.smooth = core.rife.RIFE(clip, model=rifeModel, factor_num=num, tta=rifeTTA,uhd=rifeUHD)
@@ -72,7 +74,7 @@ class ReplaceBlackFrames:
     self.smooth_end   = end
     return self.smooth[n-start]
 
-  def interpolateWithSVP(self, clip, n, start, end):   
+  def interpolateWithSVP(self, clip: vs.VideoNode, n: int, start: int, end: int) -> vs.VideoNode:   
       if self.method == 'interpolateSVP':
         super = core.svp1.Super(clip,"{gpu:1}")
       else: # self.method == 'interpolateSVPCPU':
@@ -84,7 +86,7 @@ class ReplaceBlackFrames:
       self.smooth_end   = end
       return self.smooth[n-start]
       
-  def get_current_or_interpolate(self, n):
+  def get_current_or_interpolate(self, n: int) -> vs.VideoNode:
     if self.is_not_black(n):
       #current non black selected
       return self.clip[n]
@@ -120,11 +122,11 @@ class ReplaceBlackFrames:
       raise ValueError(f'ReplaceBlackFrames: "method" \'{self.method}\' is not supported atm.')
 
 
-  def is_not_black(self, n):
+  def is_not_black(self, n: int) -> bool:
     return self.clip.get_frame(n).props['PlaneStatsAverage'] > self.thresh
   
   @property
-  def out(self):
+  def out(self) -> vs.VideoNode:
     if self.method == 'previous':
       return core.std.FrameEval(self.clip, self.previous, prop_src=self.clip)
     return core.std.FrameEval(self.clip, self.interpolate, prop_src=self.clip)

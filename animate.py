@@ -1,3 +1,5 @@
+from __future__ import annotations
+from typing import Any, Callable, Dict, Mapping, Optional, Sequence, Union
 import vapoursynth as vs
 from vapoursynth import core
 import functools
@@ -24,11 +26,11 @@ class Crossfade:
     clip_out = animate.run(clip, MAP)   
     '''
     
-    def __init__(self, function1=None, function2=None):           
+    def __init__(self, function1: Optional[Callable[..., vs.VideoNode]] = None, function2: Optional[Callable[..., vs.VideoNode]] = None) -> None:           
         self.function1 = function1
         self.function2 = function2
                       
-    def __call__(self, clip, n, lower, upper):
+    def __call__(self, clip: vs.VideoNode, n: int, lower: int, upper: int) -> vs.VideoNode:
         return core.std.Merge(
                                 self.function1(clip) if self.function1 is not None else clip,
                                 self.function2(clip) if self.function2 is not None else clip,
@@ -50,10 +52,10 @@ class CrossfadeFromColor:
     clip_out = animate.run(clip, MAP)    
     '''
     
-    def __init__(self, color):
+    def __init__(self, color: Union[float, Sequence[float]]) -> None:
         self.color = color       
         
-    def __call__(self, clip, n, lower, upper):
+    def __call__(self, clip: vs.VideoNode, n: int, lower: int, upper: int) -> vs.VideoNode:
         return core.std.Merge(clip.std.BlankClip(color=self.color), clip, (n-lower)/(upper-lower))
 
         
@@ -72,10 +74,10 @@ class CrossfadeToColor:
     clip_out = animate.run(clip, MAP  )     
     '''
     
-    def __init__(self, color):
+    def __init__(self, color: Union[float, Sequence[float]]) -> None:
         self.color = color       
         
-    def __call__(self, clip, n, lower, upper):
+    def __call__(self, clip: vs.VideoNode, n: int, lower: int, upper: int) -> vs.VideoNode:
         return core.std.Merge(clip, clip.std.BlankClip(color=self.color, length=1), (n-lower)/(upper-lower))
 
 class Arguments:
@@ -103,13 +105,13 @@ class Arguments:
     clip_out = animate.run(clip, MAP)       
     '''
     
-    def __init__(self, function, set1, set2, types):       
+    def __init__(self, function: Callable[..., vs.VideoNode], set1: Dict[str, float], set2: Dict[str, float], types: Dict[str, Optional[type]]) -> None:       
         self.function = function
         self.set1   = set1
         self.types  = types
         self.diff   = {key : round(value-set2[key]) if types[key] == int else round(value-set2[key], 2) for key, value in set1.items() if types[key] is not None}
        
-    def __call__(self, clip, n, lower, upper):        
+    def __call__(self, clip: vs.VideoNode, n: int, lower: int, upper: int) -> vs.VideoNode:        
         set_out = dict()
         for key, value in self.set1.items():
             if self.types[key] is not None:
@@ -120,7 +122,7 @@ class Arguments:
         return self.function(clip, **set_out)
 
 
-def distribute(n, clip, MAP, selection, tools=None, **overlay_kwargs):
+def distribute(n: int, clip: vs.VideoNode, MAP: Sequence[Any], selection: Optional[Sequence[int]], tools: Optional[Mapping[str, str]] = None, **overlay_kwargs: Any) -> vs.VideoNode:
     iterator = iter(MAP)
     change = False
     for (lower, upper) in iterator:
@@ -138,11 +140,11 @@ def distribute(n, clip, MAP, selection, tools=None, **overlay_kwargs):
         return clip
 
 
-def run(clip,
-        MAP,
-        selection=None,
-        mask=None, opacity=1.0, mode='normal', planes=None, mask_first_plane=True, # misc.Overlay kwargs
-        placeholder = None, tools=None):
+def run(clip: vs.VideoNode,
+        MAP: Sequence[Any],
+        selection: Optional[Sequence[int]] = None,
+        mask: Optional[vs.VideoNode] = None, opacity: float = 1.0, mode: str = 'normal', planes: Optional[Union[int, Sequence[int]]] = None, mask_first_plane: bool = True, # misc.Overlay kwargs
+        placeholder: Optional[vs.VideoNode] = None, tools: Optional[Mapping[str, str]] = None) -> vs.VideoNode:
     
     if placeholder is None:
         placeholder = clip
@@ -160,13 +162,13 @@ if __name__ == '__main__':
 
     clip = core.std.BlankClip(color=(255,0,0), length=300)
     
-    def data1(clip, n, lower, upper): return clip.text.Text(f'frame: {n}   interval to print: {lower} to {upper}',alignment=7)   
-    def data2(clip, *args):           return clip.text.Text(f'filters can be chained', alignment=4)   
-    def data3(clip, *args):           return clip.text.Text('Text that is fade in and out', alignment=1)
+    def data1(clip: vs.VideoNode, n: int, lower: int, upper: int) -> vs.VideoNode: return clip.text.Text(f'frame: {n}   interval to print: {lower} to {upper}',alignment=7)   
+    def data2(clip: vs.VideoNode, *args: Any) -> vs.VideoNode:           return clip.text.Text(f'filters can be chained', alignment=4)   
+    def data3(clip: vs.VideoNode, *args: Any) -> vs.VideoNode:           return clip.text.Text('Text that is fade in and out', alignment=1)
     
-    def headline1(clip, *args):       return clip.text.Text('Our Headline')
-    def headline2(clip, *args):       return clip.text.Text('... and other headline')
-    def headline3(clip, *args):       return clip.text.Text('... third Headline')
+    def headline1(clip: vs.VideoNode, *args: Any) -> vs.VideoNode:       return clip.text.Text('Our Headline')
+    def headline2(clip: vs.VideoNode, *args: Any) -> vs.VideoNode:       return clip.text.Text('... and other headline')
+    def headline3(clip: vs.VideoNode, *args: Any) -> vs.VideoNode:       return clip.text.Text('... third Headline')
 
     '''
     MAP is a list with pairs, first item is frame interval, second is a list of functions(filters)

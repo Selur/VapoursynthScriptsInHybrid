@@ -1,3 +1,4 @@
+from __future__ import annotations
 import vapoursynth as vs
 from vapoursynth import core
 from typing import Callable
@@ -9,7 +10,7 @@ class _DuplicateAwareProcessor:
     It holds the state of the previously processed frame and applies the
     user-defined filter function as needed.
     """
-    def __init__(self, clip: vs.VideoNode, filter_func: Callable[[vs.VideoNode], vs.VideoNode], thresh: float, debug: bool):
+    def __init__(self, clip: vs.VideoNode, filter_func: Callable[[vs.VideoNode], vs.VideoNode], thresh: float, debug: bool) -> None:
         self.clip = clip
         self.filter_func = filter_func
         self.thresh = thresh

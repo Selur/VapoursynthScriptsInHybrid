@@ -1,10 +1,11 @@
+from __future__ import annotations
 
 from vapoursynth import core
 import vapoursynth as vs
 
 import math
 
-from typing import Optional, Union, Sequence
+from typing import Optional, Union, Sequence, Mapping
 
 from helpers import GetPlane, scale, Padding, get_expr, pick_tool
 
@@ -36,7 +37,7 @@ from helpers import GetPlane, scale, Padding, get_expr, pick_tool
 #  thinning (integer)   - optional line thinning amount, 0-256. Setting this to 0 will disable it,
 #                         which is gives a _big_ speed increase. Note that thinning the lines will
 #                         inherently darken the remaining pixels in each line a little. Default 0.
-def FastLineDarkenMOD(c, strength=48, protection=5, luma_cap=191, threshold=4, thinning=0, tools=None):
+def FastLineDarkenMOD(c: vs.VideoNode, strength: int = 48, protection: int = 5, luma_cap: int = 191, threshold: int = 4, thinning: int = 0, tools: Optional[Mapping[str, str]] = None) -> vs.VideoNode:
     if not isinstance(c, vs.VideoNode):
         raise vs.Error('FastLineDarkenMOD: this is not a clip')
 
@@ -91,7 +92,7 @@ def FastLineDarkenMOD(c, strength=48, protection=5, luma_cap=191, threshold=4, t
 #  u_thr (int) - Upper threshold for the linemask. Default is 12
 #  blur (int)  - "blur" parameter of AWarpSharp2. Default is 2
 #  depth (int) - "depth" parameter of AWarpSharp2. Default is 32
-def Toon(input, str=1.0, l_thr=2, u_thr=12, blur=2, depth=32, tools=None):
+def Toon(input: vs.VideoNode, str: float = 1.0, l_thr: int = 2, u_thr: int = 12, blur: int = 2, depth: int = 32, tools: Optional[Mapping[str, str]] = None) -> vs.VideoNode:
     if not isinstance(input, vs.VideoNode):
         raise vs.Error('Toon: this is not a clip')
 

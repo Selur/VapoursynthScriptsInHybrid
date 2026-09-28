@@ -1,3 +1,4 @@
+from __future__ import annotations
 import vapoursynth as vs
 core = vs.core
 from misc import get_mv
@@ -46,21 +47,21 @@ Usage
   SpotDelta(src, output='full_stacked').set_output()
 """
 
-from typing import Optional
+from typing import Any, Callable, Dict, Mapping, Optional
 
 # ---------------------------------------------------------------------------
 # Plugin selectors
 # ---------------------------------------------------------------------------
 
-def _expr_fn(tools=None):
+def _expr_fn(tools: Optional[Mapping[str, str]] = None) -> Callable[..., vs.VideoNode]:
     """Pick the Expr plugin: tools['expr'], else akarin, cranexpr, std."""
     return get_expr(tools)
 
-def _boxblur_fn(tools=None):
+def _boxblur_fn(tools: Optional[Mapping[str, str]] = None) -> Callable[..., vs.VideoNode]:
     """Pick the BoxBlur: tools['boxblur'], else vszip, else std."""
     return tool_function(tools, 'boxblur', 'BoxBlur')
 
-def _hysteresis_fn(tools=None):
+def _hysteresis_fn(tools: Optional[Mapping[str, str]] = None) -> Callable[..., vs.VideoNode]:
     """Pick the Hysteresis: tools['hysteresis'], else hysteresis, else misc."""
     return tool_function(tools, 'hysteresis', 'Hysteresis')
 
@@ -69,12 +70,12 @@ def _hysteresis_fn(tools=None):
 # Thin Expr wrappers  (single-plane / GRAY only)
 # ---------------------------------------------------------------------------
 
-def _expr1(clip: vs.VideoNode, expr: str, tools=None) -> vs.VideoNode:
+def _expr1(clip: vs.VideoNode, expr: str, tools: Optional[Mapping[str, str]] = None) -> vs.VideoNode:
     """Single-input Expr on a GRAY clip."""
     assert clip.format.num_planes == 1, "_expr1 requires a GRAY clip"
     return _expr_fn(tools=tools)([clip], [expr])
 
-def _expr2(a: vs.VideoNode, b: vs.VideoNode, expr: str, tools=None) -> vs.VideoNode:
+def _expr2(a: vs.VideoNode, b: vs.VideoNode, expr: str, tools: Optional[Mapping[str, str]] = None) -> vs.VideoNode:
     """Two-input Expr on two GRAY clips with identical format."""
     assert a.format.num_planes == 1 and b.format.num_planes == 1, \
         "_expr2 requires GRAY inputs"
@@ -108,7 +109,7 @@ def _makediff(a: vs.VideoNode, b: vs.VideoNode) -> vs.VideoNode:
         "_makediff requires GRAY inputs"
     return core.std.MakeDiff(a, b)
 
-def _adddiff(base: vs.VideoNode, diff: vs.VideoNode, tools=None) -> vs.VideoNode:
+def _adddiff(base: vs.VideoNode, diff: vs.VideoNode, tools: Optional[Mapping[str, str]] = None) -> vs.VideoNode:
     """
     Inverse of MakeDiff: computes (base + diff - mid) with proper clamping.
     core.std.AddDiff does not exist in VapourSynth, so we use Expr.
@@ -126,7 +127,7 @@ def _adddiff(base: vs.VideoNode, diff: vs.VideoNode, tools=None) -> vs.VideoNode
 # ---------------------------------------------------------------------------
 
 def _exaggerated_chroma_diff(source: vs.VideoNode,
-                              filtered: vs.VideoNode, tools=None) -> vs.VideoNode:
+                              filtered: vs.VideoNode, tools: Optional[Mapping[str, str]] = None) -> vs.VideoNode:
     """
     Diff clip where luma is a plain MakeDiff and chroma differences are
     amplified 3x, making colour artefacts clearly visible.
@@ -159,25 +160,25 @@ def _exaggerated_chroma_diff(source: vs.VideoNode,
 # Basic mask operations  (all GRAY in, GRAY out)
 # ---------------------------------------------------------------------------
 
-def _binarize(clip: vs.VideoNode, threshold: int, tools=None) -> vs.VideoNode:
+def _binarize(clip: vs.VideoNode, threshold: int, tools: Optional[Mapping[str, str]] = None) -> vs.VideoNode:
     bits = clip.format.bits_per_sample
     peak = (1 << bits) - 1
     return _expr1(clip, f'x {threshold} > {peak} 0 ?', tools=tools)
 
-def _logic_or(a: vs.VideoNode, b: vs.VideoNode, tools=None) -> vs.VideoNode:
+def _logic_or(a: vs.VideoNode, b: vs.VideoNode, tools: Optional[Mapping[str, str]] = None) -> vs.VideoNode:
     return _expr2(a, b, 'x y max', tools=tools)
 
-def _logic_and(a: vs.VideoNode, b: vs.VideoNode, tools=None) -> vs.VideoNode:
+def _logic_and(a: vs.VideoNode, b: vs.VideoNode, tools: Optional[Mapping[str, str]] = None) -> vs.VideoNode:
     return _expr2(a, b, 'x y min', tools=tools)
 
-def _suppress_with(mask: vs.VideoNode, suppression: vs.VideoNode, tools=None) -> vs.VideoNode:
+def _suppress_with(mask: vs.VideoNode, suppression: vs.VideoNode, tools: Optional[Mapping[str, str]] = None) -> vs.VideoNode:
     """mask = max(mask − suppression, 0)"""
     return _expr2(mask, suppression, 'x y - 0 max', tools=tools)
 
-def _add_to(mask: vs.VideoNode, other: vs.VideoNode, tools=None) -> vs.VideoNode:
+def _add_to(mask: vs.VideoNode, other: vs.VideoNode, tools: Optional[Mapping[str, str]] = None) -> vs.VideoNode:
     return _logic_or(mask, other, tools=tools)
 
-def _must_not_overlap(mask: vs.VideoNode, other: vs.VideoNode, tools=None) -> vs.VideoNode:
+def _must_not_overlap(mask: vs.VideoNode, other: vs.VideoNode, tools: Optional[Mapping[str, str]] = None) -> vs.VideoNode:
     expanded = _hysteresis_fn(tools=tools)(other, mask)
     return _expr2(mask, expanded, 'x y - 0 max', tools=tools)
 
@@ -186,14 +187,14 @@ def _must_not_overlap(mask: vs.VideoNode, other: vs.VideoNode, tools=None) -> vs
 # Morphological helpers  (use native Maximum / Minimum)
 # ---------------------------------------------------------------------------
 
-def _remove_small_spots(mask: vs.VideoNode, spot_size: int, tools=None) -> vs.VideoNode:
+def _remove_small_spots(mask: vs.VideoNode, spot_size: int, tools: Optional[Mapping[str, str]] = None) -> vs.VideoNode:
     """Erode spot_size times, then hysteresis-restore to original extent."""
     eroded = mask
     for _ in range(spot_size):
         eroded = core.std.Minimum(eroded)
     return _hysteresis_fn(tools=tools)(eroded, mask)
 
-def _expand_mask(mask: vs.VideoNode, amount: int, blur: float = 0.0, tools=None) -> vs.VideoNode:
+def _expand_mask(mask: vs.VideoNode, amount: int, blur: float = 0.0, tools: Optional[Mapping[str, str]] = None) -> vs.VideoNode:
     """Dilate amount times, then optionally blur."""
     for _ in range(amount):
         mask = core.std.Maximum(mask)
@@ -203,7 +204,7 @@ def _expand_mask(mask: vs.VideoNode, amount: int, blur: float = 0.0, tools=None)
     return mask
 
 def _must_be_near(mask: vs.VideoNode, other: vs.VideoNode,
-                  max_distance: int, expanded: bool = False, tools=None) -> vs.VideoNode:
+                  max_distance: int, expanded: bool = False, tools: Optional[Mapping[str, str]] = None) -> vs.VideoNode:
     ea         = max_distance // 2
     eb         = max_distance - ea
     mask_exp   = _expand_mask(mask,  ea, tools=tools)
@@ -225,7 +226,7 @@ def _z_padding(clip: vs.VideoNode,
 # Edge detection  (Scharr, GRAY output)
 # ---------------------------------------------------------------------------
 
-def _scharr(clip: vs.VideoNode, tools=None) -> vs.VideoNode:
+def _scharr(clip: vs.VideoNode, tools: Optional[Mapping[str, str]] = None) -> vs.VideoNode:
     """Scharr edge magnitude – operates on luma, returns GRAY."""
     g  = GetPlane(clip,0)
     # Convolution for the horizontal and vertical passes
@@ -244,7 +245,7 @@ def _luma_delta_mask(source: vs.VideoNode,
                      brightness: float = 0.9,
                      limit_brightness: Optional[float] = None,
                      limit_abs_brightness: float = 0.0,
-                     spot_size: int = 2, tools=None) -> vs.VideoNode:
+                     spot_size: int = 2, tools: Optional[Mapping[str, str]] = None) -> vs.VideoNode:
     """
     Returns a GRAY mask.
       direction '>' : pixels where source luma > filtered luma (by brightness ratio)
@@ -289,7 +290,7 @@ def _luma_delta_mask(source: vs.VideoNode,
 def _chroma_delta_mask(source: vs.VideoNode,
                        filtered: vs.VideoNode,
                        delta: int = 3,
-                       spot_size: int = 2, tools=None) -> vs.VideoNode:
+                       spot_size: int = 2, tools: Optional[Mapping[str, str]] = None) -> vs.VideoNode:
     """
     Returns a GRAY mask selecting pixels with large chroma difference
     (Euclidean distance sqrt(Δu² + Δv²)).
@@ -325,7 +326,7 @@ def _delta_restore(filtered: vs.VideoNode,
                    chroma:           Optional[vs.VideoNode] = None,
                    chroma_override:  Optional[vs.VideoNode] = None,
                    edges:            Optional[vs.VideoNode] = None,
-                   dark:             Optional[vs.VideoNode] = None, tools=None) -> vs.VideoNode:
+                   dark:             Optional[vs.VideoNode] = None, tools: Optional[Mapping[str, str]] = None) -> vs.VideoNode:
     assert any(m is not None for m in [luma, chroma, chroma_override, dark]), \
         "DeltaRestore: need at least one mask"
 
@@ -342,7 +343,7 @@ def _delta_restore(filtered: vs.VideoNode,
 
 def _dark_delta_mask(mask: vs.VideoNode,
                      secondary: Optional[vs.VideoNode] = None,
-                     edge_mask: Optional[vs.VideoNode] = None, tools=None) -> vs.VideoNode:
+                     edge_mask: Optional[vs.VideoNode] = None, tools: Optional[Mapping[str, str]] = None) -> vs.VideoNode:
     if secondary is not None: mask = _add_to(mask, secondary, tools=tools)
     if edge_mask is not None: mask = _must_not_overlap(mask, edge_mask, tools=tools)
     return mask
@@ -355,7 +356,7 @@ def _dark_delta_mask(mask: vs.VideoNode,
 def _unsharp_mask(clip: vs.VideoNode,
                   strength: int = 80,
                   radius: int = 5,
-                  threshold: int = 1, tools=None) -> vs.VideoNode:
+                  threshold: int = 1, tools: Optional[Mapping[str, str]] = None) -> vs.VideoNode:
     """
     Unsharp mask applied to luma only.
     Uses native BoxBlur and MakeDiff; inverse diff applied via Expr.
@@ -389,7 +390,7 @@ def _unsharp_mask(clip: vs.VideoNode,
 def _restore_grain(filtered: vs.VideoNode,
                    source: vs.VideoNode,
                    val1: int = 10,
-                   val2: int = 20, tools=None) -> vs.VideoNode:
+                   val2: int = 20, tools: Optional[Mapping[str, str]] = None) -> vs.VideoNode:
     """
     Blends original film grain from source back into the cleaned filtered clip.
 
@@ -472,7 +473,7 @@ def SpotLess(
     mEnd: bool = False,
     iterations: int = 1,
     debugmask: bool = False,
-tools=None) -> vs.VideoNode:
+tools: Optional[Mapping[str, str]] = None) -> vs.VideoNode:
     """
     SpotLess – temporal denoising via motion-compensated median.
 
@@ -655,7 +656,7 @@ def SpotDelta(
 
     # Output mode
     output: str = 'restored',
-tools=None) -> vs.VideoNode:
+tools: Optional[Mapping[str, str]] = None) -> vs.VideoNode:
     """
     SpotDelta – Spotless + DeltaRestore for VapourSynth
     ====================================================
@@ -754,7 +755,7 @@ tools=None) -> vs.VideoNode:
     _olap     = aoverlap or (_blksz // 2)
     _schparam = asearch  or min(_olap // 2, 7)
 
-    sl_kw = dict(
+    sl_kw: Dict[str, Any] = dict(
         radT=radT, thsad=thsad, thsad2=thsad2, pel=pel, chroma=chroma,
         ablksize=_blksz, aoverlap=_olap, asearch=_schparam,
         ssharp=ssharp, pglobal=pglobal,

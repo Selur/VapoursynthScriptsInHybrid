@@ -1,9 +1,10 @@
+from __future__ import annotations
 import vapoursynth as vs
 from vapoursynth import core
 
 import math
 
-from typing import TypeVar, Optional
+from typing import Any, Callable, Dict, Mapping, Optional, TypeVar
 from functools import partial
 from helpers import GetPlane, m4, scale, NNEDI3 as _NNEDI3, EEDI3 as _EEDI3, get_expr, pick_tool, tool_function
 
@@ -19,7 +20,7 @@ def daa(
     exp: Optional[int] = None,
     opencl: bool = False,
     device: Optional[int] = None,
-    tools=None,
+    tools: Optional[Mapping[str, str]] = None,
 ) -> vs.VideoNode:
     '''
     Anti-aliasing with contra-sharpening by Didée.
@@ -41,7 +42,7 @@ def daa(
     DD = tool_function(tools, 'rg', 'Repair')(shrpD, dblD, mode=13)
     return core.std.MergeDiff(dbl, DD)
 
-def daamod(c, nsize=None, nns=None, qual=None, pscrn=None, exp=None, opencl=False, device=None, rep=9, tools=None):
+def daamod(c: vs.VideoNode, nsize: Optional[int] = None, nns: Optional[int] = None, qual: Optional[int] = None, pscrn: Optional[int] = None, exp: Optional[int] = None, opencl: bool = False, device: Optional[int] = None, rep: int = 9, tools: Optional[Mapping[str, str]] = None) -> vs.VideoNode:
     """Anti-aliasing with contra-sharpening by Didée, modded by GMJCZP"""
 
     if not isinstance(c, vs.VideoNode):
@@ -53,7 +54,7 @@ def daamod(c, nsize=None, nns=None, qual=None, pscrn=None, exp=None, opencl=Fals
     V = tool_function(tools, 'rg', 'VerticalCleaner', rg_order)
 
     NNEDI3 = _NNEDI3
-    nnedi3_args = dict(gpu=opencl, device=device, nsize=nsize, nns=nns, qual=qual, pscrn=pscrn, exp=exp, tools=tools)
+    nnedi3_args: Dict[str, Any] = dict(gpu=opencl, device=device, nsize=nsize, nns=nns, qual=qual, pscrn=pscrn, exp=exp, tools=tools)
 
     nn = NNEDI3(c, field=3, **nnedi3_args)
     dbl = core.std.Merge(nn[::2], nn[1::2])
@@ -64,7 +65,7 @@ def daamod(c, nsize=None, nns=None, qual=None, pscrn=None, exp=None, opencl=Fals
     return core.std.MergeDiff(dbl, DD)
 
 # from muvsfunc
-def ediaa(a: vs.VideoNode, tools=None) -> vs.VideoNode:
+def ediaa(a: vs.VideoNode, tools: Optional[Mapping[str, str]] = None) -> vs.VideoNode:
     """Suggested by Mystery Keeper in "Denoise of tv-anime" thread
 
     Read the document of Avisynth version for more details. tools['eedi2'] can switch to eedi2cuda.
@@ -77,7 +78,7 @@ def ediaa(a: vs.VideoNode, tools=None) -> vs.VideoNode:
 
     return last
 
-def ediaaCuda(a: vs.VideoNode, tools=None):
+def ediaaCuda(a: vs.VideoNode, tools: Optional[Mapping[str, str]] = None) -> vs.VideoNode:
     """
     Suggested by Mystery Keeper in "Denoise of tv-anime" thread
     Read the document of Avisynth version for more details. tools['eedi2'] can switch to eedi2.
@@ -122,7 +123,7 @@ def maa(input: vs.VideoNode) -> vs.VideoNode:
         return core.std.ShufflePlanes([last, input_src], planes=list(range(input_src.format.num_planes)),
             colorfamily=input_src.format.color_family)
     
-def nnedi3aa(a: vs.VideoNode, opencl: bool=False, device: Optional[int] = None, tools=None):
+def nnedi3aa(a: vs.VideoNode, opencl: bool=False, device: Optional[int] = None, tools: Optional[Mapping[str, str]] = None) -> vs.VideoNode:
     """Using nnedi3 (Emulgator):
     Read the document of Avisynth version for more details.
     """
@@ -173,16 +174,16 @@ def nnedi3aa(a: vs.VideoNode, opencl: bool=False, device: Optional[int] = None, 
 #			estr has to be bigger than bstr		[0...255  ->255,40]
 
 def aaf(                \
-      inputClip         \
-    , mode = "repair"   \
-    , aas  = -0.7       \
-    , aar  = None       \
-    , aay  = 28         \
-    , aax  = None       \
-    , estr = 255        \
-    , bstr = 40         \
-    , tools = None      \
-) :
+      inputClip: vs.VideoNode         \
+    , mode: str = "repair"   \
+    , aas: float  = -0.7       \
+    , aar: Optional[float]  = None       \
+    , aay: int  = 28         \
+    , aax: Optional[int]  = None       \
+    , estr: int = 255        \
+    , bstr: int = 40         \
+    , tools: Optional[Mapping[str, str]] = None      \
+)  -> vs.VideoNode:
     mode = mode.lower()
     if aas < 0:
         aas = (aas-1)*0.25
@@ -276,7 +277,7 @@ def santiag(
     typev: Optional[str] = None,
     opencl: bool = False,
     device: Optional[int] = None,
-    tools=None,
+    tools: Optional[Mapping[str, str]] = None,
 ) -> vs.VideoNode:
     '''
     santiag v1.6
@@ -297,7 +298,7 @@ def santiag(
         nnedi3 = partial(_NNEDI3, gpu=opencl, device=device, nsize=nsize, nns=nns, qual=qual, pscrn=pscrn,
                          int16_prescreener=int16_prescreener, int16_predictor=int16_predictor, exp=exp, tools=tools)
 
-        def get_eedi3():
+        def get_eedi3() -> Callable[..., vs.VideoNode]:
             # opencl only reorders the search; _EEDI3 also picks the right device argument name.
             return partial(_EEDI3, gpu=opencl, device=device,
                            alpha=alpha, beta=beta, gamma=gamma, nrad=nrad, mdis=mdis, vcheck=vcheck, tools=tools)

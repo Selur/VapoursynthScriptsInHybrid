@@ -1,3 +1,5 @@
+from __future__ import annotations
+from typing import Mapping, Optional
 import vapoursynth as vs
 from vapoursynth import core
 from misc import get_mv
@@ -8,7 +10,7 @@ from helpers import pick_tool, tool_function
 # MVTools (https://github.com/dubhater/vapoursynth-mvtools) or SVP dlls when gpu=True is used
 # RemoveDirt (https://github.com/pinterf/removedirtvs, https://github.com/Rational-Encoding-Thaumaturgy/vapoursynth-removedirt)
 # ChangeFPS (https://github.com/Selur/VapoursynthScriptsInHybrid/blob/master/ChangeFPS.py)
-def RemoveDirt(input: vs.VideoNode, repmode: int=16, remgrainmode: int=17, limit: int=10, tools=None) -> vs.VideoNode:
+def RemoveDirt(input: vs.VideoNode, repmode: int=16, remgrainmode: int=17, limit: int=10, tools: Optional[Mapping[str, str]] = None) -> vs.VideoNode:
 
   RG = lambda function: tool_function(tools, 'rg', function)
   cleansed = RG('Clense')(input)
@@ -32,7 +34,7 @@ def RemoveDirt(input: vs.VideoNode, repmode: int=16, remgrainmode: int=17, limit
     corrected = core.rdvs.RestoreMotionBlocks(cleansed, restore, neighbour=input, alternative=alt, gmthreshold=70, dist=1, dmode=2, noise=limit, noisy=12)
   return RG('RemoveGrain')(corrected, mode=[remgrainmode,remgrainmode,1])
   
-def RemoveDirtMC(input: vs.VideoNode, limit: int=6, repmode: int=16, remgrainmode: int=17, block_size: int=8, block_over: int=4, gpu: bool=False, tools=None) -> vs.VideoNode:
+def RemoveDirtMC(input: vs.VideoNode, limit: int=6, repmode: int=16, remgrainmode: int=17, block_size: int=8, block_over: int=4, gpu: bool=False, tools: Optional[Mapping[str, str]] = None) -> vs.VideoNode:
   quad = tool_function(tools, 'rg', 'RemoveGrain')(input, mode=[12,0,1])   # blur the luma for searching motion vectors  orig avs: mode=12, modeU=-1
   if gpu:
     import ChangeFPS

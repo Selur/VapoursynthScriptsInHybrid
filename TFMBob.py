@@ -1,3 +1,5 @@
+from __future__ import annotations
+from typing import Mapping, Optional
 import vapoursynth as vs
 core = vs.core
 
@@ -11,7 +13,7 @@ def TFMBobN(clip: vs.VideoNode,
             MI: int = 80,
             chroma: bool=False,
             openCL: bool = False,
-            tools=None):
+            tools: Optional[Mapping[str, str]] = None) -> vs.VideoNode:
   field = clip.get_frame(0).props['_FieldBased']
   # openCL only reorders the search - NNEDI3 takes whichever implementation is loaded.
   n = NNEDI3(clip, field=field + 1, nns=4, gpu=openCL, tools=tools)
@@ -29,7 +31,7 @@ def TFMBobQ(clip: vs.VideoNode,
             MI: int = 80,
             chroma: bool=False,
             openCL: bool = False,
-            tools=None):
+            tools: Optional[Mapping[str, str]] = None) -> vs.VideoNode:
   import qtgmc
   field = clip.get_frame(0).props['_FieldBased']
   q = qtgmc.QTGMC(Input=clip, Preset="Fast", TFF=(field == 2), opencl=openCL, tools=tools) 

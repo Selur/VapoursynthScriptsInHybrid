@@ -1,6 +1,7 @@
+from __future__ import annotations
 import vapoursynth as vs
 from vapoursynth import core
-from typing import Optional, List
+from typing import Optional, List, Mapping
 
 import math
 from functools import partial
@@ -9,7 +10,7 @@ from helpers import DFTTest, get_expr, get_rg, pick_tool, tool_function
 
 def Deblock_QED(
     clp: vs.VideoNode, quant1: int = 24, quant2: int = 26, aOff1: int = 1, bOff1: int = 2, aOff2: int = 1, bOff2: int = 2, uv: int = 3,
-    tools=None
+    tools: Optional[Mapping[str, str]] = None
 ) -> vs.VideoNode:
     '''
     A postprocessed Deblock: Uses full frequencies of Deblock's changes on block borders, but DCT-lowpassed changes on block interiours.
@@ -123,7 +124,7 @@ Supports 8..16 bit integer YUV formats
 Adjusted by Selur to use faster libraries for speed
 """
 def AutoDeblock(src: vs.VideoNode, edgevalue: int = 24, db1: int = 1, db2: int = 6, db3: int = 15, deblocky: bool = True, deblockuv: bool = True, debug: bool = False, redfix: bool = False, fastdeblock: bool = False, adb1: int = 3, adb2: int = 4, adb3: int = 8, adb1d: int = 2, adb2d: int = 7, adb3d: int = 11, planes: Optional[List[int]] = None,
-                tools=None) -> vs.VideoNode:
+                tools: Optional[Mapping[str, str]] = None) -> vs.VideoNode:
     """
     Automatically deblocks a YUV clip using adaptive thresholds and optional red-area correction.
 

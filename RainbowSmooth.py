@@ -1,12 +1,13 @@
+from __future__ import annotations
 import vapoursynth as vs
 from vapoursynth import core
-from typing import List
+from typing import List, Mapping, Optional
 
 from helpers import Depth, GetPlane, NNEDI3, get_expr, pick_tool
 import masked
 
 
-def RainbowSmooth(clip, radius=3, lthresh=0, hthresh=220, mask="original", tools=None):
+def RainbowSmooth(clip: vs.VideoNode, radius: int = 3, lthresh: int = 0, hthresh: int = 220, mask: str = "original", tools: Optional[Mapping[str, str]] = None) -> vs.VideoNode:
     if isinstance(mask, str):
         if mask == "original":
             EXPR = get_expr(tools)
@@ -39,7 +40,7 @@ def RainbowSmooth(clip, radius=3, lthresh=0, hthresh=220, mask="original", tools
     return lderain
 
 
-def derainbow(clip: vs.VideoNode, tools=None) -> vs.VideoNode:
+def derainbow(clip: vs.VideoNode, tools: Optional[Mapping[str, str]] = None) -> vs.VideoNode:
     EXPR = get_expr(tools)
 
     pre = clip[0] + clip[:-1]

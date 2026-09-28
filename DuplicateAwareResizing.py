@@ -1,3 +1,4 @@
+from __future__ import annotations
 import vapoursynth as vs
 import sys
 from vapoursynth import core
@@ -28,7 +29,7 @@ def daResizer(clip:         vs.VideoNode,
               method:       str='Bicubic',
               vsgan_models: List[str]=None,
               debug:        bool=False,
-              device_index: int=0):
+              device_index: int=0) -> vs.VideoNode:
 
   sr = DAResizer(clip, tWidth, tHeight, thresh, method, vsgan_models, debug, device_index)
   return sr.out
@@ -41,7 +42,7 @@ def daResizer(clip:         vs.VideoNode,
 # device_index: set device to be used for gpu based resizing
 class DAResizer:
   # constructor
-  def __init__(self, clip: vs.VideoNode, tWidth: int, tHeight: int, thresh: float=0.001, method: str='Bicubic', vsgan_models: List[str]=None, debug: bool=False, device_index: int=0):
+  def __init__(self, clip: vs.VideoNode, tWidth: int, tHeight: int, thresh: float=0.001, method: str='Bicubic', vsgan_models: List[str]=None, debug: bool=False, device_index: int=0) -> None:
     if clip.format.id == vs.RGBH:
       clip = core.resize.Bicubic(clip=clip, format=vs.RGBS)
       clip = core.std.PlaneStats(clip, clip[0]+clip)
@@ -59,7 +60,7 @@ class DAResizer:
     if self.method == 'VSGAN' and vsgan_models == None:
       raise ValueError(f'DAResizer: "method" \'{self.method}\' called while not setting a model!')      
       
-  def daResize(self, n, f):
+  def daResize(self, n: int, f: vs.VideoFrame) -> vs.VideoNode:
     out = self.resize(n)
     if self.debug:
       if out.format.id == vs.RGBH:
@@ -70,7 +71,7 @@ class DAResizer:
         out = core.text.Text(clip=out, text="avg: "+str(f.props['PlaneStatsDiff']),alignment=8)            
     return out
 
-  def resize(self, n):
+  def resize(self, n: int) -> vs.VideoNode:
     if self.is_duplicate(n):
       return self.previous
     
@@ -96,12 +97,12 @@ class DAResizer:
     self.previous = resized
     return resized
   
-  def is_duplicate(self, n):
+  def is_duplicate(self, n: int) -> bool:
     # first frame can't be a duplicate, after that check agains the threshold
     return n != 0 and self.clip.get_frame(n).props['PlaneStatsDiff'] <= self.thresh
   
   @property
-  def out(self):
+  def out(self) -> vs.VideoNode:
     # this only works on YUV atm. needs to be adjusted for VSGAN&co
     return core.std.FrameEval(self.clip.std.BlankClip(width=self.tWidth, height=self.tHeight), self.daResize, prop_src=self.clip)
     

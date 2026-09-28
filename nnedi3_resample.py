@@ -1,16 +1,17 @@
+from __future__ import annotations
 import vapoursynth as vs
 from vapoursynth import core
 import math
 import functools
-from typing import Union, Optional, Callable, Dict, Any, Sequence
+from typing import Union, Optional, Callable, Dict, Any, Sequence, Mapping
 
 from helpers import Depth, BoxFilter, NNEDI3, get_expr, pick_tool
 
 # --- shim to preserve color.Depth's range/dither defaults on top of helpers.Depth ---
-def _range(full):
+def _range(full: Optional[bool]) -> str:
     return 'full' if full else 'limited'
 
-def _depth(clip, depth, fulls, fulld=None):
+def _depth(clip: vs.VideoNode, depth: int, fulls: Optional[bool], fulld: Optional[bool] = None) -> vs.VideoNode:
     if fulld is None:
         fulld = fulls
     sbits = clip.format.bits_per_sample
@@ -20,7 +21,7 @@ def _depth(clip, depth, fulls, fulld=None):
         dither = 'error_diffusion'
     return Depth(clip, bits=depth, dither_type=dither, range=_range(fulld), range_in=_range(fulls))
 
-def nnedi3_resample(input, target_width=None, target_height=None, src_left=None, src_top=None, src_width=None, src_height=None, csp=None, mats=None, matd=None, cplaces=None, cplaced=None, fulls=None, fulld=None, curves=None, curved=None, sigmoid=None, scale_thr=None, nsize=None, nns=None, qual=None, etype=None, pscrn=None, opt=None, int16_prescreener=None, int16_predictor=None, exp=None, kernel=None, invks=False, taps=None, invkstaps=3, a1=None, a2=None, chromak_up=None, chromak_up_taps=None, chromak_up_a1=None, chromak_up_a2=None, chromak_down=None, chromak_down_invks=False, chromak_down_invkstaps=3, chromak_down_taps=None, chromak_down_a1=None, chromak_down_a2=None, mode=None, device=None, tools=None):
+def nnedi3_resample(input: vs.VideoNode, target_width: Optional[int] = None, target_height: Optional[int] = None, src_left: Optional[float] = None, src_top: Optional[float] = None, src_width: Optional[float] = None, src_height: Optional[float] = None, csp: Optional[int] = None, mats: Optional[str] = None, matd: Optional[str] = None, cplaces: Optional[str] = None, cplaced: Optional[str] = None, fulls: Optional[bool] = None, fulld: Optional[bool] = None, curves: Optional[str] = None, curved: Optional[str] = None, sigmoid: Optional[bool] = None, scale_thr: Optional[float] = None, nsize: Optional[int] = None, nns: Optional[int] = None, qual: Optional[int] = None, etype: Optional[int] = None, pscrn: Optional[int] = None, opt: Optional[bool] = None, int16_prescreener: Optional[bool] = None, int16_predictor: Optional[bool] = None, exp: Optional[int] = None, kernel: Optional[str] = None, invks: bool = False, taps: Optional[int] = None, invkstaps: int = 3, a1: Optional[float] = None, a2: Optional[float] = None, chromak_up: Optional[str] = None, chromak_up_taps: Optional[int] = None, chromak_up_a1: Optional[float] = None, chromak_up_a2: Optional[float] = None, chromak_down: Optional[str] = None, chromak_down_invks: bool = False, chromak_down_invkstaps: int = 3, chromak_down_taps: Optional[int] = None, chromak_down_a1: Optional[float] = None, chromak_down_a2: Optional[float] = None, mode: Optional[str] = None, device: Optional[int] = None, tools: Optional[Mapping[str, str]] = None) -> vs.VideoNode:
     funcName = 'nnedi3_resample'
     
     # Get property about input clip
@@ -304,7 +305,7 @@ def nnedi3_resample(input, target_width=None, target_height=None, src_left=None,
     return last
 
 
-def nnedi3_resample_kernel(input, target_width=None, target_height=None, src_left=None, src_top=None, src_width=None, src_height=None, scale_thr=None, nsize=None, nns=None, qual=None, etype=None, pscrn=None, opt=None, int16_prescreener=None, int16_predictor=None, exp=None, kernel=None, taps=None, a1=None, a2=None, invks=False, invkstaps=3, mode=None, device=None, tools=None):
+def nnedi3_resample_kernel(input: vs.VideoNode, target_width: Optional[int] = None, target_height: Optional[int] = None, src_left: Optional[float] = None, src_top: Optional[float] = None, src_width: Optional[float] = None, src_height: Optional[float] = None, scale_thr: Optional[float] = None, nsize: Optional[int] = None, nns: Optional[int] = None, qual: Optional[int] = None, etype: Optional[int] = None, pscrn: Optional[int] = None, opt: Optional[bool] = None, int16_prescreener: Optional[bool] = None, int16_predictor: Optional[bool] = None, exp: Optional[int] = None, kernel: Optional[str] = None, taps: Optional[int] = None, a1: Optional[float] = None, a2: Optional[float] = None, invks: bool = False, invkstaps: int = 3, mode: Optional[str] = None, device: Optional[int] = None, tools: Optional[Mapping[str, str]] = None) -> vs.VideoNode:
 
     # Parameters of scaling
     if target_width is None:
@@ -368,7 +369,7 @@ def nnedi3_resample_kernel(input, target_width=None, target_height=None, src_lef
     return last
 
 
-def nnedi3_resample_kernel_vertical(input, target_height=None, src_top=None, src_height=None, scale_thr=None, nsize=None, nns=None, qual=None, etype=None, pscrn=None, opt=None, int16_prescreener=None, int16_predictor=None, exp=None, kernel=None, taps=None, a1=None, a2=None, invks=False, invkstaps=3, mode=None, device=None, tools=None):
+def nnedi3_resample_kernel_vertical(input: vs.VideoNode, target_height: Optional[int] = None, src_top: Optional[float] = None, src_height: Optional[float] = None, scale_thr: Optional[float] = None, nsize: Optional[int] = None, nns: Optional[int] = None, qual: Optional[int] = None, etype: Optional[int] = None, pscrn: Optional[int] = None, opt: Optional[bool] = None, int16_prescreener: Optional[bool] = None, int16_predictor: Optional[bool] = None, exp: Optional[int] = None, kernel: Optional[str] = None, taps: Optional[int] = None, a1: Optional[float] = None, a2: Optional[float] = None, invks: bool = False, invkstaps: int = 3, mode: Optional[str] = None, device: Optional[int] = None, tools: Optional[Mapping[str, str]] = None) -> vs.VideoNode:
     
     # Parameters of scaling
     if target_height is None:
@@ -429,7 +430,7 @@ def nnedi3_resample_kernel_vertical(input, target_height=None, src_top=None, src
     return last
 
 
-def nnedi3_rpow2_vertical(input, eTimes=1, field=1, nsize=None, nns=None, qual=None, etype=None, pscrn=None, opt=None, int16_prescreener=None, int16_predictor=None, exp=None, mode=None, device=None, tools=None):
+def nnedi3_rpow2_vertical(input: vs.VideoNode, eTimes: int = 1, field: int = 1, nsize: Optional[int] = None, nns: Optional[int] = None, qual: Optional[int] = None, etype: Optional[int] = None, pscrn: Optional[int] = None, opt: Optional[bool] = None, int16_prescreener: Optional[bool] = None, int16_predictor: Optional[bool] = None, exp: Optional[int] = None, mode: Optional[str] = None, device: Optional[int] = None, tools: Optional[Mapping[str, str]] = None) -> vs.VideoNode:
     
     if eTimes >= 1:
         last = nnedi3_dh(input, field, nsize, nns, qual, etype, pscrn, opt, int16_prescreener, int16_predictor, exp, mode, device, tools=tools)
@@ -444,7 +445,7 @@ def nnedi3_rpow2_vertical(input, eTimes=1, field=1, nsize=None, nns=None, qual=N
         return last
 
 
-def nnedi3_dh(input, field=1, nsize=None, nns=None, qual=None, etype=None, pscrn=None, opt=None, int16_prescreener=None, int16_predictor=None, exp=None, mode=None, device=None, tools=None):
+def nnedi3_dh(input: vs.VideoNode, field: int = 1, nsize: Optional[int] = None, nns: Optional[int] = None, qual: Optional[int] = None, etype: Optional[int] = None, pscrn: Optional[int] = None, opt: Optional[bool] = None, int16_prescreener: Optional[bool] = None, int16_predictor: Optional[bool] = None, exp: Optional[int] = None, mode: Optional[str] = None, device: Optional[int] = None, tools: Optional[Mapping[str, str]] = None) -> vs.VideoNode:
     nnedi3_args1 = dict(nsize=nsize, nns=nns, qual=qual, etype=etype, pscrn=pscrn)
     nnedi3_args2 = dict(opt=opt, int16_prescreener=int16_prescreener, int16_predictor=int16_predictor, exp=exp)
 
@@ -460,20 +461,20 @@ def nnedi3_dh(input, field=1, nsize=None, nns=None, qual=None, etype=None, pscrn
 
 ## Gamma conversion functions from HAvsFunc-r18
 # Convert the luma channel to linear light
-def GammaToLinear(src, fulls=True, fulld=True, curve='709', planes=[0, 1, 2], gcor=1., sigmoid=False, thr=0.5, cont=6.5):
+def GammaToLinear(src: vs.VideoNode, fulls: bool = True, fulld: bool = True, curve: str = '709', planes: Sequence[int] = [0, 1, 2], gcor: float = 1., sigmoid: bool = False, thr: float = 0.5, cont: float = 6.5) -> vs.VideoNode:
     if not isinstance(src, vs.VideoNode) or src.format.bits_per_sample != 16:
         raise ValueError('GammaToLinear: This is not a 16-bit clip')
     
     return LinearAndGamma(src, False, fulls, fulld, curve.lower(), planes, gcor, sigmoid, thr, cont)
 
 # Convert back a clip to gamma-corrected luma
-def LinearToGamma(src, fulls=True, fulld=True, curve='709', planes=[0, 1, 2], gcor=1., sigmoid=False, thr=0.5, cont=6.5):
+def LinearToGamma(src: vs.VideoNode, fulls: bool = True, fulld: bool = True, curve: str = '709', planes: Sequence[int] = [0, 1, 2], gcor: float = 1., sigmoid: bool = False, thr: float = 0.5, cont: float = 6.5) -> vs.VideoNode:
     if not isinstance(src, vs.VideoNode) or src.format.bits_per_sample != 16:
         raise ValueError('LinearToGamma: This is not a 16-bit clip')
     
     return LinearAndGamma(src, True, fulls, fulld, curve.lower(), planes, gcor, sigmoid, thr, cont)
 
-def LinearAndGamma(src, l2g_flag, fulls, fulld, curve, planes, gcor, sigmoid, thr, cont):
+def LinearAndGamma(src: vs.VideoNode, l2g_flag: bool, fulls: bool, fulld: bool, curve: str, planes: Sequence[int], gcor: float, sigmoid: bool, thr: float, cont: float) -> vs.VideoNode:
     
     if curve == 'srgb':
         c_num = 0
@@ -496,7 +497,7 @@ def LinearAndGamma(src, l2g_flag, fulls, fulld, curve, planes, gcor, sigmoid, th
     alpha = [0.055,   0.099,       0.1115,      0.0993][c_num]
     gamma = [2.4,     2.22222,     2.22222,     2.22222][c_num]
     
-    def g2l(x):
+    def g2l(x: int) -> int:
         expr = x / 65536 if fulls else (x - 4096) / 56064
         if expr <= k0:
             expr /= phi
@@ -514,7 +515,7 @@ def LinearAndGamma(src, l2g_flag, fulls, fulld, curve, planes, gcor, sigmoid, th
             return min(max(round(expr * 56064 + 4096), 0), 65535)
     
     # E' = (E <= k0 / phi)   ?   E * phi   :   (E ^ (1 / gamma)) * (alpha + 1) - alpha
-    def l2g(x):
+    def l2g(x: int) -> int:
         expr = x / 65536 if fulls else (x - 4096) / 56064
         if sigmoid:
             x0 = 1 / (1 + math.exp(cont * thr))
@@ -534,7 +535,7 @@ def LinearAndGamma(src, l2g_flag, fulls, fulld, curve, planes, gcor, sigmoid, th
     return core.std.Lut(src, planes=planes, function=l2g if l2g_flag else g2l)
 
 # Apply the inverse sigmoid curve to a clip in linear luminance
-def SigmoidInverse(src, thr=0.5, cont=6.5, planes=[0, 1, 2]):
+def SigmoidInverse(src: vs.VideoNode, thr: float = 0.5, cont: float = 6.5, planes: Sequence[int] = [0, 1, 2]) -> vs.VideoNode:
     
     if not isinstance(src, vs.VideoNode) or src.format.bits_per_sample != 16:
         raise ValueError('SigmoidInverse: This is not a 16-bit clip')
@@ -542,7 +543,7 @@ def SigmoidInverse(src, thr=0.5, cont=6.5, planes=[0, 1, 2]):
     if src.format.color_family == vs.GRAY:
         planes = [0]
     
-    def get_lut(x):
+    def get_lut(x: int) -> int:
         x0 = 1 / (1 + math.exp(cont * thr))
         x1 = 1 / (1 + math.exp(cont * (thr - 1)))
         return min(max(round((thr - math.log(max(1 / max(x / 65536 * (x1 - x0) + x0, 0.000001) - 1, 0.000001)) / cont) * 65536), 0), 65535)
@@ -550,7 +551,7 @@ def SigmoidInverse(src, thr=0.5, cont=6.5, planes=[0, 1, 2]):
     return core.std.Lut(src, planes=planes, function=get_lut)
 
 # Convert back a clip to linear luminance
-def SigmoidDirect(src, thr=0.5, cont=6.5, planes=[0, 1, 2]):
+def SigmoidDirect(src: vs.VideoNode, thr: float = 0.5, cont: float = 6.5, planes: Sequence[int] = [0, 1, 2]) -> vs.VideoNode:
     
     if not isinstance(src, vs.VideoNode) or src.format.bits_per_sample != 16:
         raise ValueError('SigmoidDirect: This is not a 16-bit clip')
@@ -558,7 +559,7 @@ def SigmoidDirect(src, thr=0.5, cont=6.5, planes=[0, 1, 2]):
     if src.format.color_family == vs.GRAY:
         planes = [0]
     
-    def get_lut(x):
+    def get_lut(x: int) -> int:
         x0 = 1 / (1 + math.exp(cont * thr))
         x1 = 1 / (1 + math.exp(cont * (thr - 1)))
         return min(max(round(((1 / (1 + math.exp(cont * (thr - x / 65536))) - x0) / (x1 - x0)) * 65536), 0), 65535)
@@ -572,7 +573,7 @@ def SSIM_downsample(clip: vs.VideoNode, w: int, h: int,
                     gamma: bool = False, fulls: bool = False, fulld: bool = False,
                     curve: str = '709', sigmoid: bool = False,
                     epsilon: float = 1e-6, depth_args: Optional[Dict[str, Any]] = None,
-                    tools: Optional[Dict[str, str]] = None, **resample_args: Any) -> vs.VideoNode:
+                    tools: Optional[Mapping[str, str]] = None, **resample_args: Any) -> vs.VideoNode:
     """SSIM downsampler
 
     SSIM downsampler is an image downscaling technique that aims to optimize for the perceptual quality of the downscaled results.

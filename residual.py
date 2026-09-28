@@ -1,7 +1,8 @@
+from __future__ import annotations
 import vapoursynth as vs
 from vapoursynth import core
 
-from typing import Optional, Union, Sequence
+from typing import Optional, Union, Sequence, Mapping
 from helpers import GetPlane, get_expr, pick_tool, scale
 
 # Taken form old havsfunc
@@ -10,7 +11,7 @@ from helpers import GetPlane, get_expr, pick_tool, scale
 # amnt: change no pixel by more than this (default=255: unrestricted)
 # chroma: chroma mode, True=process chroma, False=pass chroma through
 # scl: scale factor for vshrpD*vblurD < 0
-def Vinverse(clp, sstr=2.7, amnt=255, chroma=True, scl=0.25, tools=None):
+def Vinverse(clp: vs.VideoNode, sstr: float = 2.7, amnt: int = 255, chroma: bool = True, scl: float = 0.25, tools: Optional[Mapping[str, str]] = None) -> vs.VideoNode:
     if not isinstance(clp, vs.VideoNode):
         raise vs.Error('Vinverse: this is not a clip')
 
@@ -49,7 +50,7 @@ def Vinverse(clp, sstr=2.7, amnt=255, chroma=True, scl=0.25, tools=None):
     return last
 
 # Taken form old havsfunc
-def Vinverse2(clp, sstr=2.7, amnt=255, chroma=True, scl=0.25, tools=None):
+def Vinverse2(clp: vs.VideoNode, sstr: float = 2.7, amnt: int = 255, chroma: bool = True, scl: float = 0.25, tools: Optional[Mapping[str, str]] = None) -> vs.VideoNode:
     if not isinstance(clp, vs.VideoNode):
         raise vs.Error('Vinverse2: this is not a clip')
         
@@ -88,7 +89,7 @@ def Vinverse2(clp, sstr=2.7, amnt=255, chroma=True, scl=0.25, tools=None):
     return last
 
 # Taken form old havsfunc
-def sbrV(c: vs.VideoNode, r: int = 1, planes: Optional[Union[int, Sequence[int]]] = None, tools=None) -> vs.VideoNode:
+def sbrV(c: vs.VideoNode, r: int = 1, planes: Optional[Union[int, Sequence[int]]] = None, tools: Optional[Mapping[str, str]] = None) -> vs.VideoNode:
     if not isinstance(c, vs.VideoNode):
         raise vs.Error('sbrV: this is not a clip')
 

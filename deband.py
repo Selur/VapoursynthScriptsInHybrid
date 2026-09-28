@@ -1,7 +1,8 @@
+from __future__ import annotations
 import vapoursynth as vs
 from vapoursynth import core
 
-from typing import Any, Dict, Sequence, Union, Optional
+from typing import Any, Dict, Sequence, Union, Optional, Mapping
 
 from helpers import GetPlane, BoxFilter, DFTTest, bilateral_port_args, get_expr, pick_tool, tool_function, type_error, value_error
 
@@ -122,12 +123,12 @@ Original header:
 ##################################################################################################################
 
 """
-def GradFun3(src, thr=None, radius=None, elast=None, mask=None, mode=None, ampo=None,
-                ampn=None, pat=None, dyn=None, staticnoise=None, smode=None, thr_det=None,
-                debug=None, thrc=None, radiusc=None, elastc=None, planes=None, ref=None,
-                yuv444=None, w=None, h=None, resizer=None, b=None, c=None, bits=None, tools=None):
+def GradFun3(src: vs.VideoNode, thr: Optional[float] = None, radius: Optional[int] = None, elast: Optional[float] = None, mask: Optional[int] = None, mode: Optional[int] = None, ampo: Optional[float] = None,
+                ampn: Optional[float] = None, pat: Optional[int] = None, dyn: Optional[bool] = None, staticnoise: Optional[bool] = None, smode: Optional[int] = None, thr_det: Optional[float] = None,
+                debug: Optional[Union[bool, int]] = None, thrc: Optional[float] = None, radiusc: Optional[int] = None, elastc: Optional[float] = None, planes: Optional[Union[int, Sequence[int]]] = None, ref: Optional[vs.VideoNode] = None,
+                yuv444: Optional[bool] = None, w: Optional[int] = None, h: Optional[int] = None, resizer: Optional[str] = None, b: Optional[float] = None, c: Optional[float] = None, bits: Optional[int] = None, tools: Optional[Mapping[str, str]] = None) -> vs.VideoNode:
 
-    def smooth_mod(src_16, ref_16, smode, radius, thr, elast, planes):
+    def smooth_mod(src_16: vs.VideoNode, ref_16: vs.VideoNode, smode: int, radius: int, thr: float, elast: float, planes: Sequence[int]) -> vs.VideoNode:
         if smode == 0:
             return _GF3_smoothgrad_multistage(src_16, ref_16, radius, thr, elast, planes, tools=tools)
         elif smode == 1:
@@ -143,14 +144,14 @@ def GradFun3(src, thr=None, radius=None, elast=None, mask=None, mode=None, ampo=
         else:
             raise ValueError(funcname + ': wrong smode value!')
 
-    def dfttest_mod(src, ref, radius, thr, elast, planes):
+    def dfttest_mod(src: vs.VideoNode, ref: vs.VideoNode, radius: int, thr: float, elast: float, planes: Sequence[int]) -> vs.VideoNode:
         hrad = max(radius * 3 // 4, 1)
         last = DFTTest(src, sigma=thr * 12, sbsize=hrad * 4,
                        sosize=hrad * 3, tbsize=1, planes=planes, tools=tools)
         last = LimitFilter(last, ref, thr=thr, elast=elast, planes=planes, tools=tools)
         return last
 
-    def bilateral(src, ref, radius, thr, elast, planes):
+    def bilateral(src: vs.VideoNode, ref: vs.VideoNode, radius: int, thr: float, elast: float, planes: Sequence[int]) -> vs.VideoNode:
         thr_1 = max(thr * 4.5, 1.25)
         thr_2 = max(thr * 9, 5.0)
         r4 = max(radius * 4 / 3, 4.0)
@@ -169,7 +170,7 @@ def GradFun3(src, thr=None, radius=None, elast=None, mask=None, mode=None, ampo=
         last = LimitFilter(last, src, thr=thr, elast=elast, planes=planes, tools=tools)
         return last
 
-    def bilateral_gpu(src, ref, radius, thr, elast, planes):
+    def bilateral_gpu(src: vs.VideoNode, ref: vs.VideoNode, radius: int, thr: float, elast: float, planes: Sequence[int]) -> vs.VideoNode:
         # smode 2 on the GPU: the ports take sigma_color on the same 0-1 scale as sigmaR.
         thr_1 = max(thr * 4.5, 1.25)
         r4 = max(radius * 4 / 3, 4.0)
@@ -226,6 +227,10 @@ def GradFun3(src, thr=None, radius=None, elast=None, mask=None, mode=None, ampo=
         elastc = elast
     if planes is None:
         planes = list(range(src.format.num_planes))
+    elif isinstance(planes, int):
+        planes = [planes]
+    else:
+        planes = list(planes)
     if ref is None:
         ref = src
     if yuv444 is None:
@@ -351,7 +356,7 @@ def GradFun3(src, thr=None, radius=None, elast=None, mask=None, mode=None, ampo=
 ################################################################################################################################
 ## Helper function: CheckColorFamily()
 ################################################################################################################################
-def CheckColorFamily(color_family, valid_list=None, invalid_list=None):
+def CheckColorFamily(color_family: vs.ColorFamily, valid_list: Optional[Sequence[str]] = None, invalid_list: Optional[Sequence[str]] = None) -> None:
     if valid_list is None:
         valid_list = ('RGB', 'YUV', 'GRAY')
     if invalid_list is None:
@@ -368,7 +373,7 @@ def CheckColorFamily(color_family, valid_list=None, invalid_list=None):
 ################################################################################################################################
 ## Internal used functions for LimitFilter()
 ################################################################################################################################
-def _limit_filter_expr(defref, thr, elast, largen_thr, value_range):
+def _limit_filter_expr(defref: bool, thr: float, elast: float, largen_thr: float, value_range: float) -> str:
     flt = " x "
     src = " y "
     ref = " z " if defref else src
@@ -422,7 +427,7 @@ def _limit_filter_expr(defref, thr, elast, largen_thr, value_range):
 ################################################################################################################################
 ## Internal used functions for LimitFilter()
 ################################################################################################################################
-def _limit_diff_lut(diff, thr, elast, largen_thr, planes):
+def _limit_diff_lut(diff: vs.VideoNode, thr: float, elast: float, largen_thr: float, planes: Optional[Union[int, Sequence[int]]]) -> vs.VideoNode:
     # input clip
     if not isinstance(diff, vs.VideoNode):
         raise type_error('"diff" must be a clip!', num_stacks=2)
@@ -479,18 +484,18 @@ def _limit_diff_lut(diff, thr, elast, largen_thr, planes):
     if thr <= 0 and largen_thr <= 0:
         return diff
     elif thr >= value_range / 2 and largen_thr >= value_range / 2:
-        def limitLut(x):
+        def limitLut(x: int) -> int:
             return neutral
         return core.std.Lut(diff, planes=planes, function=limitLut)
     elif elast <= 1:
-        def limitLut(x):
+        def limitLut(x: int) -> int:
             dif = x - neutral
             dif_abs = abs(dif)
             thr_1 = largen_thr if dif > 0 else thr
             return neutral if dif_abs <= thr_1 else x
         return core.std.Lut(diff, planes=planes, function=limitLut)
     else:
-        def limitLut(x):
+        def limitLut(x: int) -> int:
             dif = x - neutral
             dif_abs = abs(dif)
             thr_1 = largen_thr if dif > 0 else thr
@@ -509,7 +514,7 @@ def _limit_diff_lut(diff, thr, elast, largen_thr, planes):
 
 def _GF3_smoothgrad_multistage(src: vs.VideoNode, ref: vs.VideoNode, radius: int,
                                thr: float, elast: float, planes: Optional[Union[int, Sequence[int]]],
-                               tools=None) -> vs.VideoNode:
+                               tools: Optional[Mapping[str, str]] = None) -> vs.VideoNode:
     ela_2 = max(elast * 0.83, 1.0)
     ela_3 = max(elast * 0.67, 1.0)
     r2 = radius * 2 // 3
@@ -524,7 +529,7 @@ def _GF3_smoothgrad_multistage(src: vs.VideoNode, ref: vs.VideoNode, radius: int
 
 def _GF3_smoothgrad_multistage_3(src: vs.VideoNode, radius: int, thr: float,
                                  elast: float, planes: Optional[Union[int, Sequence[int]]],
-                                 tools=None) -> vs.VideoNode:
+                                 tools: Optional[Mapping[str, str]] = None) -> vs.VideoNode:
     ref = SmoothGrad(src, radius=radius // 3, thr=thr * 0.8, elast=elast, tools=tools)
     last = BoxFilter(src, radius=radius, planes=planes, tools=tools)
     last = BoxFilter(last, radius=radius, planes=planes, tools=tools)
@@ -534,7 +539,7 @@ def _GF3_smoothgrad_multistage_3(src: vs.VideoNode, radius: int, thr: float,
 
 def _GF3_dfttest(src: vs.VideoNode, ref: vs.VideoNode, radius: int,
                  thr: float, elast: float, planes: Optional[Union[int, Sequence[int]]],
-                 tools=None) -> vs.VideoNode:
+                 tools: Optional[Mapping[str, str]] = None) -> vs.VideoNode:
     hrad = max(radius * 3 // 4, 1)
     last = DFTTest(src, sigma=hrad * thr * thr * 32, sbsize=hrad * 4,
                    sosize=hrad * 3, tbsize=1, planes=planes, tools=tools)
@@ -545,7 +550,7 @@ def _GF3_dfttest(src: vs.VideoNode, ref: vs.VideoNode, radius: int,
 
 def _GF3_bilateral_multistage(src: vs.VideoNode, ref: vs.VideoNode, radius: int,
                               thr: float, elast: float, planes: Optional[Union[int, Sequence[int]]],
-                              tools=None) -> vs.VideoNode:
+                              tools: Optional[Mapping[str, str]] = None) -> vs.VideoNode:
     last = core.bilateral.Bilateral(src, ref=ref, sigmaS=radius / 2, sigmaR=thr / 255, planes=planes, algorithm=0)
 
     last = LimitFilter(last, src, thr=thr, elast=elast, planes=planes, tools=tools)
@@ -553,7 +558,7 @@ def _GF3_bilateral_multistage(src: vs.VideoNode, ref: vs.VideoNode, radius: int,
     return last
 
 
-def _Build_gf3_range_mask(src: vs.VideoNode, radius: int = 1, tools=None) -> vs.VideoNode:
+def _Build_gf3_range_mask(src: vs.VideoNode, radius: int = 1, tools: Optional[Mapping[str, str]] = None) -> vs.VideoNode:
     last = src
     EXPR = get_expr(tools)
     if radius > 1:
@@ -575,7 +580,7 @@ def _Build_gf3_range_mask(src: vs.VideoNode, radius: int = 1, tools=None) -> vs.
 
 def SmoothGrad(input: vs.VideoNode, radius: int = 9, thr: float = 0.25,
                ref: Optional[vs.VideoNode] = None, elast: float = 3.0,
-               planes: Optional[Union[int, Sequence[int]]] = None, tools: Optional[Dict[str, str]] = None,
+               planes: Optional[Union[int, Sequence[int]]] = None, tools: Optional[Mapping[str, str]] = None,
                **limit_filter_args: Any) -> vs.VideoNode:
     '''Avisynth's SmoothGrad
 

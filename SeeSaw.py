@@ -20,12 +20,14 @@ The pipeline in brief:
      of the original luma, subject to a final absolute or relative clamp.
   5. Recombine with the original chroma for YUV input.
 """
+from __future__ import annotations
 
+from typing import Sequence, Union
 import vapoursynth as vs
 
 core = vs.core
 
-def _Expr(clips, expr):
+def _Expr(clips: Union[vs.VideoNode, Sequence[vs.VideoNode]], expr: Union[str, Sequence[str]]) -> vs.VideoNode:
     if hasattr(core, 'akarin'):
         return core.akarin.Expr(clips, expr)
     elif hasattr(core, 'cranexpr'):

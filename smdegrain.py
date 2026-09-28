@@ -1,7 +1,8 @@
+from __future__ import annotations
 import vapoursynth as vs
 from vapoursynth import core
 
-from typing import Sequence, Union, Optional
+from typing import Sequence, Union, Optional, Any, Dict, List, Mapping
 
 
 import math
@@ -36,9 +37,10 @@ from nnedi3_resample import nnedi3_resample
 ################################################################################################
 
 
-def SMDegrain(input, tr=2, thSAD=300, thSADC=None, RefineMotion=False, contrasharp=None, CClip=None, interlaced=False, tff=None, plane=4, Globals=0, pel=None, subpixel=2, prefilter=-1, mfilter=None,
-              blksize=None, overlap=None, search=4, truemotion=None, MVglobal=None, dct=0, limit=255, limitc=None, thSCD1=None, thSCD2=130, chroma=True, hpad=None, vpad=None, Str=1.0, Amp=0.0625, opencl=False, device=None,
-              tv_range=None, v4formulas=False, LFR=False, DCTFlicker=False, bm3d_backend=None, tools=None):
+def SMDegrain(input: vs.VideoNode, tr: int = 2, thSAD: int = 300, thSADC: Optional[int] = None, RefineMotion: bool = False, contrasharp: Optional[Union[bool, float]] = None, CClip: Optional[vs.VideoNode] = None, interlaced: bool = False, tff: Optional[bool] = None, plane: int = 4, Globals: int = 0, pel: Optional[int] = None, subpixel: int = 2, prefilter: Union[int, vs.VideoNode] = -1, mfilter: Optional[vs.VideoNode] = None,
+              blksize: Optional[int] = None, overlap: Optional[int] = None, search: int = 4, truemotion: Optional[bool] = None, MVglobal: Optional[bool] = None, dct: int = 0, limit: int = 255, limitc: Optional[int] = None, thSCD1: Optional[int] = None, thSCD2: int = 130, chroma: bool = True, hpad: Optional[int] = None, vpad: Optional[int] = None, Str: float = 1.0, Amp: float = 0.0625, opencl: bool = False, device: Optional[int] = None,
+              tv_range: Optional[bool] = None, v4formulas: bool = False, LFR: bool = False, DCTFlicker: bool = False, bm3d_backend: Optional[str] = None, scd_thscd1: float = 400.0, scd_thscd2: float = 130.0,
+              tools: Optional[Mapping[str, str]] = None) -> vs.VideoNode:
     # RefineMotion: False/0 = off, True/1 = one Recalculate pass, N = N passes each halving the block size.
     # limit/limitc: maximum pixel change on the 8-bit scale (255 = off), scaled to the clip's bit depth by MV.
     # tv_range: range of the input for the luma rebuild of the motion search clip; None = read from the frame properties.
@@ -204,7 +206,7 @@ def SMDegrain(input, tr=2, thSAD=300, thSADC=None, RefineMotion=False, contrasha
             pref = _lfr_unsharp(pref, thSAD / 1800.0, planes, tools=tools)
 
     # Motion vectors search
-    super_args = dict(hpad=hpad, vpad=vpad, pel=pel, blksize=blksize, overlap=overlap)
+    super_args: Dict[str, Any] = dict(hpad=hpad, vpad=vpad, pel=pel, blksize=blksize, overlap=overlap)
     # Subpixel 3
     if pelclip:
       nnediMode = 'nnedi3cl' if opencl else 'znedi3'
@@ -231,7 +233,7 @@ def SMDegrain(input, tr=2, thSAD=300, thSADC=None, RefineMotion=False, contrasha
         if refine_passes:
             refine_super = super_render
 
-    search_params = dict(blksize=blksize, search=search, chroma=chroma, truemotion=truemotion, global_=MVglobal, overlap=overlap, dct=dct)
+    search_params: Dict[str, Any] = dict(blksize=blksize, search=search, chroma=chroma, truemotion=truemotion, global_=MVglobal, overlap=overlap, dct=dct)
     refine_search = {}
     if v4formulas:
         searchparam = (2 if is_uhd else 5) if refine_passes and truemotion else (1 if is_uhd else 2)
@@ -261,7 +263,8 @@ def SMDegrain(input, tr=2, thSAD=300, thSADC=None, RefineMotion=False, contrasha
         if DCTFlicker:
             flicker_pref = mfilter_lp if mfilter.format.color_family == vs.GRAY else core.std.ShufflePlanes([mfilter_lp, mfilter], [0, 1, 2], vs.YUV)
             flicker_pass = SMDegrain(mfilter, tr=math.ceil(tr / 3), thSAD=thSAD // 2, blksize=blksize, prefilter=flicker_pref, pel=1,
-                                     Str=1.0, tv_range=False, plane=0, chroma=False, truemotion=False, v4formulas=v4formulas, tools=tools)
+                                     Str=1.0, tv_range=False, plane=0, chroma=False, truemotion=False, v4formulas=v4formulas,
+                                     scd_thscd1=scd_thscd1, scd_thscd2=scd_thscd2, tools=tools)
             mfilter_lp = core.zsmooth.TemporalRepair(mfilter_lp, GaussBlur(GetPlane(flicker_pass, 0), sigma, tools=tools), mode=4)
         mask = _lfr_mask(vectors, GetPlane(mfilter, 0), 2.222 if DCTFlicker else 0.5, thSCD1, thSCD2, tools=tools)
         luma = EXPR([luma, GaussBlur(luma, sigma, tools=tools), mfilter_lp, mask], expr=[f'x y z - a * {peak} / -'])
@@ -282,11 +285,13 @@ def SMDegrain(input, tr=2, thSAD=300, thSADC=None, RefineMotion=False, contrasha
                 if ifC:
                     return Weave(ContraSharpening(output, CClip, planes=planes, tools=tools), tff=tff)
                 else:
-                    return Weave(LSFmod(output, strength=contrasharp, source=CClip, Lmode=0, soothe=False, defaults='slow', tools=tools), tff=tff)
+                    return Weave(LSFmod(output, strength=contrasharp, source=CClip, Lmode=0, soothe=False, defaults='slow', scd_thscd1=scd_thscd1,
+                                      scd_thscd2=scd_thscd2, tools=tools), tff=tff)
             elif ifC:
                 return ContraSharpening(output, CClip, planes=planes, tools=tools)
             else:
-                return LSFmod(output, strength=contrasharp, source=CClip, Lmode=0, soothe=False, defaults='slow', tools=tools)
+                return LSFmod(output, strength=contrasharp, source=CClip, Lmode=0, soothe=False, defaults='slow', scd_thscd1=scd_thscd1,
+                                      scd_thscd2=scd_thscd2, tools=tools)
         elif interlaced:
             return Weave(output, tff=tff)
         else:
@@ -296,14 +301,14 @@ def SMDegrain(input, tr=2, thSAD=300, thSADC=None, RefineMotion=False, contrasha
 
 # Helpers
 
-def _lfr_sigma(LFR, width: int, height: int) -> float:
+def _lfr_sigma(LFR: Union[bool, float], width: int, height: int) -> float:
     '''Gaussian sigma of Dogway's Low Frequency Restore for a cutoff in Hz (-3 dB); True = 3.46 at 1920 wide (300 Hz).'''
     if LFR is True:
         return 3.46 * width / 1920.0
     hz = max(float(LFR), 50.0)
     return max(width, height) * 2.0 / (math.sqrt(math.log(2) / 2) * hz * 2 * math.pi)
 
-def _lfr_unsharp(clip: vs.VideoNode, strength: float, planes, tools=None) -> vs.VideoNode:
+def _lfr_unsharp(clip: vs.VideoNode, strength: float, planes: Sequence[int], tools: Optional[Mapping[str, str]] = None) -> vs.VideoNode:
     '''Dogway's ex_unsharp(strength, Fc=width/8, th=0): clip + strength * (clip - blur), blur = 0.8 * box(r) + 0.2 * box(r + 1), vertical then horizontal.'''
     radius = max(math.ceil(2 * max(clip.width, clip.height) / (clip.width / 8.0)) - 1, 1)
     EXPR = get_expr(tools)
@@ -314,7 +319,7 @@ def _lfr_unsharp(clip: vs.VideoNode, strength: float, planes, tools=None) -> vs.
                  blur.std.BoxBlur(planes=planes, hradius=radius + 1, hpasses=1, vradius=0, vpasses=0)], expr=mix)
     return EXPR([clip, blur], expr=[f'x x y - {strength} * +' if p in planes else '' for p in range(clip.format.num_planes)])
 
-def _lfr_mask(vectors, luma: vs.VideoNode, gamma: float, thscd1, thscd2, tools=None) -> vs.VideoNode:
+def _lfr_mask(vectors: Sequence[vs.VideoNode], luma: vs.VideoNode, gamma: float, thscd1: int, thscd2: int, tools: Optional[Mapping[str, str]] = None) -> vs.VideoNode:
     '''Average SAD mask of all vectors (Dogway: ml=50, ysc=255) in the format of luma, full range.'''
     bits = luma.format.bits_per_sample
     MV = get_mv(tools)
@@ -333,7 +338,7 @@ def _lfr_mask(vectors, luma: vs.VideoNode, gamma: float, thscd1, thscd2, tools=N
         masks.append(core.resize.Point(mask, format=luma.format.id, range_in=1, range=1))
     return _average(masks, tools)
 
-def _average(clips, tools=None):
+def _average(clips: Sequence[vs.VideoNode], tools: Optional[Mapping[str, str]] = None) -> vs.VideoNode:
     '''Pixel mean of any number of clips; Expr takes at most 26 inputs, so larger lists are split.'''
     count = len(clips)
     if count == 1:
@@ -345,10 +350,10 @@ def _average(clips, tools=None):
     variables = 'xyzabcdefghijklmnopqrstuvw'
     return get_expr(tools)(clips, expr=[' '.join(variables[:count]) + ' +' * (count - 1) + f' {count} /'])
 
-def _bm3d_prefilter(clip: vs.VideoNode, chroma: bool, device, backend=None, tools=None) -> vs.VideoNode:
+def _bm3d_prefilter(clip: vs.VideoNode, chroma: bool, device: Optional[int], backend: Optional[str] = None, tools: Optional[Mapping[str, str]] = None) -> vs.VideoNode:
     '''BM3D prefilter like Dogway's ex_BM3D preset "normal" (sigma 10, chroma 5, radius 1) on the chosen or first loaded BM3D plugin.'''
     fmt = clip.format
-    params = dict(radius=1, block_step=4, bm_range=16, ps_range=5, device_id=device if isinstance(device, int) else None,
+    params: Dict[str, Any] = dict(radius=1, block_step=4, bm_range=16, ps_range=5, device_id=device if isinstance(device, int) else None,
                   backend=backend, tools=tools)
     if chroma and fmt.color_family != vs.GRAY:
         # Chroma is denoised together with luma (CBM3D), which needs 4:4:4.
@@ -359,7 +364,7 @@ def _bm3d_prefilter(clip: vs.VideoNode, chroma: bool, device, backend=None, tool
     work = core.resize.Point(work, format=luma.format.id)
     return work if fmt.color_family == vs.GRAY else core.std.ShufflePlanes([work, clip], [0, 1, 2], vs.YUV)
 
-def _dgdenoise_prefilter(clip: vs.VideoNode, chroma: bool, device) -> vs.VideoNode:
+def _dgdenoise_prefilter(clip: vs.VideoNode, chroma: bool, device: Optional[int]) -> vs.VideoNode:
     '''DGDenoise prefilter with Dogway's strengths (luma 0.10, chroma 0.05); DGDenoise takes YV12, YUV420P16 and YUV444P16 only.'''
     fmt = clip.format
     gray = fmt.color_family == vs.GRAY
@@ -391,7 +396,7 @@ def _scale_csad(luma: bool, chroma: bool, fmt: vs.VideoFormat, is_hd: bool) -> i
         return 0 if is_hd else -1
     return 2 if is_hd else 0
 
-def get_motion_vectors(super_search, refine_super, search_params, refine_params, tr, interlaced, tools=None):
+def get_motion_vectors(super_search: vs.VideoNode, refine_super: Optional[vs.VideoNode], search_params: Dict[str, Any], refine_params: Sequence[Dict[str, Any]], tr: int, interlaced: bool, tools: Optional[Mapping[str, str]] = None) -> List[vs.VideoNode]:
     '''Returns [bv1, fv1, bv2, fv2, ...] up to radius tr; separated fields use every second field (same parity).'''
     MV = get_mv(tools)
     vectors = MV.AnalyseMany(super_search, radius=tr, delta=2 if interlaced else 1, **search_params)

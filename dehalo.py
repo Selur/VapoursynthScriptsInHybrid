@@ -1,8 +1,9 @@
+from __future__ import annotations
 import vapoursynth as vs
 from vapoursynth import core
 
 import math
-from typing import Union, Optional, Sequence
+from typing import Union, Optional, Sequence, Mapping
 
 from misc import MinBlur, median_blur, mt_expand_multi, mt_inpand_multi
 from helpers import GetPlane, m4, scale_value, cround, Padding, get_expr, get_rg, pick_tool, tool_function
@@ -16,7 +17,7 @@ def DeHalo_alpha(
     lowsens: float = 50.0,
     highsens: float = 50.0,
     ss: float = 1.5,
-    tools=None,
+    tools: Optional[Mapping[str, str]] = None,
 ) -> vs.VideoNode:
     '''
     Reduce halo artifacts that can occur when sharpening.
@@ -85,7 +86,7 @@ def DeHalo_alpha(
         them = core.std.ShufflePlanes([them, clp_orig], planes=[0, 1, 2], colorfamily=clp_orig.format.color_family)
     return them
     
-def EdgeCleaner(c: vs.VideoNode, strength: int = 10, rep: bool = True, rmode: int = 17, smode: int = 0, hot: bool = False, tools=None) -> vs.VideoNode:
+def EdgeCleaner(c: vs.VideoNode, strength: int = 10, rep: bool = True, rmode: int = 17, smode: int = 0, hot: bool = False, tools: Optional[Mapping[str, str]] = None) -> vs.VideoNode:
     '''
     EdgeCleaner v1.04
     A simple edge cleaning and weak dehaloing function.
@@ -173,7 +174,7 @@ def FineDehalo(
     excl: bool = True,
     edgeproc: float = 0.0,
     mask: Optional[vs.VideoNode] = None,
-    tools=None,
+    tools: Optional[Mapping[str, str]] = None,
 ) -> vs.VideoNode:
     '''
     Halo removal script that uses DeHalo_alpha with a few masks and optional contra-sharpening to try remove halos without removing important details.
@@ -337,7 +338,7 @@ def FineDehalo(
         else:
             return strong
 
-def FineDehalo_contrasharp(dehaloed: vs.VideoNode, src: vs.VideoNode, level: float, tools=None) -> vs.VideoNode:
+def FineDehalo_contrasharp(dehaloed: vs.VideoNode, src: vs.VideoNode, level: float, tools: Optional[Mapping[str, str]] = None) -> vs.VideoNode:
     '''level == 1.0 : normal contrasharp'''
     if not (isinstance(dehaloed, vs.VideoNode) and isinstance(src, vs.VideoNode)):
         raise vs.Error('FineDehalo_contrasharp: this is not a clip')
@@ -373,7 +374,7 @@ def FineDehalo_contrasharp(dehaloed: vs.VideoNode, src: vs.VideoNode, level: flo
         last = core.std.ShufflePlanes([last, dehaloed_orig], planes=[0, 1, 2], colorfamily=dehaloed_orig.format.color_family)
     return last
 
-def YAHR(clp: vs.VideoNode, blur: int = 2, depth: int = 32, tools=None) -> vs.VideoNode:
+def YAHR(clp: vs.VideoNode, blur: int = 2, depth: int = 32, tools: Optional[Mapping[str, str]] = None) -> vs.VideoNode:
     '''
     Y'et A'nother H'alo R'educing script
 
@@ -427,7 +428,7 @@ def SecondOrderDehalo(
     edgemask: str | None = None,
     growmask: str | None = None,
     showmask: int = 0,
-    tools=None
+    tools: Optional[Mapping[str, str]] = None
 ) -> vs.VideoNode:
     """
     SecondOrderDehalo - Second-order dehalo removal using directional edge masks and convolution.
@@ -584,7 +585,7 @@ def SecondOrderDehalo(
 def BlindDeHalo3(clp: vs.VideoNode, rx: float = 3.0, ry: float = 3.0, strength: float = 125,
                  lodamp: float = 0, hidamp: float = 0, sharpness: float = 0, tweaker: float = 0,
                  PPmode: int = 0, PPlimit: Optional[int] = None, interlaced: bool = False,
-                 tools=None) -> vs.VideoNode:
+                 tools: Optional[Mapping[str, str]] = None) -> vs.VideoNode:
     """Avisynth's BlindDeHalo3() version: 3_MT2
 
     This script removes the light & dark halos from too strong "Edge Enhancement".

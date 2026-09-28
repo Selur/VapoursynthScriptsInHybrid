@@ -1,9 +1,11 @@
+from __future__ import annotations
 # ===============================================================================
 # ===============================================================================
 #            CPreview 2025-03-25
 # ===============================================================================
 # ===============================================================================
 
+from typing import Mapping, Optional, Tuple, Union
 import math as m
 from functools import partial
 import vapoursynth as vs
@@ -12,7 +14,7 @@ core = vs.core
 
 # ===============================================================================
 
-def CPreview(Source, CL, CR, CT, CB, Frame=False, Time=False, Type=1, tools=None):
+def CPreview(Source: vs.VideoNode, CL: int, CR: int, CT: int, CB: int, Frame: bool = False, Time: bool = False, Type: int = 1, tools: Optional[Mapping[str, str]] = None) -> vs.VideoNode:
 
     CPE = "\nCPreview:\n"
     if not isinstance(Source, vs.VideoNode): raise vs.Error(f'{CPE}Source must be a video')
@@ -149,63 +151,63 @@ def CPreview(Source, CL, CR, CT, CB, Frame=False, Time=False, Type=1, tools=None
 #            pCrop / pCropf / pCropt / pCropp
 # -------------------------------------------------------------------------------
 
-def pCrop(Source,  CL, CR, CT, CB, tools=None): return CPreview(Source, CL, CR, CT, CB, False, False, 1, tools=tools)
-def pCropf(Source, CL, CR, CT, CB, tools=None): return CPreview(Source, CL, CR, CT, CB, True,  False, 1, tools=tools)
-def pCropt(Source, CL, CR, CT, CB, tools=None): return CPreview(Source, CL, CR, CT, CB, False, True,  1, tools=tools)
-def pCropp(Source, CL, CR, CT, CB, tools=None): return CPreview(Source, CL, CR, CT, CB, True,  True,  1, tools=tools)
+def pCrop(Source: vs.VideoNode,  CL: int, CR: int, CT: int, CB: int, tools: Optional[Mapping[str, str]] = None) -> vs.VideoNode: return CPreview(Source, CL, CR, CT, CB, False, False, 1, tools=tools)
+def pCropf(Source: vs.VideoNode, CL: int, CR: int, CT: int, CB: int, tools: Optional[Mapping[str, str]] = None) -> vs.VideoNode: return CPreview(Source, CL, CR, CT, CB, True,  False, 1, tools=tools)
+def pCropt(Source: vs.VideoNode, CL: int, CR: int, CT: int, CB: int, tools: Optional[Mapping[str, str]] = None) -> vs.VideoNode: return CPreview(Source, CL, CR, CT, CB, False, True,  1, tools=tools)
+def pCropp(Source: vs.VideoNode, CL: int, CR: int, CT: int, CB: int, tools: Optional[Mapping[str, str]] = None) -> vs.VideoNode: return CPreview(Source, CL, CR, CT, CB, True,  True,  1, tools=tools)
 
 # -------------------------------------------------------------------------------
 #            ppCrop / ppCropf / ppCropt / ppCropp
 # -------------------------------------------------------------------------------
 
-def ppCrop(Source,  CL, CR, CT, CB, tools=None): return CPreview(Source, CL, CR, CT, CB, False, False, 2, tools=tools)
-def ppCropf(Source, CL, CR, CT, CB, tools=None): return CPreview(Source, CL, CR, CT, CB, True,  False, 2, tools=tools)
-def ppCropt(Source, CL, CR, CT, CB, tools=None): return CPreview(Source, CL, CR, CT, CB, False, True,  2, tools=tools)
-def ppCropp(Source, CL, CR, CT, CB, tools=None): return CPreview(Source, CL, CR, CT, CB, True,  True,  2, tools=tools)
+def ppCrop(Source: vs.VideoNode,  CL: int, CR: int, CT: int, CB: int, tools: Optional[Mapping[str, str]] = None) -> vs.VideoNode: return CPreview(Source, CL, CR, CT, CB, False, False, 2, tools=tools)
+def ppCropf(Source: vs.VideoNode, CL: int, CR: int, CT: int, CB: int, tools: Optional[Mapping[str, str]] = None) -> vs.VideoNode: return CPreview(Source, CL, CR, CT, CB, True,  False, 2, tools=tools)
+def ppCropt(Source: vs.VideoNode, CL: int, CR: int, CT: int, CB: int, tools: Optional[Mapping[str, str]] = None) -> vs.VideoNode: return CPreview(Source, CL, CR, CT, CB, False, True,  2, tools=tools)
+def ppCropp(Source: vs.VideoNode, CL: int, CR: int, CT: int, CB: int, tools: Optional[Mapping[str, str]] = None) -> vs.VideoNode: return CPreview(Source, CL, CR, CT, CB, True,  True,  2, tools=tools)
 
 # -------------------------------------------------------------------------------
 #            pppCrop / pppCropf / pppCropt / pppCropp
 # -------------------------------------------------------------------------------
 
-def pppCrop(Source,  CL, CR, CT, CB, tools=None): return CPreview(Source, CL, CR, CT, CB, False, False, 3, tools=tools)
-def pppCropf(Source, CL, CR, CT, CB, tools=None): return CPreview(Source, CL, CR, CT, CB, True,  False, 3, tools=tools)
-def pppCropt(Source, CL, CR, CT, CB, tools=None): return CPreview(Source, CL, CR, CT, CB, False, True,  3, tools=tools)
-def pppCropp(Source, CL, CR, CT, CB, tools=None): return CPreview(Source, CL, CR, CT, CB, True,  True,  3, tools=tools)
+def pppCrop(Source: vs.VideoNode,  CL: int, CR: int, CT: int, CB: int, tools: Optional[Mapping[str, str]] = None) -> vs.VideoNode: return CPreview(Source, CL, CR, CT, CB, False, False, 3, tools=tools)
+def pppCropf(Source: vs.VideoNode, CL: int, CR: int, CT: int, CB: int, tools: Optional[Mapping[str, str]] = None) -> vs.VideoNode: return CPreview(Source, CL, CR, CT, CB, True,  False, 3, tools=tools)
+def pppCropt(Source: vs.VideoNode, CL: int, CR: int, CT: int, CB: int, tools: Optional[Mapping[str, str]] = None) -> vs.VideoNode: return CPreview(Source, CL, CR, CT, CB, False, True,  3, tools=tools)
+def pppCropp(Source: vs.VideoNode, CL: int, CR: int, CT: int, CB: int, tools: Optional[Mapping[str, str]] = None) -> vs.VideoNode: return CPreview(Source, CL, CR, CT, CB, True,  True,  3, tools=tools)
 
 # -------------------------------------------------------------------------------
 #            qCrop / qCropf / qCropt / qCropp
 # -------------------------------------------------------------------------------
 
-def qCrop(Source,  CL, CR, CT, CB, tools=None): return CPreview(Source, CL, CR, CT, CB, False, False, 4, tools=tools)
-def qCropf(Source, CL, CR, CT, CB, tools=None): return CPreview(Source, CL, CR, CT, CB, True,  False, 4, tools=tools)
-def qCropt(Source, CL, CR, CT, CB, tools=None): return CPreview(Source, CL, CR, CT, CB, False, True,  4, tools=tools)
-def qCropp(Source, CL, CR, CT, CB, tools=None): return CPreview(Source, CL, CR, CT, CB, True,  True,  4, tools=tools)
+def qCrop(Source: vs.VideoNode,  CL: int, CR: int, CT: int, CB: int, tools: Optional[Mapping[str, str]] = None) -> vs.VideoNode: return CPreview(Source, CL, CR, CT, CB, False, False, 4, tools=tools)
+def qCropf(Source: vs.VideoNode, CL: int, CR: int, CT: int, CB: int, tools: Optional[Mapping[str, str]] = None) -> vs.VideoNode: return CPreview(Source, CL, CR, CT, CB, True,  False, 4, tools=tools)
+def qCropt(Source: vs.VideoNode, CL: int, CR: int, CT: int, CB: int, tools: Optional[Mapping[str, str]] = None) -> vs.VideoNode: return CPreview(Source, CL, CR, CT, CB, False, True,  4, tools=tools)
+def qCropp(Source: vs.VideoNode, CL: int, CR: int, CT: int, CB: int, tools: Optional[Mapping[str, str]] = None) -> vs.VideoNode: return CPreview(Source, CL, CR, CT, CB, True,  True,  4, tools=tools)
 
 # -------------------------------------------------------------------------------
 #            qqCrop / qqCropf / qqCropt / qqCropp
 # -------------------------------------------------------------------------------
 
-def qqCrop(Source,  CL, CR, CT, CB, tools=None): return CPreview(Source, CL, CR, CT, CB, False, False, 5, tools=tools)
-def qqCropf(Source, CL, CR, CT, CB, tools=None): return CPreview(Source, CL, CR, CT, CB, True,  False, 5, tools=tools)
-def qqCropt(Source, CL, CR, CT, CB, tools=None): return CPreview(Source, CL, CR, CT, CB, False, True,  5, tools=tools)
-def qqCropp(Source, CL, CR, CT, CB, tools=None): return CPreview(Source, CL, CR, CT, CB, True,  True,  5, tools=tools)
+def qqCrop(Source: vs.VideoNode,  CL: int, CR: int, CT: int, CB: int, tools: Optional[Mapping[str, str]] = None) -> vs.VideoNode: return CPreview(Source, CL, CR, CT, CB, False, False, 5, tools=tools)
+def qqCropf(Source: vs.VideoNode, CL: int, CR: int, CT: int, CB: int, tools: Optional[Mapping[str, str]] = None) -> vs.VideoNode: return CPreview(Source, CL, CR, CT, CB, True,  False, 5, tools=tools)
+def qqCropt(Source: vs.VideoNode, CL: int, CR: int, CT: int, CB: int, tools: Optional[Mapping[str, str]] = None) -> vs.VideoNode: return CPreview(Source, CL, CR, CT, CB, False, True,  5, tools=tools)
+def qqCropp(Source: vs.VideoNode, CL: int, CR: int, CT: int, CB: int, tools: Optional[Mapping[str, str]] = None) -> vs.VideoNode: return CPreview(Source, CL, CR, CT, CB, True,  True,  5, tools=tools)
 
 # -------------------------------------------------------------------------------
 #            qqqCrop / qqqCropf / qqqCropt / qqqCropp
 # -------------------------------------------------------------------------------
 
-def qqqCrop(Source,  CL, CR, CT, CB, tools=None): return CPreview(Source, CL, CR, CT, CB, False, False, 6, tools=tools)
-def qqqCropf(Source, CL, CR, CT, CB, tools=None): return CPreview(Source, CL, CR, CT, CB, True,  False, 6, tools=tools)
-def qqqCropt(Source, CL, CR, CT, CB, tools=None): return CPreview(Source, CL, CR, CT, CB, False, True,  6, tools=tools)
-def qqqCropp(Source, CL, CR, CT, CB, tools=None): return CPreview(Source, CL, CR, CT, CB, True,  True,  6, tools=tools)
+def qqqCrop(Source: vs.VideoNode,  CL: int, CR: int, CT: int, CB: int, tools: Optional[Mapping[str, str]] = None) -> vs.VideoNode: return CPreview(Source, CL, CR, CT, CB, False, False, 6, tools=tools)
+def qqqCropf(Source: vs.VideoNode, CL: int, CR: int, CT: int, CB: int, tools: Optional[Mapping[str, str]] = None) -> vs.VideoNode: return CPreview(Source, CL, CR, CT, CB, True,  False, 6, tools=tools)
+def qqqCropt(Source: vs.VideoNode, CL: int, CR: int, CT: int, CB: int, tools: Optional[Mapping[str, str]] = None) -> vs.VideoNode: return CPreview(Source, CL, CR, CT, CB, False, True,  6, tools=tools)
+def qqqCropp(Source: vs.VideoNode, CL: int, CR: int, CT: int, CB: int, tools: Optional[Mapping[str, str]] = None) -> vs.VideoNode: return CPreview(Source, CL, CR, CT, CB, True,  True,  6, tools=tools)
 
 # -------------------------------------------------------------------------------
 #            Cropf / Cropt / Cropp
 # -------------------------------------------------------------------------------
 
-def Cropf(Source, CL, CR, CT, CB, tools=None): return CP_Position(core.std.Crop(Source, CL, CR, CT, CB), True, False, tools=tools)
-def Cropt(Source, CL, CR, CT, CB, tools=None): return CP_Position(core.std.Crop(Source, CL, CR, CT, CB), False, True, tools=tools)
-def Cropp(Source, CL, CR, CT, CB, tools=None): return CP_Position(core.std.Crop(Source, CL, CR, CT, CB), True,  True, tools=tools)
+def Cropf(Source: vs.VideoNode, CL: int, CR: int, CT: int, CB: int, tools: Optional[Mapping[str, str]] = None) -> vs.VideoNode: return CP_Position(core.std.Crop(Source, CL, CR, CT, CB), True, False, tools=tools)
+def Cropt(Source: vs.VideoNode, CL: int, CR: int, CT: int, CB: int, tools: Optional[Mapping[str, str]] = None) -> vs.VideoNode: return CP_Position(core.std.Crop(Source, CL, CR, CT, CB), False, True, tools=tools)
+def Cropp(Source: vs.VideoNode, CL: int, CR: int, CT: int, CB: int, tools: Optional[Mapping[str, str]] = None) -> vs.VideoNode: return CP_Position(core.std.Crop(Source, CL, CR, CT, CB), True,  True, tools=tools)
 
 # ===============================================================================
 # ===============================================================================
@@ -213,7 +215,7 @@ def Cropp(Source, CL, CR, CT, CB, tools=None): return CP_Position(core.std.Crop(
 # ===============================================================================
 # ===============================================================================
 
-def Crop(Source, CL, CR, CT, CB): return core.std.Crop(Source, CL, CR, CT, CB)
+def Crop(Source: vs.VideoNode, CL: int, CR: int, CT: int, CB: int) -> vs.VideoNode: return core.std.Crop(Source, CL, CR, CT, CB)
 
 # ===============================================================================
 # ===============================================================================
@@ -221,7 +223,7 @@ def Crop(Source, CL, CR, CT, CB): return core.std.Crop(Source, CL, CR, CT, CB)
 # ===============================================================================
 # ===============================================================================
 
-def RGBColor(clip, color=None, matrix=None, range=None):
+def RGBColor(clip: vs.VideoNode, color: Optional[str] = None, matrix: Optional[Union[int, str]] = None, range: Optional[str] = None) -> Union[float, Tuple[float, float, float]]:
 
     CPE = "\nCPreview (RGBColor):\n"
     if not isinstance(clip, vs.VideoNode): raise vs.Error(f'{CPE}clip must be a video')
@@ -496,7 +498,7 @@ def RGBColor(clip, color=None, matrix=None, range=None):
 # ===============================================================================
 # ===============================================================================
 
-def CR_PicMod(W, H):
+def CR_PicMod(W: int, H: int) -> str:
 
     WMod = 16 if (W % 16 == 0) else 8 if (W % 8 == 0) else 4 if (W % 4 == 0) else 2 if (W % 2 == 0) else 1
     HMod = 16 if (H % 16 == 0) else 8 if (H % 8 == 0) else 4 if (H % 4 == 0) else 2 if (H % 2 == 0) else 1
@@ -509,7 +511,7 @@ def CR_PicMod(W, H):
 # ===============================================================================
 # ===============================================================================
 
-def CP_Position(Source, Frame, Time, Type=4, SubText="", tools=None):
+def CP_Position(Source: vs.VideoNode, Frame: bool, Time: bool, Type: int = 4, SubText: str = "", tools: Optional[Mapping[str, str]] = None) -> vs.VideoNode:
 
     Source_Width = Source.width
     Source_Height = Source.height
@@ -551,7 +553,7 @@ def CP_Position(Source, Frame, Time, Type=4, SubText="", tools=None):
 
 # -------------------------------------------------------------------------------
 
-def CP_Pos(n, Source, FRateNum, FRateDen, Frame, Time, Type, SubText, Style, IsSubPlugin):
+def CP_Pos(n: int, Source: vs.VideoNode, FRateNum: int, FRateDen: int, Frame: bool, Time: bool, Type: int, SubText: str, Style: str, IsSubPlugin: bool) -> vs.VideoNode:
 
     if Time:
 
@@ -581,8 +583,8 @@ def CP_Pos(n, Source, FRateNum, FRateDen, Frame, Time, Type, SubText, Style, IsS
 #
 # -------------------------------------------------------------------------------
 
-def P_Line(W, H): return 1 if (W <= 1920) and (H <= 1080) else 2
-def Q_Line(W, H): return 1 if (W <= 1920) and (H <= 1080) else 2
+def P_Line(W: int, H: int) -> int: return 1 if (W <= 1920) and (H <= 1080) else 2
+def Q_Line(W: int, H: int) -> int: return 1 if (W <= 1920) and (H <= 1080) else 2
 
 # ===============================================================================
 # ===============================================================================

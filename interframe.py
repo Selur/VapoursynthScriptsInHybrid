@@ -1,3 +1,5 @@
+from __future__ import annotations
+from typing import Optional
 from vapoursynth import core
 import vapoursynth as vs
 
@@ -11,7 +13,7 @@ import vapoursynth as vs
 # changes:                                                                     #
 #  20201108 - added  overwriteSuper, overwriteVectors, overwriteSmooth  (Selur)#
 #------------------------------------------------------------------------------#
-def InterFrameCustom(Input, Preset='Medium', Tuning='Film', NewNum=None, NewDen=1, GPU=False, InputType='2D', OverrideAlgo=None, OverrideArea=None, FrameDouble=False, overwriteSuper='', overwriteVectors='', overwriteSmooth=''):
+def InterFrameCustom(Input: vs.VideoNode, Preset: str = 'Medium', Tuning: str = 'Film', NewNum: Optional[int] = None, NewDen: int = 1, GPU: bool = False, InputType: str = '2D', OverrideAlgo: Optional[int] = None, OverrideArea: Optional[int] = None, FrameDouble: bool = False, overwriteSuper: str = '', overwriteVectors: str = '', overwriteSmooth: str = '') -> vs.VideoNode:
     if not isinstance(Input, vs.VideoNode):
         raise vs.Error('InterFrame: This is not a clip')
 
@@ -29,7 +31,7 @@ def InterFrameCustom(Input, Preset='Medium', Tuning='Film', NewNum=None, NewDen=
     if InputType not in ['2D', 'SBS', 'OU', 'HSBS', 'HOU']:
         raise vs.Error(f"InterFrame: '{InputType}' is not a valid InputType")
 
-    def InterFrameProcess(clip, overwriteSuper='', overwriteVectors='', overwriteSmooth=''):
+    def InterFrameProcess(clip: vs.VideoNode, overwriteSuper: str = '', overwriteVectors: str = '', overwriteSmooth: str = '') -> vs.VideoNode:
         if overwriteSuper == '':
           # Create SuperString
           if Preset in ['fast', 'faster', 'fastest']:
@@ -147,7 +149,7 @@ def InterFrameCustom(Input, Preset='Medium', Tuning='Film', NewNum=None, NewDen=
 #                   about the content of non-existent frames                   #
 #      Its main use is to give videos higher framerates like newer TVs do      #
 #------------------------------------------------------------------------------#
-def InterFrame(Input, Preset='Medium', Tuning='Film', NewNum=None, NewDen=1, GPU=False, InputType='2D', OverrideAlgo=None, OverrideArea=None, FrameDouble=False):
+def InterFrame(Input: vs.VideoNode, Preset: str = 'Medium', Tuning: str = 'Film', NewNum: Optional[int] = None, NewDen: int = 1, GPU: bool = False, InputType: str = '2D', OverrideAlgo: Optional[int] = None, OverrideArea: Optional[int] = None, FrameDouble: bool = False) -> vs.VideoNode:
     if not isinstance(Input, vs.VideoNode):
         raise vs.Error('InterFrame: this is not a clip')
 
@@ -165,7 +167,7 @@ def InterFrame(Input, Preset='Medium', Tuning='Film', NewNum=None, NewDen=1, GPU
     if InputType not in ['2D', 'SBS', 'OU', 'HSBS', 'HOU']:
         raise vs.Error(f"InterFrame: '{InputType}' is not a valid InputType")
 
-    def InterFrameProcess(clip):
+    def InterFrameProcess(clip: vs.VideoNode) -> vs.VideoNode:
         # Create SuperString
         if Preset in ['fast', 'faster', 'fastest']:
             SuperString = '{pel:1,'

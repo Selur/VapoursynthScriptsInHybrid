@@ -1,3 +1,5 @@
+from __future__ import annotations
+from typing import Sequence
 import vapoursynth as vs
 import math
 import functools
@@ -22,7 +24,7 @@ def ChangeFPS(clip: vs.VideoNode, target_fps_num: int, target_fps_den: int = 1) 
     lookup = [min(round(n / factor), len(clip) - 1) for n in range(new_length)]
 
     # FrameEval function
-    def frame_adjuster(n, clip, lookup):
+    def frame_adjuster(n: int, clip: vs.VideoNode, lookup: Sequence[int]) -> vs.VideoNode:
         return clip[lookup[n]]
 
     # BlankClip for the new length

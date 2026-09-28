@@ -1,17 +1,20 @@
+from __future__ import annotations
+from typing import Any, Dict, Optional
+import vapoursynth as vs
 from vapoursynth import core, RGB, RGBH, RGBS
 
 __version__ = '2.1.2'
 
 
-def resample_hq(clip, width=None, height=None, kernel='spline36', matrix=None, matrix_dst=None,
-                transfer=None, transfer_dst=None, src_left=None, src_top=None, src_width=None,
-                src_height=None, descale=False, filter_param_a=None, filter_param_b=None,
-                range_in=None, precision=1, hdr=False):
+def resample_hq(clip: vs.VideoNode, width: Optional[int] = None, height: Optional[int] = None, kernel: str = 'spline36', matrix: Optional[str] = None, matrix_dst: Optional[str] = None,
+                transfer: Optional[str] = None, transfer_dst: Optional[str] = None, src_left: Optional[float] = None, src_top: Optional[float] = None, src_width: Optional[float] = None,
+                src_height: Optional[float] = None, descale: bool = False, filter_param_a: Optional[float] = None, filter_param_b: Optional[float] = None,
+                range_in: Optional[str] = None, precision: int = 1, hdr: bool = False) -> vs.VideoNode:
     """Gamma correct resizing in linear light (RGB).
 
     Args:
-        width (int): The target width.
-        height (int): The target height.
+        width (int): The target width. Default is the source width.
+        height (int): The target height. Default is the source height.
         kernel (string): The kernel to use while resizing.
             Default is "spline36".
         matrix (string): The source matrix. Default is automatically decided bases on input clip
@@ -55,6 +58,12 @@ def resample_hq(clip, width=None, height=None, kernel='spline36', matrix=None, m
     if precision < 0 or precision > 1:
         raise ValueError('"precision" must be either 0 (half) or 1 (single).')
 
+    # Without a target size the source size is kept.
+    if width is None:
+        width = clip.width
+    if height is None:
+        height = clip.height
+
     # Var stuff
 
     if descale is True:
@@ -90,7 +99,7 @@ def resample_hq(clip, width=None, height=None, kernel='spline36', matrix=None, m
         else:
             scaler = core.descale.Despline36
 
-    scaler_opts = dict(width=width, height=height)
+    scaler_opts: Dict[str, Any] = dict(width=width, height=height)
 
     if descale is True:
         scaler_opts.update(src_top=src_top, src_left=src_left)

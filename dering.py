@@ -1,15 +1,16 @@
+from __future__ import annotations
 
 import vapoursynth as vs
 from vapoursynth import core
 
 import math
-from typing import Optional, Union, Sequence, TypeVar
+from typing import Optional, Union, Sequence, TypeVar, Callable, Mapping, Tuple
 
 from misc import MinBlur, median_blur, mt_expand_multi, mt_inflate_multi
 from helpers import scale, DFTTest, get_expr, pick_tool, tool_function, value_error
 from color import LimitFilter
 
-def _hysteresis_fn(tools=None):
+def _hysteresis_fn(tools: Optional[Mapping[str, str]] = None) -> Callable[..., vs.VideoNode]:
     """Pick the Hysteresis: tools['hysteresis'], else hysteresis, else misc."""
     return tool_function(tools, 'hysteresis', 'Hysteresis')
 
@@ -35,7 +36,7 @@ def HQDeringmod(
     planes: Union[int, Sequence[int]] = 0,
     show: bool = False,
     cuda: bool = False,
-    tools=None,
+    tools: Optional[Mapping[str, str]] = None,
 ) -> vs.VideoNode:
     '''
     HQDering mod v1.8
@@ -205,7 +206,7 @@ def HQDeringmod(
         return core.std.MaskedMerge(input, limitclp, ringmask, planes=planes, first_plane=True)
         
 # Taken from mvsfunc
-def mdering(clip: vs.VideoNode, thr: float = 2, tools=None) -> vs.VideoNode:
+def mdering(clip: vs.VideoNode, thr: float = 2, tools: Optional[Mapping[str, str]] = None) -> vs.VideoNode:
     """A simple light and bright DCT ringing remover
 
     It is a special instance of TMinBlur (r=1 and only filter the bright part) for higher performance.
@@ -250,7 +251,7 @@ def mdering(clip: vs.VideoNode, thr: float = 2, tools=None) -> vs.VideoNode:
 ################################################################################################################################
 ## Helper function: CheckColorFamily()
 ################################################################################################################################
-def CheckColorFamily(color_family, valid_list=None, invalid_list=None):
+def CheckColorFamily(color_family: vs.ColorFamily, valid_list: Optional[Sequence[str]] = None, invalid_list: Optional[Sequence[str]] = None) -> None:
     if valid_list is None:
         valid_list = ('RGB', 'YUV', 'GRAY')
     if invalid_list is None:
@@ -268,7 +269,7 @@ def CheckColorFamily(color_family, valid_list=None, invalid_list=None):
 ################################################################################################################################
 ## Internal used functions for LimitFilter()
 ################################################################################################################################
-def _limit_filter_expr(defref, thr, elast, largen_thr, value_range):
+def _limit_filter_expr(defref: bool, thr: float, elast: float, largen_thr: float, value_range: float) -> str:
     flt = " x "
     src = " y "
     ref = " z " if defref else src
@@ -319,7 +320,7 @@ def _limit_filter_expr(defref, thr, elast, largen_thr, value_range):
     
     
 
-def _expr2(clips: vs.VideoNode | list[vs.VideoNode], expr: str | list[str], tools=None) -> vs.VideoNode:
+def _expr2(clips: vs.VideoNode | list[vs.VideoNode], expr: str | list[str], tools: Optional[Mapping[str, str]] = None) -> vs.VideoNode:
     """Expr — akarin or cranexpr (tools['expr'] picks between them); std cannot evaluate these expressions."""
     name = pick_tool(tools, 'expr', ('akarin', 'cranexpr'))
     if name is not None:
@@ -427,7 +428,7 @@ _AR_MODES = {
 }
 
 
-def _ar_terms(taps) -> str:
+def _ar_terms(taps: Sequence[Tuple[int, int, float]]) -> str:
     """RPN for sqrt(sum of weighted squared neighbour differences)."""
     parts = []
     for index, (a, b, coeff) in enumerate(taps):
@@ -438,7 +439,7 @@ def _ar_terms(taps) -> str:
     return "".join(parts) + "sqrt "
 
 
-def _ar_block(spec, weightL: float, offsetL: int, weightR: float, offsetR: int,
+def _ar_block(spec: Tuple[Sequence[Tuple[int, int, float]], Sequence[Tuple[int, int, float]], Sequence[Tuple[int, int, float]], Tuple[int, int], str, float, Optional[str]], weightL: float, offsetL: int, weightR: float, offsetR: int,
               pr2_coeff: float, pr3_coeff: float, gate_scale: float, gate_bias: float) -> str:
     window, pr2_taps, pr3_taps, (near, far), side, factor, combine = spec
     if side == "L":
@@ -470,7 +471,7 @@ def _ar_expr(mode: str, weightL: float, offsetL: int, weightR: float, offsetR: i
     return "".join(blocks) + "x + "
 
 
-def _ar_apply(cl: vs.VideoNode, planes: str, expr: str, tools=None) -> vs.VideoNode:
+def _ar_apply(cl: vs.VideoNode, planes: str, expr: str, tools: Optional[Mapping[str, str]] = None) -> vs.VideoNode:
     """Run expr on the requested planes; the output format matches the input."""
     fmt_in = cl.format
     is_gray = fmt_in.color_family == vs.GRAY
@@ -510,7 +511,7 @@ def AntiRingLR(
     knee: float = 0.7,
     pr2: float = 0.5,
     pr3: float = 0.5,
-    tools=None,
+    tools: Optional[Mapping[str, str]] = None,
 ) -> vs.VideoNode:
     """
     Hans' Ringing Remover — VapourSynth port.
@@ -543,7 +544,7 @@ def AntiRingLRUD(
     knee: float = 0.7,
     pr2: float = 0.5,
     pr3: float = 0.5,
-    tools=None
+    tools: Optional[Mapping[str, str]] = None
 ) -> vs.VideoNode:
     """
     Hans' Ringing Remover — horizontal + vertical pass.
@@ -579,7 +580,7 @@ def AntiRingLR2(
     knee: float = 0.7,
     pr2: float = 0.5,
     pr3: float = 0.5,
-    tools=None,
+    tools: Optional[Mapping[str, str]] = None,
 ) -> vs.VideoNode:
     """
     Hans' Ringing Remover v2
@@ -612,7 +613,7 @@ def AntiRingL2R2(
     knee: float = 0.7,
     pr2: float = 0.5,
     pr3: float = 0.5,
-    tools=None,
+    tools: Optional[Mapping[str, str]] = None,
 ) -> vs.VideoNode:
     """
     Hans' Ringing Remover — two correction lobes on each side.
@@ -647,7 +648,7 @@ def AntiRing22LR(
     knee: float = 0.7,
     pr2: float = 0.5,
     pr3: float = 0.5,
-    tools=None,
+    tools: Optional[Mapping[str, str]] = None,
 ) -> vs.VideoNode:
     """
     Hans' Ringing Remover — two correction lobes on each side, with the
@@ -683,7 +684,7 @@ def AntiRingLR2UD(
     knee: float = 0.7,
     pr2: float = 0.5,
     pr3: float = 0.5,
-    tools=None,
+    tools: Optional[Mapping[str, str]] = None,
 ) -> vs.VideoNode:
     """
     Hans' Ringing Remover v2 — horizontal + vertical pass.

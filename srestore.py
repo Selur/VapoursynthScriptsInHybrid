@@ -171,39 +171,40 @@ def sRestoreMUVs(
             raise vs.Error('srestore: unexpected value for omode')
 
     class SRestoreState:
-        def __init__(self):
+        def __init__(self) -> None:
+            # The metrics below stay None until a frame sets them (to_frame_props skips None), hence Any.
             self.lfr = -100
             self.offs = 0
             self.ldet = -100
             self.lpos = 0
-            self.d32 = None
-            self.d21 = None
-            self.d10 = None
-            self.d01 = None
-            self.d12 = None
-            self.d23 = None
-            self.d34 = None
-            self.m42 = None
-            self.m31 = None
-            self.m20 = None
-            self.m11 = None
-            self.m02 = None
-            self.m13 = None
-            self.m24 = None
-            self.bp2 = None
-            self.bp1 = None
-            self.bn0 = None
-            self.bn1 = None
-            self.bn2 = None
-            self.bn3 = None
-            self.cp2 = None
-            self.cp1 = None
-            self.cn0 = None
-            self.cn1 = None
-            self.cn2 = None
-            self.cn3 = None
+            self.d32: Any = None
+            self.d21: Any = None
+            self.d10: Any = None
+            self.d01: Any = None
+            self.d12: Any = None
+            self.d23: Any = None
+            self.d34: Any = None
+            self.m42: Any = None
+            self.m31: Any = None
+            self.m20: Any = None
+            self.m11: Any = None
+            self.m02: Any = None
+            self.m13: Any = None
+            self.m24: Any = None
+            self.bp2: Any = None
+            self.bp1: Any = None
+            self.bn0: Any = None
+            self.bn1: Any = None
+            self.bn2: Any = None
+            self.bn3: Any = None
+            self.cp2: Any = None
+            self.cp1: Any = None
+            self.cn0: Any = None
+            self.cn1: Any = None
+            self.cn2: Any = None
+            self.cn3: Any = None
 
-        def update_from_frame(self, f: vs.VideoFrame):
+        def update_from_frame(self, f: vs.VideoFrame) -> None:
             if f is not None and hasattr(f, 'props'):
                 props = f.props
                 self.lfr = props.get("_lfr", self.lfr)

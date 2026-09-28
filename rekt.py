@@ -1,7 +1,8 @@
+from __future__ import annotations
 import vapoursynth as vs
 from vapoursynth import core
 
-def rekt(src, fix, left=0, top=0, right=0, bottom=0):
+def rekt(src: vs.VideoNode, fix: vs.VideoNode, left: int = 0, top: int = 0, right: int = 0, bottom: int = 0) -> vs.VideoNode:
     '''Creates a rectangular "mask" for a fix to be applied to.'''
 
     if left > 0 or right > 0:

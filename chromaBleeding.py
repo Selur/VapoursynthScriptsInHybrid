@@ -1,12 +1,13 @@
+from __future__ import annotations
 import vapoursynth as vs
 from vapoursynth import core
 
-from typing import Sequence
+from typing import Sequence, Mapping, Optional
 
 from helpers import GetPlane, get_expr
 
 # taken from old havsfunc
-def FixChromaBleedingMod(input: vs.VideoNode, cx: int = 4, cy: int = 4, thr: float = 4.0, strength: float = 0.8, blur: bool = False, tools=None) -> vs.VideoNode:
+def FixChromaBleedingMod(input: vs.VideoNode, cx: int = 4, cy: int = 4, thr: float = 4.0, strength: float = 0.8, blur: bool = False, tools: Optional[Mapping[str, str]] = None) -> vs.VideoNode:
     from color import Tweak
 
     if not isinstance(input, vs.VideoNode):

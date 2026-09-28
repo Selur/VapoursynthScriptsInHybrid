@@ -1,3 +1,4 @@
+from __future__ import annotations
 import vapoursynth as vs
 from functools import partial
 from typing import Optional, Union, Sequence
@@ -54,7 +55,7 @@ def CQTGMC(clip: vs.VideoNode, Sharpness: float=0.25, thSAD1: int=192, thSAD2: i
     Y_trimmed = Y[1:]+Y[-1:]
     diffclip_trimmed = core.std.PlaneStats(Y_trimmed, Y_trimmed[0]+Y_trimmed[0:-1])
     
-    def selectQTGMC(n, f, a, b):
+    def selectQTGMC(n: int, f: Sequence[vs.VideoFrame], a: vs.VideoNode, b: vs.VideoNode) -> vs.VideoNode:
         P = f[0].props['PlaneStatsDiff']
         N = f[1].props['PlaneStatsDiff']
         if N < P:

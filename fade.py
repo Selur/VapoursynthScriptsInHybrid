@@ -1,8 +1,9 @@
+from __future__ import annotations
 import vapoursynth as vs
 core = vs.core
 
 # based on: http://forum.doom9.org/archive/index.php/t-165771-p-4.html
-def fadeout(inputClip, fadeframes):
+def fadeout(inputClip: vs.VideoNode, fadeframes: int) -> vs.VideoNode:
 	beginframes = inputClip.num_frames-1 - fadeframes
 	blank = core.std.BlankClip(clip=inputClip, length=1)
 	fade_frames = []
@@ -14,7 +15,7 @@ def fadeout(inputClip, fadeframes):
 	fade_output = core.std.Splice(clips=fade_frames)
 	return fade_output
 
-def fadein(inputClip, fadeframes):
+def fadein(inputClip: vs.VideoNode, fadeframes: int) -> vs.VideoNode:
 	blank = core.std.BlankClip(clip=inputClip, length=1)
 	fade_frames = []
 	for i in range(inputClip.num_frames):

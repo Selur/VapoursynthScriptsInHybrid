@@ -1,3 +1,4 @@
+from __future__ import annotations
 # Frame Rate Converter
 # Version: 2.0 (2021-09-18) beta 9
 # By Etienne Charland
@@ -93,6 +94,7 @@
 ## rifeanime: Both Anime and Rife presets
 ##
 
+from typing import Any, Mapping, Optional, Sequence
 import functools
 import math
 import misc
@@ -102,8 +104,8 @@ from vapoursynth import core
 from misc import get_mv
 from helpers import get_expr
 
-def FrameRateConverter(C, newNum = None, newDen = None, preset = "normal", blkSize = None, blkSizeV = None, frameDouble = None, output = "auto", debug = False, \
-    prefilter = None, maskThr = None, maskOcc = None, skipThr = 45, blendOver = None, skipOver = None, stp = 35, dct = None, dctRe = None, blendRatio = 50, rife = None, rifeModel = None, rifeTta = False, rifeGpu = 0, tools=None):
+def FrameRateConverter(C: vs.VideoNode, newNum: Optional[int] = None, newDen: Optional[int] = None, preset: str = "normal", blkSize: Optional[int] = None, blkSizeV: Optional[int] = None, frameDouble: Optional[bool] = None, output: str = "auto", debug: bool = False, \
+    prefilter: Optional[vs.VideoNode] = None, maskThr: Optional[int] = None, maskOcc: Optional[int] = None, skipThr: int = 45, blendOver: Optional[int] = None, skipOver: Optional[int] = None, stp: int = 35, dct: Optional[int] = None, dctRe: Optional[int] = None, blendRatio: int = 50, rife: Optional[int] = None, rifeModel: Optional[int] = None, rifeTta: bool = False, rifeGpu: int = 0, tools: Optional[Mapping[str, str]] = None) -> vs.VideoNode:
     MV = get_mv(tools)
     if not isinstance(C, vs.VideoNode):
         raise vs.Error('FrameRateConverter: This is not a clip')
@@ -206,7 +208,7 @@ def FrameRateConverter(C, newNum = None, newDen = None, preset = "normal", blkSi
     C8 = C if C.format.sample_type == vs.INTEGER and C.format.bits_per_sample == 8 else \
         C.resize.Point(format=C.format.replace(sample_type=vs.INTEGER, bits_per_sample=8))
     maskFormat = core.query_video_format(vs.GRAY, C.format.sample_type, C.format.bits_per_sample, 0, 0)
-    def lift(mask):
+    def lift(mask: vs.VideoNode) -> vs.VideoNode:
         return mask if mask.format.id == maskFormat.id else mask.resize.Point(format=maskFormat.id, range_in_s="full", range_s="full")
 
     ## "EM" - error or artifact mask
@@ -308,7 +310,7 @@ def FrameRateConverter(C, newNum = None, newDen = None, preset = "normal", blkSi
     else:
         M = Flow
 
-    def thrSelect(n, f, thr, clipa, clipb, core):
+    def thrSelect(n: int, f: vs.VideoFrame, thr: float, clipa: vs.VideoNode, clipb: vs.VideoNode, core: vs.Core) -> vs.VideoNode:
         luma = f.props["PlaneStatsAverage"]
         return clipa if luma < thr else clipb
 
@@ -350,9 +352,9 @@ def FrameRateConverter(C, newNum = None, newDen = None, preset = "normal", blkSi
     else:
         raise vs.Error("FrameRateConverter: 'output' INTERNAL ERROR")
 
-    def getLuma(f):
+    def getLuma(f: vs.VideoFrame) -> float:
         return f.props["PlaneStatsAverage"] * 256
-    def setDebugOutput(n, f, R):
+    def setDebugOutput(n: int, f: Sequence[vs.VideoFrame], R: vs.VideoNode) -> vs.VideoNode:
         Skip = getLuma(f[0])
         SkipSoft = blendOver > 0 and Skip >= blendOver and (Skip < skipOver or skipOver == 0)
         txt = f"blkSize: {blkSize}"
@@ -381,7 +383,7 @@ def FrameRateConverter(C, newNum = None, newDen = None, preset = "normal", blkSi
     return R
 
 
-def Mask8(C, C8, vectors, kind, ml, tools=None, **kwargs):
+def Mask8(C: vs.VideoNode, C8: vs.VideoNode, vectors: vs.VideoNode, kind: int, ml: float, tools: Optional[Mapping[str, str]] = None, **kwargs: Any) -> vs.VideoNode:
     '''MV.Mask as full range Gray8.'''
     MV = get_mv(tools)
     if MV.use_mvu or C.format.sample_type == vs.FLOAT:
@@ -394,7 +396,7 @@ def Mask8(C, C8, vectors, kind, ml, tools=None, **kwargs):
     return mask if mask.format.id == vs.GRAY8 else mask.resize.Point(format=vs.GRAY8, range_in_s="full", range_s="full")
 
 
-def ToGray(C):
+def ToGray(C: vs.VideoNode) -> vs.VideoNode:
     prop_name = '_Range' if core.core_version.release_major >= 74 else '_ColorRange'
     return core.std.ShufflePlanes(clips=C, planes=0, colorfamily=vs.GRAY) \
         .std.SetFrameProp(prop_name, intval=0)
@@ -416,7 +418,7 @@ def ToGray(C):
 ## version 2017-05-21 bugfix: blockiness
 ## version 2021-06-23 converted to VapourSynth
 ##
-def GaussianBlur42(C, var = None, rad = None, vvar = None, vrad = None, p = None):
+def GaussianBlur42(C: vs.VideoNode, var: Optional[float] = None, rad: Optional[float] = None, vvar: Optional[float] = None, vrad: Optional[float] = None, p: Optional[float] = None) -> vs.VideoNode:
     if not isinstance(C, vs.VideoNode):
         raise vs.Error('GaussianBlur42: This is not a clip')
 
@@ -463,7 +465,7 @@ def GaussianBlur42(C, var = None, rad = None, vvar = None, vrad = None, p = None
 ##
 ## @ strf        - The grey color of the masked areas from the next frame.
 ##
-def StripeMask(clip, blksize = 16, blksizev = None, str = 200, strf = 0, tools=None):
+def StripeMask(clip: vs.VideoNode, blksize: int = 16, blksizev: Optional[float] = None, str: int = 200, strf: int = 0, tools: Optional[Mapping[str, str]] = None) -> vs.VideoNode:
     if not isinstance(clip, vs.VideoNode):
         raise vs.Error('StripeMask: This is not a clip')
 

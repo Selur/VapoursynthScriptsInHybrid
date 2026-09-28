@@ -1,3 +1,4 @@
+from __future__ import annotations
 # Port of proToon 0.7.5
 # Author: TheProfileth
 # see: http://avisynth.nl/index.php/ProToon
@@ -35,7 +36,7 @@
 ##
 
 import vapoursynth as vs
-from typing import Optional
+from typing import Optional, Mapping
 from helpers import get_expr, tool_function, pick_tool
 
 core = vs.core
@@ -56,7 +57,7 @@ def mf_str_level(x: str, in_low: int, in_high: int, out_low: int, out_high: int,
     return mf_max(mf_min(f"{x} {scale} * {in_low} - {in_high - in_low} / {out_high - out_low} * {out_low} +", f"{235 * scale // 255}"), f"{16 * scale // 255}")
 
 # Xsharpen function based on WarpSharpSupport
-def Xsharpen(clip: vs.VideoNode, strength: int = 128, threshold: int = 8, tools=None) -> vs.VideoNode:
+def Xsharpen(clip: vs.VideoNode, strength: int = 128, threshold: int = 8, tools: Optional[Mapping[str, str]] = None) -> vs.VideoNode:
     bits = clip.format.bits_per_sample
     expr = f"y x - x z - min {threshold} < x z - y x - < z y ? {strength / 256} * x {(256 - strength) / 256} * + x ?"
     EXPR = get_expr(tools)
@@ -69,7 +70,7 @@ def proToon(input: vs.VideoNode,
             strength: int = 48, luma_cap: int = 191, threshold: int = 4, thinning: int = 0, 
             sharpen: bool = True, mask: bool = True, 
             ssw: int = 4, ssh: int = 4, 
-            xstren: int = 255, xthresh: int = 255, pcScale: bool = False, tools=None) -> vs.VideoNode:
+            xstren: int = 255, xthresh: int = 255, pcScale: bool = False, tools: Optional[Mapping[str, str]] = None) -> vs.VideoNode:
 
     bits = input.format.bits_per_sample
     scale = (1 << bits) - 1

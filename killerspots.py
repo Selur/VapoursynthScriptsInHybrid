@@ -1,3 +1,5 @@
+from __future__ import annotations
+from typing import Mapping, Optional
 import vapoursynth as vs
 from misc import get_mv
 from helpers import tool_function
@@ -16,7 +18,7 @@ from helpers import tool_function
 # Adapted by GMJCZP
 # Requirements: MVTools, RGTools, RemoveDirt
 
-def KillerSpots(clip: vs.VideoNode, limit: int=10, advanced: bool=False, tools=None):
+def KillerSpots(clip: vs.VideoNode, limit: int=10, advanced: bool=False, tools: Optional[Mapping[str, str]] = None) -> vs.VideoNode:
   core = vs.core
   MV = get_mv(tools)
   # advanced: Use 'False' for best speed and original KillerSpots. Use 'True' to specify a 'limit'. Default True;
@@ -35,7 +37,7 @@ def KillerSpots(clip: vs.VideoNode, limit: int=10, advanced: bool=False, tools=N
   return clip;
 
 # From function RemoveDirt, original adaptation thanks to johnmeyer
-def RemoveDirtMod(clip: vs.VideoNode, limit: int =10, tools=None):
+def RemoveDirtMod(clip: vs.VideoNode, limit: int =10, tools: Optional[Mapping[str, str]] = None) -> vs.VideoNode:
   core = vs.core
   clensed = tool_function(tools, 'rg', 'Clense')(clip)
   alt = tool_function(tools, 'rg', 'RemoveGrain')(clip,mode=1)

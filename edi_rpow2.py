@@ -1,3 +1,5 @@
+from __future__ import annotations
+from typing import Callable, Mapping, Optional
 import vapoursynth as vs
 import math
 
@@ -6,7 +8,7 @@ core = vs.core
 from helpers import NNEDI3
 
 
-def edi_rpow2(clip, rfactor, correct_shift="fmtconv", edi=None):
+def edi_rpow2(clip: vs.VideoNode, rfactor: int, correct_shift: str = "fmtconv", edi: Optional[Callable[..., vs.VideoNode]] = None) -> vs.VideoNode:
     """
     Scales clip by rfactor (power of two) using an EDI function that doubles size.
     edi(clip, field, dh) must perform a 2x vertical upscale.
@@ -38,7 +40,7 @@ def edi_rpow2(clip, rfactor, correct_shift="fmtconv", edi=None):
     return clip
 
 
-def correct_edi_shift(clip, rfactor, plugin):
+def correct_edi_shift(clip: vs.VideoNode, rfactor: int, plugin: str) -> vs.VideoNode:
     """
     Corrects subpixel shift introduced by NNEDI upscaling, depending on plugin.
     """
@@ -81,15 +83,15 @@ def correct_edi_shift(clip, rfactor, plugin):
     return clip
 
 
-def nnedi3_rpow2(clip, rfactor, correct_shift="fmtconv",
-                 nsize=0, nns=3, qual=None, etype=None,
-                 pscrn=None, opt=None,
-                 int16_prescreener=None, int16_predictor=None, exp=None, device=None, tools=None):
+def nnedi3_rpow2(clip: vs.VideoNode, rfactor: int, correct_shift: str = "fmtconv",
+                 nsize: int = 0, nns: int = 3, qual: Optional[int] = None, etype: Optional[int] = None,
+                 pscrn: Optional[int] = None, opt: Optional[bool] = None,
+                 int16_prescreener: Optional[bool] = None, int16_predictor: Optional[bool] = None, exp: Optional[int] = None, device: Optional[int] = None, tools: Optional[Mapping[str, str]] = None) -> vs.VideoNode:
     """
     Scales using nnedi3 or znedi3 if available; tools['nnedi3'] picks the implementation.
     """
 
-    def edi_func(c, field, dh):
+    def edi_func(c: vs.VideoNode, field: int, dh: bool) -> vs.VideoNode:
         return NNEDI3(
             c, field=field, dh=dh, gpu=False, device=device, nsize=nsize, nns=nns,
             qual=qual, etype=etype, pscrn=pscrn, opt=opt,
@@ -100,14 +102,14 @@ def nnedi3_rpow2(clip, rfactor, correct_shift="fmtconv",
     return edi_rpow2(clip, rfactor, correct_shift, edi_func)
 
 
-def nnedi3cl_rpow2(clip, rfactor, correct_shift="fmtconv",
-                   nsize=0, nns=3, qual=None, etype=None, pscrn=None, device=None, tools=None):
+def nnedi3cl_rpow2(clip: vs.VideoNode, rfactor: int, correct_shift: str = "fmtconv",
+                   nsize: int = 0, nns: int = 3, qual: Optional[int] = None, etype: Optional[int] = None, pscrn: Optional[int] = None, device: Optional[int] = None, tools: Optional[Mapping[str, str]] = None) -> vs.VideoNode:
     """
     Kept for callers that ask for the GPU variant by name. Which implementation actually runs is
     decided by NNEDI3() from whatever is loaded; this only says that a GPU one is preferred.
     """
 
-    def edi_func(c, field, dh):
+    def edi_func(c: vs.VideoNode, field: int, dh: bool) -> vs.VideoNode:
         return NNEDI3(
             c, field=field, dh=dh, gpu=True, device=device,
             nsize=nsize, nns=nns, qual=qual,

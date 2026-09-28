@@ -1,11 +1,13 @@
+from __future__ import annotations
+from typing import Any, Dict, Mapping, Optional
 import vapoursynth as vs
 
 from helpers import NNEDI3
 
 
-def nnedi3_rpow2(clip, rfactor=2, width=None, height=None, correct_shift=True,
-                 kernel="spline36", nsize=0, nns=3, qual=None, etype=None, pscrn=None,
-                 opt=True, int16_prescreener=None, int16_predictor=None, exp=None, tools=None):
+def nnedi3_rpow2(clip: vs.VideoNode, rfactor: int = 2, width: Optional[int] = None, height: Optional[int] = None, correct_shift: bool = True,
+                 kernel: str = "spline36", nsize: int = 0, nns: int = 3, qual: Optional[int] = None, etype: Optional[int] = None, pscrn: Optional[int] = None,
+                 opt: bool = True, int16_prescreener: Optional[bool] = None, int16_predictor: Optional[bool] = None, exp: Optional[int] = None, tools: Optional[Mapping[str, str]] = None) -> vs.VideoNode:
     """nnedi3_rpow2 is for enlarging images by powers of 2.
 
     Args:
@@ -36,7 +38,7 @@ def nnedi3_rpow2(clip, rfactor=2, width=None, height=None, correct_shift=True,
         height = clip.height*rfactor
     hshift = 0.0
     vshift = -0.5
-    pkdnnedi = dict(dh=True, nsize=nsize, nns=nns, qual=qual, etype=etype,
+    pkdnnedi: Dict[str, Any] = dict(dh=True, nsize=nsize, nns=nns, qual=qual, etype=etype,
                     pscrn=pscrn, opt=opt, int16_prescreener=int16_prescreener,
                     int16_predictor=int16_predictor, exp=exp, tools=tools)
     pkdchroma = dict(kernel=kernel, sy=-0.5, planes=[2, 3, 3])

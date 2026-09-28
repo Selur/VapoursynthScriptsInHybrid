@@ -10,7 +10,7 @@ Shift = Tuple[float, float]
 FrameShifts = Dict[str, Shift]
 
 class ChromaFixer:
-    def __init__(self, clip, referenceframe, accuracy, maxshift, nodisplay, nofix):
+    def __init__(self, clip: vs.VideoNode, referenceframe: int, accuracy: float, maxshift: int, nodisplay: bool, nofix: bool) -> None:
         if clip.format.color_family != vs.YUV:
             raise ValueError("Input must be YUV format")
         if maxshift < 0:

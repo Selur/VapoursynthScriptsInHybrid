@@ -1,3 +1,6 @@
+from __future__ import annotations
+import vapoursynth as vs
+from typing import Callable, Optional
 from enum import IntEnum
 from vapoursynth import core, GRAYS, RGBS, GRAY, YUV, RGB
 
@@ -14,29 +17,29 @@ class Opt(IntEnum):
 
 # If yuv444 is True chroma will be upscaled instead of downscaled (i.e. output is in 4:4:4 format)
 # If gray is True the output will be grayscale (i.e. just the luma plane is processed and returned)
-def Debilinear(src, width, height, border_handling=None, yuv444=False, gray=False, chromaloc=None):
+def Debilinear(src: vs.VideoNode, width: int, height: int, border_handling: Optional[int] = None, yuv444: bool = False, gray: bool = False, chromaloc: Optional[str] = None) -> vs.VideoNode:
     return Descale(src, width, height, kernel='bilinear', border_handling=border_handling, yuv444=yuv444, gray=gray, chromaloc=chromaloc)
 
-def Debicubic(src, width, height, b=0.0, c=0.5, border_handling=None, yuv444=False, gray=False, chromaloc=None):
+def Debicubic(src: vs.VideoNode, width: int, height: int, b: float = 0.0, c: float = 0.5, border_handling: Optional[int] = None, yuv444: bool = False, gray: bool = False, chromaloc: Optional[str] = None) -> vs.VideoNode:
     return Descale(src, width, height, kernel='bicubic', b=b, c=c, border_handling=border_handling, yuv444=yuv444, gray=gray, chromaloc=chromaloc)
 
-def Delanczos(src, width, height, taps=3, border_handling=None, yuv444=False, gray=False, chromaloc=None):
+def Delanczos(src: vs.VideoNode, width: int, height: int, taps: int = 3, border_handling: Optional[int] = None, yuv444: bool = False, gray: bool = False, chromaloc: Optional[str] = None) -> vs.VideoNode:
     return Descale(src, width, height, kernel='lanczos', taps=taps, border_handling=border_handling, yuv444=yuv444, gray=gray, chromaloc=chromaloc)
 
-def Despline16(src, width, height, border_handling=None, yuv444=False, gray=False, chromaloc=None):
+def Despline16(src: vs.VideoNode, width: int, height: int, border_handling: Optional[int] = None, yuv444: bool = False, gray: bool = False, chromaloc: Optional[str] = None) -> vs.VideoNode:
     return Descale(src, width, height, kernel='spline16', border_handling=border_handling, yuv444=yuv444, gray=gray, chromaloc=chromaloc)
 
-def Despline36(src, width, height, border_handling=None, yuv444=False, gray=False, chromaloc=None):
+def Despline36(src: vs.VideoNode, width: int, height: int, border_handling: Optional[int] = None, yuv444: bool = False, gray: bool = False, chromaloc: Optional[str] = None) -> vs.VideoNode:
     return Descale(src, width, height, kernel='spline36', border_handling=border_handling, yuv444=yuv444, gray=gray, chromaloc=chromaloc)
 
-def Despline64(src, width, height, border_handling=None, yuv444=False, gray=False, chromaloc=None):
+def Despline64(src: vs.VideoNode, width: int, height: int, border_handling: Optional[int] = None, yuv444: bool = False, gray: bool = False, chromaloc: Optional[str] = None) -> vs.VideoNode:
     return Descale(src, width, height, kernel='spline64', border_handling=border_handling, yuv444=yuv444, gray=gray, chromaloc=chromaloc)
 
-def Decustom(src, width, height, custom_kernel, taps, border_handling=None, yuv444=False, gray=False, chromaloc=None):
+def Decustom(src: vs.VideoNode, width: int, height: int, custom_kernel: Callable[[float], float], taps: int, border_handling: Optional[int] = None, yuv444: bool = False, gray: bool = False, chromaloc: Optional[str] = None) -> vs.VideoNode:
     return Descale(src, width, height, custom_kernel=custom_kernel, taps=taps, border_handling=border_handling, yuv444=yuv444, gray=gray, chromaloc=chromaloc)
 
 
-def Descale(src, width, height, kernel=None, custom_kernel=None, taps=None, b=None, c=None, border_handling=None, yuv444=False, gray=False, chromaloc=None):
+def Descale(src: vs.VideoNode, width: int, height: int, kernel: Optional[str] = None, custom_kernel: Optional[Callable[[float], float]] = None, taps: Optional[int] = None, b: Optional[float] = None, c: Optional[float] = None, border_handling: Optional[int] = None, yuv444: bool = False, gray: bool = False, chromaloc: Optional[str] = None) -> vs.VideoNode:
     src_f = src.format
     src_cf = src_f.color_family
     src_st = src_f.sample_type

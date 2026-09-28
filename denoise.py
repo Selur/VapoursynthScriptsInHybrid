@@ -1,9 +1,10 @@
+from __future__ import annotations
 import vapoursynth as vs
 from vapoursynth import core
 
 import math
 
-from typing import Optional, Union, Sequence
+from typing import Any, Dict, Mapping, Optional, Sequence, Union
 
 from helpers import GetPlane, scale_value, scale, cround, DitherLumaRebuild, KNLMeansCL, DFTTest, BoxFilter, get_expr, get_rg, pick_tool, tool_function
 
@@ -197,11 +198,12 @@ from misc import get_mv, MinBlur, SCDetect, mt_expand_multi
 ### +-------------+----------------------+----------------------+----------------------+----------------------+----------------------+
 ###
 ####################################################################################################################################
-def MCTemporalDenoise(i, radius=None, pfMode=3, sigma=None, twopass=None, useTTmpSm=False, limit=None, limit2=None, post=0, chroma=None, refine=False, deblock=False, useQED=None, quant1=None,
-                      quant2=None, edgeclean=False, ECrad=None, ECthr=None, stabilize=None, maxr=None, TTstr=None, bwbh=None, owoh=None, blksize=None, overlap=None, bt=None, ncpu=1, thSAD=None,
-                      thSADC=None, thSAD2=None, thSADC2=None, thSCD1=None, thSCD2=None, truemotion=False, MVglobal=True, pel=None, pelsearch=None, search=4, searchparam=2, MVsharp=None, DCT=0, p=None,
-                      settings='low', cuda=False, tools=None):
+def MCTemporalDenoise(i: vs.VideoNode, radius: Optional[int] = None, pfMode: int = 3, sigma: Optional[float] = None, twopass: Optional[bool] = None, useTTmpSm: bool = False, limit: Optional[float] = None, limit2: Optional[float] = None, post: float = 0, chroma: Optional[bool] = None, refine: bool = False, deblock: bool = False, useQED: Optional[bool] = None, quant1: Optional[int] = None,
+                      quant2: Optional[int] = None, edgeclean: bool = False, ECrad: Optional[int] = None, ECthr: Optional[float] = None, stabilize: Optional[bool] = None, maxr: Optional[int] = None, TTstr: Optional[int] = None, bwbh: Optional[int] = None, owoh: Optional[int] = None, blksize: Optional[int] = None, overlap: Optional[int] = None, bt: Optional[int] = None, ncpu: int = 1, thSAD: Optional[int] = None,
+                      thSADC: Optional[int] = None, thSAD2: Optional[int] = None, thSADC2: Optional[int] = None, thSCD1: Optional[int] = None, thSCD2: Optional[int] = None, truemotion: bool = False, MVglobal: bool = True, pel: Optional[int] = None, pelsearch: Optional[int] = None, search: int = 4, searchparam: int = 2, MVsharp: Optional[int] = None, DCT: int = 0, p: Optional[vs.VideoNode] = None,
+                      settings: str = 'low', cuda: bool = False, scd_thscd1: float = 400.0, scd_thscd2: float = 130.0, tools: Optional[Mapping[str, str]] = None) -> vs.VideoNode:
     # cuda: True looks for a GPU DFTTest implementation (vszipcu, then dfttest2), False stays on CPU.
+    # scd_thscd1/scd_thscd2: scene detection with tools['scd'] 'mv'; thSCD1/thSCD2 belong to the motion compensation.
     if not isinstance(i, vs.VideoNode):
         raise vs.Error('MCTemporalDenoise: this is not a clip')
 
@@ -300,7 +302,7 @@ def MCTemporalDenoise(i, radius=None, pfMode=3, sigma=None, twopass=None, useTTm
     i = i.resize.Point(**pointresize_args)
 
     ### PREFILTERING
-    fft3d_args = dict(planes=planes, bw=bwbh, bh=bwbh, bt=bt, ow=owoh, oh=owoh, ncpu=ncpu)
+    fft3d_args: Dict[str, Any] = dict(planes=planes, bw=bwbh, bh=bwbh, bt=bt, ow=owoh, oh=owoh, ncpu=ncpu)
     if p is not None:
         p = p.resize.Point(**pointresize_args)
     elif pfMode <= -1:
@@ -329,14 +331,14 @@ def MCTemporalDenoise(i, radius=None, pfMode=3, sigma=None, twopass=None, useTTm
 
     ### PREPARING
     MV = get_mv(tools)
-    super_args = dict(hpad=0, vpad=0, pel=pel, chroma=chroma, sharp=MVsharp, blksize=blksize, overlap=overlap)
+    super_args: Dict[str, Any] = dict(hpad=0, vpad=0, pel=pel, chroma=chroma, sharp=MVsharp, blksize=blksize, overlap=overlap)
     pMVS = MV.Super(p, rfilter=4 if refine else 2, **super_args)
     if refine:
-        super_re_args = dict(hpad=0, vpad=0, pel=pel, chroma=chroma, sharp=MVsharp, blksize=max(blksize // 2, 4), overlap=max(overlap // 2, 2))
+        super_re_args: Dict[str, Any] = dict(hpad=0, vpad=0, pel=pel, chroma=chroma, sharp=MVsharp, blksize=max(blksize // 2, 4), overlap=max(overlap // 2, 2))
         rMVS = MV.Super(p, levels=1, **super_re_args)
 
-    analyse_args = dict(blksize=blksize, search=search, searchparam=searchparam, pelsearch=pelsearch, chroma=chroma, truemotion=truemotion, global_=MVglobal, overlap=overlap, dct=DCT)
-    recalculate_args = dict(thsad=thSAD // 2, blksize=max(blksize // 2, 4), search=search, chroma=chroma, truemotion=truemotion, overlap=max(overlap // 2, 2), dct=DCT)
+    analyse_args: Dict[str, Any] = dict(blksize=blksize, search=search, searchparam=searchparam, pelsearch=pelsearch, chroma=chroma, truemotion=truemotion, global_=MVglobal, overlap=overlap, dct=DCT)
+    recalculate_args: Dict[str, Any] = dict(thsad=thSAD // 2, blksize=max(blksize // 2, 4), search=search, chroma=chroma, truemotion=truemotion, overlap=max(overlap // 2, 2), dct=DCT)
     f1v = MV.Analyse(pMVS, isb=False, delta=1, **analyse_args)
     b1v = MV.Analyse(pMVS, isb=True, delta=1, **analyse_args)
     if refine:
@@ -378,8 +380,8 @@ def MCTemporalDenoise(i, radius=None, pfMode=3, sigma=None, twopass=None, useTTm
         # SAD_f1m = MV.Mask(d, f1v, **mask_args)
         # SAD_b1m = MV.Mask(d, b1v, **mask_args)
 
-    def MCTD_MVD(i, iMVS, thSAD, thSADC):
-        degrain_args = dict(thsad=thSAD, thsadc=thSADC, plane=4 if chroma else 0, thscd1=thSCD1, thscd2=thSCD2)
+    def MCTD_MVD(i: vs.VideoNode, iMVS: vs.VideoNode, thSAD: int, thSADC: int) -> vs.VideoNode:
+        degrain_args: Dict[str, Any] = dict(thsad=thSAD, thsadc=thSADC, plane=4 if chroma else 0, thscd1=thSCD1, thscd2=thSCD2)
         if radius <= 1:
             sm = MV.Degrain1(i, iMVS, b1v, f1v, **degrain_args)
         elif radius == 2:
@@ -401,8 +403,8 @@ def MCTemporalDenoise(i, radius=None, pfMode=3, sigma=None, twopass=None, useTTm
 
         return sm
 
-    def MCTD_TTSM(i, iMVS, thSAD):
-        compensate_args = dict(thsad=thSAD, thscd1=thSCD1, thscd2=thSCD2)
+    def MCTD_TTSM(i: vs.VideoNode, iMVS: vs.VideoNode, thSAD: int) -> vs.VideoNode:
+        compensate_args: Dict[str, Any] = dict(thsad=thSAD, thscd1=thSCD1, thscd2=thSCD2)
         f1c = MV.Compensate(i, iMVS, f1v, **compensate_args)
         b1c = MV.Compensate(i, iMVS, b1v, **compensate_args)
         if radius > 1:
@@ -451,7 +453,7 @@ def MCTemporalDenoise(i, radius=None, pfMode=3, sigma=None, twopass=None, useTTm
             c = core.std.Interleave([f6c, f5c, f4c, f3c, f2c, f1c, i, b1c, b2c, b3c, b4c, b5c, b6c])
             # SAD_m = core.std.Interleave([SAD_f6m, SAD_f5m, SAD_f4m, SAD_f3m, SAD_f2m, SAD_f1m, b, SAD_b1m, SAD_b2m, SAD_b3m, SAD_b4m, SAD_b5m, SAD_b6m])
 
-        c = SCDetect(c, threshold=0.999, tools=tools)
+        c = SCDetect(c, threshold=0.999, scd_thscd1=scd_thscd1, scd_thscd2=scd_thscd2, tools=tools)
         if pick_tool(tools, 'ttempsmooth', ('zsmooth', 'ttmpsm'), lambda name: name == 'ttmpsm' or hasattr(core, 'zsmooth')) == 'zsmooth':
           sm = core.zsmooth.TTempSmooth(c, maxr=radius, thresh=[255], mdiff=[1], strength=radius + 1, scthresh=-1, fp=False, planes=planes)
         else:
@@ -515,7 +517,7 @@ def MCTemporalDenoise(i, radius=None, pfMode=3, sigma=None, twopass=None, useTTm
         mF = mE.std.Convolution(matrix=[1, 1, 1, 1, 1, 1, 1, 1, 1])
         if pick_tool(tools, 'ttempsmooth', ('zsmooth', 'ttmpsm'), lambda name: name == 'ttmpsm' or hasattr(core, 'zsmooth')) == 'zsmooth':
           import misc
-          smP = SCDetect(smP, threshold=0.12, tools=tools)
+          smP = SCDetect(smP, threshold=0.12, scd_thscd1=scd_thscd1, scd_thscd2=scd_thscd2, tools=tools)
           TTc = smP.zsmooth.TTempSmooth(maxr=maxr, mdiff=[255], strength=TTstr, scthresh=-1, planes=planes)
         else:
           TTc = smP.ttmpsm.TTempSmooth(maxr=maxr, mdiff=[255], strength=TTstr, planes=planes)
@@ -524,7 +526,7 @@ def MCTemporalDenoise(i, radius=None, pfMode=3, sigma=None, twopass=None, useTTm
     ### OUTPUT
     return smP.std.Crop(**crop_args)
     
-def mClean(clip, thSAD=400, chroma=True, sharp=10, rn=14, deband=0, depth=0, strength=20, outbits=None, icalc=True, rgmode=18, tools=None):
+def mClean(clip: vs.VideoNode, thSAD: int = 400, chroma: bool = True, sharp: float = 10, rn: int = 14, deband: int = 0, depth: int = 0, strength: int = 20, outbits: Optional[int] = None, icalc: bool = True, rgmode: int = 18, tools: Optional[Mapping[str, str]] = None) -> vs.VideoNode:
     """
     From: https://forum.doom9.org/showthread.php?t=174804 by burfadel
     mClean spatio/temporal denoiser
@@ -639,8 +641,8 @@ def mClean(clip, thSAD=400, chroma=True, sharp=10, rn=14, deband=0, depth=0, str
 
     super1 = S(c if chroma else cy, hpad=bs, vpad=bs, pel=pel, rfilter=4, sharp=1, blksize=bs, overlap=ov)
     super2 = S(c if chroma else cy, hpad=bs, vpad=bs, pel=pel, rfilter=1, levels=1, blksize=bs, overlap=ov)
-    analyse_args = dict(blksize=bs, overlap=ov, search=5, truemotion=truemotion)
-    recalculate_args = dict(blksize=bs, overlap=ov, search=5, truemotion=truemotion, thsad=180, lambda_=lampa)
+    analyse_args: Dict[str, Any] = dict(blksize=bs, overlap=ov, search=5, truemotion=truemotion)
+    recalculate_args: Dict[str, Any] = dict(blksize=bs, overlap=ov, search=5, truemotion=truemotion, thsad=180, lambda_=lampa)
 
     # Analysis
     bvec4 = R(super1, A(super1, isb=True,  delta=4, **analyse_args), **recalculate_args) if not icalc else None
@@ -746,7 +748,7 @@ def EZDenoise(
     pel: int = 1,
     chroma: bool = True,
     out16: bool = False,
-    tools=None
+    tools: Optional[Mapping[str, str]] = None
 ) -> vs.VideoNode:
     """
     Flexible multi-frame denoising using MVTools.

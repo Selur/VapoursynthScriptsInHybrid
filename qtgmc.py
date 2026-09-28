@@ -1,3 +1,4 @@
+from __future__ import annotations
 import vapoursynth as vs
 from vapoursynth import core
 
@@ -1248,7 +1249,7 @@ def QTGMC_Interpolate(
     return core.std.ShufflePlanes([interp, interpuv], planes=[0, 1, 2], colorfamily=Input.format.color_family)
 
 
-def QTGMC_KeepOnlyBobShimmerFixes(Input: vs.VideoNode, Ref: vs.VideoNode, Rep: int = 1, Chroma: bool = True, tools=None) -> vs.VideoNode:
+def QTGMC_KeepOnlyBobShimmerFixes(Input: vs.VideoNode, Ref: vs.VideoNode, Rep: int = 1, Chroma: bool = True, tools: Optional[Mapping[str, str]] = None) -> vs.VideoNode:
     '''
     Helper function: Compare processed clip with reference clip: only allow thin, horizontal areas of difference, i.e. bob shimmer fixes
     Rough algorithm: Get difference, deflate vertically by a couple of pixels or so, then inflate again. Thin regions will be removed
@@ -1327,7 +1328,7 @@ def QTGMC_KeepOnlyBobShimmerFixes(Input: vs.VideoNode, Ref: vs.VideoNode, Rep: i
     return core.std.MergeDiff(Input, restore, planes=planes)
 
 
-def QTGMC_Generate2ndFieldNoise(Input: vs.VideoNode, InterleavedClip: vs.VideoNode, ChromaNoise: bool = False, TFF: Optional[bool] = None, tools=None) -> vs.VideoNode:
+def QTGMC_Generate2ndFieldNoise(Input: vs.VideoNode, InterleavedClip: vs.VideoNode, ChromaNoise: bool = False, TFF: Optional[bool] = None, tools: Optional[Mapping[str, str]] = None) -> vs.VideoNode:
     '''
     Given noise extracted from an interlaced source (i.e. the noise is interlaced), generate "progressive" noise with a new "field" of noise injected. The new
     noise is centered on a weighted local average and uses the difference between local min & max as an estimate of local variance
@@ -1358,7 +1359,7 @@ def QTGMC_Generate2ndFieldNoise(Input: vs.VideoNode, InterleavedClip: vs.VideoNo
     return Weave(core.std.Interleave([origNoise, newNoise]), tff=TFF)
 
 
-def QTGMC_MakeLossless(Input: vs.VideoNode, Source: vs.VideoNode, InputType: int, TFF: Optional[bool] = None, tools=None) -> vs.VideoNode:
+def QTGMC_MakeLossless(Input: vs.VideoNode, Source: vs.VideoNode, InputType: int, TFF: Optional[bool] = None, tools: Optional[Mapping[str, str]] = None) -> vs.VideoNode:
     '''
     Insert the source lines into the result to create a true lossless output. However, the other lines in the result have had considerable processing and won't
     exactly match source lines. There will be some slight residual combing. Use vertical medians to clean a little of this away

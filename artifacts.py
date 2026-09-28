@@ -1,3 +1,5 @@
+from __future__ import annotations
+from typing import Mapping, Optional
 from vapoursynth import core
 import vapoursynth as vs
 
@@ -7,7 +9,7 @@ from helpers import pick_tool, tool_function
 # VS port of a script by Didée http://forum.doom9.net/showthread.php?p=1402690#post1402690
 # In my experience this filter works very good as a prefilter for SMDegrain(). 
 # Filtering only luma seems to help to avoid ghost artefacts.
-def DeSpot(o, tools=None):
+def DeSpot(o: vs.VideoNode, tools: Optional[Mapping[str, str]] = None) -> vs.VideoNode:
   MV = get_mv(tools)
   osup = MV.Super(o, pel=2, sharp=2, blksize=8, overlap=4)
   bv1  = MV.Analyse(osup, isb=True, delta=1, blksize=8, overlap=4, search=4)
@@ -27,7 +29,7 @@ core = vs.core
 # Requires
 # zsmooth: https://github.com/adworacz/zsmooth
 # RemoveDirt: https://github.com/pinterf/RemoveDirt
-def RemoveSpots(clip: vs.VideoNode, grey: bool = False, limit: int = 16, tools=None) -> vs.VideoNode:
+def RemoveSpots(clip: vs.VideoNode, grey: bool = False, limit: int = 16, tools: Optional[Mapping[str, str]] = None) -> vs.VideoNode:
     """
     Temporal spot/dirt removal filter using zsmooth and RemoveDirt.
     
@@ -107,7 +109,7 @@ def RemoveSpots(clip: vs.VideoNode, grey: bool = False, limit: int = 16, tools=N
 # zsmooth: https://github.com/adworacz/zsmooth
 # RemoveDirt: https://github.com/pinterf/RemoveDirt
 # mvtools: https://github.com/Mr-Z-2697/vapoursynth-mvtools
-def RemoveSpotsMCX(clip: vs.VideoNode, limit: int = 6, grey: bool = False, runs: int = 3, tools=None) -> vs.VideoNode:
+def RemoveSpotsMCX(clip: vs.VideoNode, limit: int = 6, grey: bool = False, runs: int = 3, tools: Optional[Mapping[str, str]] = None) -> vs.VideoNode:
     """
     Motion-compensated temporal spot removal using mvtools + RemoveSpots.
 

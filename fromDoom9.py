@@ -1,3 +1,5 @@
+from __future__ import annotations
+from typing import Callable, Mapping, Optional, Tuple
 from vapoursynth import core
 import vapoursynth as vs
 import math
@@ -11,11 +13,11 @@ from misc import get_mv, SCDetect
 from color import LimitFilter
 from helpers import NLMeans, get_expr, pick_tool, tool_function
 
-def _boxblur_fn(tools=None):
+def _boxblur_fn(tools: Optional[Mapping[str, str]] = None) -> Callable[..., vs.VideoNode]:
     """Pick the BoxBlur: tools['boxblur'], else vszip, else std."""
     return tool_function(tools, 'boxblur', 'BoxBlur')
 
-def _nlmeans_gray(clip: vs.VideoNode, d: int, a: int, s: int, h: float, tools=None) -> vs.VideoNode:
+def _nlmeans_gray(clip: vs.VideoNode, d: int, a: int, s: int, h: float, tools: Optional[Mapping[str, str]] = None) -> vs.VideoNode:
     """NLMeans on a GRAY clip, using whichever NLMeans plugin is available (tools['nlmeans'] picks it)."""
     return NLMeans(clip, d=d, a=a, s=s, h=h, tools=tools)
 
@@ -27,7 +29,7 @@ def _nlmeans_gray(clip: vs.VideoNode, d: int, a: int, s: int, h: float, tools=No
 # int thr: blur threshold, wil be scaled by bit depth (default: 256, range: 1-256)
 # boolean vertical: transposes the source for the filtering, to handle vertical lines instead of horizontal ones. (default: False)
 # str hvmode: whether to use vertival or hoizontal convolution
-def DeStripe(clip: vs.VideoNode, rad: int=2, offset: int=0, thr: int=256, vertical=False, hvmode: str='v', tools=None) -> vs.VideoNode:
+def DeStripe(clip: vs.VideoNode, rad: int=2, offset: int=0, thr: int=256, vertical: bool = False, hvmode: str='v', tools: Optional[Mapping[str, str]] = None) -> vs.VideoNode:
     if (rad < 1) or (rad > 5):
         raise vs.Error('rad not valid (range: 1-5)')
     if (offset < 0) or (offset > (rad-1)):
@@ -95,7 +97,7 @@ def DeStripe(clip: vs.VideoNode, rad: int=2, offset: int=0, thr: int=256, vertic
 #
 # author: VS_Fan, see: https://forum.doom9.org/showthread.php?p=1769570#post1769570
 ##
-def StabilizeIT(clip: vs.VideoNode, div: float=2.0, initZoom: float=1.0, zoomMax: float=1.0, rotMax: float=10.0, pixelAspect: float=1.0, thSCD1: int=800, thSCD2: int=150, stabMethod: int=1, cutOff: float=0.33, anaError: float=30.0, rgMode: int=4, tools=None):
+def StabilizeIT(clip: vs.VideoNode, div: float=2.0, initZoom: float=1.0, zoomMax: float=1.0, rotMax: float=10.0, pixelAspect: float=1.0, thSCD1: int=800, thSCD2: int=150, stabMethod: int=1, cutOff: float=0.33, anaError: float=30.0, rgMode: int=4, tools: Optional[Mapping[str, str]] = None) -> vs.VideoNode:
   RG = tool_function(tools, 'rg', 'RemoveGrain')
   MV = get_mv(tools)
   pf = RG(clip, mode=rgMode)
@@ -134,7 +136,8 @@ def StabilizeIT(clip: vs.VideoNode, div: float=2.0, initZoom: float=1.0, zoomMax
 # By default it is disabled (only for presets 2 and 3)
 # - Repair is an option for certain sources or anime/cartoon content, where ghosting may be evident
 # By default it is disabled (maybe for preset = 1 it is not necessary to activate it)
-def Small_Deflicker(clip: vs.VideoNode, width: int=0, height: int=0, preset: int=2, cnr: bool=False,rep: bool=True, tools=None):
+def Small_Deflicker(clip: vs.VideoNode, width: int=0, height: int=0, preset: int=2, cnr: bool=False,rep: bool=True, scd_thscd1: float=400.0,
+                    scd_thscd2: float=130.0, tools: Optional[Mapping[str, str]] = None) -> vs.VideoNode:
   
   if width == 0:
     width = toMod(clip.width/4,16)
@@ -151,11 +154,11 @@ def Small_Deflicker(clip: vs.VideoNode, width: int=0, height: int=0, preset: int
   small = core.resize.Bicubic(clip, width,height) # can be altered, but ~25% of original resolution seems reasonable
   zsmooth = pick_tool(tools, 'temporalsoften', ('zsmooth', 'focus2'), lambda name: name == 'focus2' or hasattr(core, 'zsmooth')) == 'zsmooth'
   if preset == 1:
-    smallModified = deflickerPreset1(small, zsmooth=zsmooth, tools=tools)
+    smallModified = deflickerPreset1(small, zsmooth=zsmooth, scd_thscd1=scd_thscd1, scd_thscd2=scd_thscd2, tools=tools)
   elif preset == 2:
-    smallModified = deflickerPreset2(small, cnr, zsmooth=zsmooth, tools=tools)
+    smallModified = deflickerPreset2(small, cnr, zsmooth=zsmooth, scd_thscd1=scd_thscd1, scd_thscd2=scd_thscd2, tools=tools)
   else :
-    smallModified = deflickerPreset3(small, cnr, zsmooth=zsmooth, tools=tools)
+    smallModified = deflickerPreset3(small, cnr, zsmooth=zsmooth, scd_thscd1=scd_thscd1, scd_thscd2=scd_thscd2, tools=tools)
    
   clip2 = core.std.MakeDiff(small,smallModified,planes=[0, 1, 2])
   clip2 = core.resize.Bicubic(clip2, clip.width,clip.height)
@@ -165,12 +168,12 @@ def Small_Deflicker(clip: vs.VideoNode, width: int=0, height: int=0, preset: int
   return clip2
 
 # Helper
-def toMod(value: int, factor: int=16):
+def toMod(value: int, factor: int=16) -> int:
   adjust = value - (value % factor)
   return adjust
 
 # Deflicker Presets
-def deflickerPreset1(sm: vs.VideoNode, zsmooth: bool=False, tools=None):
+def deflickerPreset1(sm: vs.VideoNode, zsmooth: bool=False, scd_thscd1: float=400.0, scd_thscd2: float=130.0, tools: Optional[Mapping[str, str]] = None) -> vs.VideoNode:
   if pick_tool(tools, 'msmooth', ('msmoosh', 'std')) == 'msmoosh':
     SMOOTH = core.msmoosh.MSmooth
   else:
@@ -179,7 +182,7 @@ def deflickerPreset1(sm: vs.VideoNode, zsmooth: bool=False, tools=None):
     SMOOTH = partial(msmoosh.MSmooth, tools=tools) 
   
   if zsmooth:
-    sm = SCDetect(sm, threshold=0.1, tools=tools)
+    sm = SCDetect(sm, threshold=0.1, scd_thscd1=scd_thscd1, scd_thscd2=scd_thscd2, tools=tools)
     smm = core.zsmooth.TemporalSoften(clip=sm,radius=1, threshold=[6,9,9],scenechange=-1,scalep=True)
   else:
     smm = core.focus2.TemporalSoften2(clip=sm,radius=1,luma_threshold=6,chroma_threshold=9,scenechange=10,mode=2)
@@ -187,14 +190,15 @@ def deflickerPreset1(sm: vs.VideoNode, zsmooth: bool=False, tools=None):
   smm = core.std.Merge(smm, sm, 0.25)
   smm = core.std.Merge(smm, sm, 0.25)
   if zsmooth:
-    sm = SCDetect(sm, threshold=0.06, tools=tools)
+    sm = SCDetect(sm, threshold=0.06, scd_thscd1=scd_thscd1, scd_thscd2=scd_thscd2, tools=tools)
     smm = core.zsmooth.TemporalSoften(clip=sm,radius=2, threshold=[3,5,5],scenechange=-1,scalep=True)
   else:
     smm = core.focus2.TemporalSoften2(clip=sm,radius=2,luma_threshold=3,chroma_threshold=5,scenechange=6,mode=2)
   smm = SMOOTH(clip=smm,threshold=2.0,strength=1.0,planes=[1,2])
   return smm
 
-def deflickerPreset2(sm: vs.VideoNode, chroma: bool, zsmooth: bool=False, tools=None):
+def deflickerPreset2(sm: vs.VideoNode, chroma: bool, zsmooth: bool=False, scd_thscd1: float=400.0, scd_thscd2: float=130.0,
+                     tools: Optional[Mapping[str, str]] = None) -> vs.VideoNode:
   if pick_tool(tools, 'msmooth', ('msmoosh', 'std')) == 'msmoosh':
     SMOOTH = core.msmoosh.MSmooth
   else:
@@ -203,7 +207,7 @@ def deflickerPreset2(sm: vs.VideoNode, chroma: bool, zsmooth: bool=False, tools=
     SMOOTH = partial(msmoosh.MSmooth, tools=tools) 
     
   if zsmooth:
-    sm = SCDetect(sm, threshold=0.24, tools=tools)
+    sm = SCDetect(sm, threshold=0.24, scd_thscd1=scd_thscd1, scd_thscd2=scd_thscd2, tools=tools)
     smm = core.zsmooth.TemporalSoften(clip=sm,radius=1, threshold=[12,255,255],scenechange=-1,scalep=True)
   else:
     smm = core.focus2.TemporalSoften2(clip=sm,radius=1,luma_threshold=12,chroma_threshold=255,scenechange=24,mode=2)
@@ -211,7 +215,7 @@ def deflickerPreset2(sm: vs.VideoNode, chroma: bool, zsmooth: bool=False, tools=
   smm = core.std.Merge(smm, sm, 0.25)
   smm = core.std.Merge(smm, sm, 0.25)
   if zsmooth:
-    sm = SCDetect(sm, threshold=0.2, tools=tools)
+    sm = SCDetect(sm, threshold=0.2, scd_thscd1=scd_thscd1, scd_thscd2=scd_thscd2, tools=tools)
     smm = core.zsmooth.TemporalSoften(clip=sm,radius=2, threshold=[7,255,255],scenechange=-1,scalep=True)
   else:
     smm = core.focus2.TemporalSoften2(clip=sm,radius=2,luma_threshold=7,chroma_threshold=255,scenechange=20,mode=2)
@@ -220,12 +224,13 @@ def deflickerPreset2(sm: vs.VideoNode, chroma: bool, zsmooth: bool=False, tools=
   if chroma:
     if pick_tool(tools, 'cnr', ('zsmooth', 'cnr2'), lambda name: name == 'cnr2' or hasattr(core, 'zsmooth')) == 'zsmooth':
       import misc
-      smm = misc.SCDetect(smm,threshold=0.02, tools=tools)
+      smm = misc.SCDetect(smm,threshold=0.02, scd_thscd1=scd_thscd1, scd_thscd2=scd_thscd2, tools=tools)
       return core.zsmooth.Cnr4(smm, mode="ooo", tmode=0, radius=2, sense=[5, 40, 40])
     return core.cnr2.Cnr2(smm, mode="ooo", ln=5, un=40, vn=40, scdthr=2.0)
   return smm
 
-def deflickerPreset3(sm: vs.VideoNode, chroma: bool, zsmooth: bool=False, tools=None):
+def deflickerPreset3(sm: vs.VideoNode, chroma: bool, zsmooth: bool=False, scd_thscd1: float=400.0, scd_thscd2: float=130.0,
+                     tools: Optional[Mapping[str, str]] = None) -> vs.VideoNode:
   if pick_tool(tools, 'msmooth', ('msmoosh', 'std')) == 'msmoosh':
     SMOOTH = core.msmoosh.MSmooth
   else:
@@ -234,7 +239,7 @@ def deflickerPreset3(sm: vs.VideoNode, chroma: bool, zsmooth: bool=False, tools=
     SMOOTH = partial(msmoosh.MSmooth, tools=tools) 
     
   if zsmooth:
-    sm = SCDetect(sm, threshold=0.24, tools=tools)
+    sm = SCDetect(sm, threshold=0.24, scd_thscd1=scd_thscd1, scd_thscd2=scd_thscd2, tools=tools)
     smm = core.zsmooth.TemporalSoften(clip=sm,radius=1, threshold=[32,255,255],scenechange=-1,scalep=True)
   else:
     smm = core.focus2.TemporalSoften2(clip=sm,radius=1,luma_threshold=32,chroma_threshold=255,scenechange=24,mode=2)
@@ -242,7 +247,7 @@ def deflickerPreset3(sm: vs.VideoNode, chroma: bool, zsmooth: bool=False, tools=
   smm = core.std.Merge(smm, sm, 0.25)
   smm = core.std.Merge(smm, sm, 0.25)
   if zsmooth:
-    sm = SCDetect(sm, threshold=0.2, tools=tools)
+    sm = SCDetect(sm, threshold=0.2, scd_thscd1=scd_thscd1, scd_thscd2=scd_thscd2, tools=tools)
     smm = core.zsmooth.TemporalSoften(clip=sm,radius=1, threshold=[12,255,255],scenechange=-1,scalep=True)
   else:
     smm = core.focus2.TemporalSoften2(clip=sm,radius=2,luma_threshold=12,chroma_threshold=255,scenechange=20,mode=2)
@@ -251,14 +256,14 @@ def deflickerPreset3(sm: vs.VideoNode, chroma: bool, zsmooth: bool=False, tools=
   if chroma:
     if pick_tool(tools, 'cnr', ('zsmooth', 'cnr2'), lambda name: name == 'cnr2' or hasattr(core, 'zsmooth')) == 'zsmooth':
       import misc
-      smm = misc.SCDetect(smm,threshold=0.02, tools=tools)
+      smm = misc.SCDetect(smm,threshold=0.02, scd_thscd1=scd_thscd1, scd_thscd2=scd_thscd2, tools=tools)
       return core.zsmooth.Cnr4(smm, mode="ooo", tmode=0, radius=2, sense=[10, 35, 35], str=[255,255,255])
     return core.cnr2.Cnr2(smm, mode="ooo", ln=10, lm=255, un=35, vn=35, scdthr=2.0)
   return smm
 
 
 ## Change Temperature by _Al_ https://forum.doom9.org/showthread.php?p=1993851#post1993851
-def change_temperature(clip: vs.VideoNode, temp: int=6500, tools=None):
+def change_temperature(clip: vs.VideoNode, temp: int=6500, tools: Optional[Mapping[str, str]] = None) -> vs.VideoNode:
 
     if clip.format.color_family is not vs.RGB or clip.format.sample_type is not vs.FLOAT:
        raise vs.Error('change_temperature: clip must be RGBS')
@@ -268,7 +273,7 @@ def change_temperature(clip: vs.VideoNode, temp: int=6500, tools=None):
     EXPR = get_expr(tools)
     return EXPR([clip], expr=[f"x {r} *", f"x {g} *", f"x {b} *"])
     
-def get_rgb(temp: int=6500):
+def get_rgb(temp: int=6500) -> Tuple[int, int, int]:
     temp = temp / 100
     if temp <= 66:
         r = 255
@@ -301,9 +306,9 @@ def get_rgb(temp: int=6500):
 # ChannelMixer port from _AI_
 # https://forum.doom9.org/showthread.php?p=1962889#post1962889
 # ChannelMixer (clip, float "RR", float "RG", float "RB", float "GR", float "GG", float "GB", float "BR", float "BG", float "BB")
-def channel_mixer(rgb, RR=100.0, RG=0.0,   RB=0.0,
-                       GR=0.0,   GG=100.0, GB=0.0,
-                       BR=0.0,   BG=0.0,   BB=100.0, tools=None):
+def channel_mixer(rgb: vs.VideoNode, RR: float = 100.0, RG: float = 0.0,   RB: float = 0.0,
+                       GR: float = 0.0,   GG: float = 100.0, GB: float = 0.0,
+                       BR: float = 0.0,   BG: float = 0.0,   BB: float = 100.0, tools: Optional[Mapping[str, str]] = None) -> vs.VideoNode:
     if not rgb.format.color_family == vs.RGB:
         raise ValueError('channel_mixer: input clip must be RGB color_family')
     EXPR = get_expr(tools)
@@ -337,7 +342,7 @@ def sharpen(clip: vs.VideoNode, amount: float=0.5) -> vs.VideoNode:
     raise vs.Error('sharpen: amount must be in the range -1.58 to 1.0')
   return _adjust_focus(clip, amount)
 
-def VHSClean(clip: vs.VideoNode, ths: int=100, blur_sharp=True, tools=None) -> vs.VideoNode:
+def VHSClean(clip: vs.VideoNode, ths: int=100, blur_sharp: bool = True, tools: Optional[Mapping[str, str]] = None) -> vs.VideoNode:
   MV = get_mv(tools)
  
   lambda_      = 40000
@@ -418,7 +423,7 @@ def VHSClean(clip: vs.VideoNode, ths: int=100, blur_sharp=True, tools=None) -> v
 #
 # clip: Clip to process. Any planar format with either integer sample type of 8-16 bit depth or float sample type of 32 bit depth is supported.
 # sharpness: Sharpening strength.
-def maskedCAS(clip: vs.VideoNode, strength: float=0.2, tools=None):
+def maskedCAS(clip: vs.VideoNode, strength: float=0.2, tools: Optional[Mapping[str, str]] = None) -> vs.VideoNode:
   if (strength < 0) or (strength > 1):
     raise vs.Error('strength not valid (range: [0-1]')
   import misc
@@ -434,7 +439,7 @@ def maskedCAS(clip: vs.VideoNode, strength: float=0.2, tools=None):
 # blur: TCanny if loaded, else gaussblur.GaussBlur, else BoxBlur
 # the default 'enhance' seems to be too high for normal usage, best start with 1 and increase it slowly
 # gblur has no visible effect, as in the original: there it is the chroma variance of the already desaturated copy
-def ContrastMask(clip, gblur=20.0, enhance=10.0, tools=None):
+def ContrastMask(clip: vs.VideoNode, gblur: float = 20.0, enhance: float = 10.0, tools: Optional[Mapping[str, str]] = None) -> vs.VideoNode:
     enhance = max(0.0, min(enhance, 10.0)) * 0.1
     EXPR = get_expr(tools)
 
@@ -479,7 +484,7 @@ def ContrastMask(clip, gblur=20.0, enhance=10.0, tools=None):
     return merged
 
 
-def HaloBuster(input: vs.VideoNode, a: int = 32, h: float = 6.4, thr: float = 1.0, elast: float = 1.5, tools=None) -> vs.VideoNode:
+def HaloBuster(input: vs.VideoNode, a: int = 32, h: float = 6.4, thr: float = 1.0, elast: float = 1.5, tools: Optional[Mapping[str, str]] = None) -> vs.VideoNode:
     # Convert to grayscale format if not already
     gray_format = vs.GRAY16 if input.format.bits_per_sample > 8 else vs.GRAY8
     gray = input.resize.Point(format=gray_format)

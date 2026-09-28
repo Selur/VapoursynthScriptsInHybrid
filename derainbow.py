@@ -1,4 +1,5 @@
 from __future__ import annotations
+from typing import Any, Mapping, Optional
 import math
 import vapoursynth as vs
 
@@ -9,12 +10,12 @@ from helpers import GetPlane, scale, bilateral_port_args, get_expr, pick_tool, t
 try:
     from color import Tweak as _color_tweak  # type: ignore
 except ImportError:
-    _color_tweak = None
+    _color_tweak = None  # type: ignore[assignment]
 
 try:
     from sharpen import ContraSharpening as _contra_sharpening  # type: ignore
 except ImportError:
-    _contra_sharpening = None
+    _contra_sharpening = None  # type: ignore[assignment]
 
 from misc import get_mv, SCDetect
 
@@ -22,7 +23,7 @@ from misc import get_mv, SCDetect
 # Plugin wrappers — each wrapper tries the fastest available backend first
 # ---------------------------------------------------------------------------
 
-def _expr(clips: vs.VideoNode | list[vs.VideoNode], expr: str | list[str], tools=None) -> vs.VideoNode:
+def _expr(clips: vs.VideoNode | list[vs.VideoNode], expr: str | list[str], tools: Optional[Mapping[str, str]] = None) -> vs.VideoNode:
     """Expr — tools['expr'], else akarin → cranexpr → std."""
     return get_expr(tools)(clips, expr)
 
@@ -34,7 +35,7 @@ def _box_blur(
     vradius: int = 1,
     vpasses: int = 1,
     planes: list[int] | None = None,
-    tools=None,
+    tools: Optional[Mapping[str, str]] = None,
 ) -> vs.VideoNode:
     """BoxBlur — tools['boxblur'], else vszip, else std."""
     kwargs: dict = dict(hradius=hradius, hpasses=hpasses, vradius=vradius, vpasses=vpasses)
@@ -43,7 +44,7 @@ def _box_blur(
     return tool_function(tools, 'boxblur', 'BoxBlur')(clip, **kwargs)
 
 
-def _repair(clip: vs.VideoNode, ref: vs.VideoNode, mode: int, tools=None) -> vs.VideoNode:
+def _repair(clip: vs.VideoNode, ref: vs.VideoNode, mode: int, tools: Optional[Mapping[str, str]] = None) -> vs.VideoNode:
     """Repair — tools['rg'], else zsmooth, else rgvs.
     Note: mode semantics differ slightly between backends; modes 1–3 are
     safe across both. Mode 5 in rgvs ≠ mode 5 in zsmooth — avoid mode 5
@@ -52,7 +53,7 @@ def _repair(clip: vs.VideoNode, ref: vs.VideoNode, mode: int, tools=None) -> vs.
     return tool_function(tools, 'rg', 'Repair')(clip, ref, mode)
 
 
-def _fft3d(clip: vs.VideoNode, tools=None, **kwargs) -> vs.VideoNode:
+def _fft3d(clip: vs.VideoNode, tools: Optional[Mapping[str, str]] = None, **kwargs: Any) -> vs.VideoNode:
     """FFT3D — tools['fft3d'], else neo_fft3d, neo_fft, fft3dfilter."""
     return tool_function(tools, 'fft3d', 'FFT3D')(clip, **kwargs)
 
@@ -60,8 +61,8 @@ def _fft3d(clip: vs.VideoNode, tools=None, **kwargs) -> vs.VideoNode:
 _BILATERAL_PORTS = ("bilateralgpu_rtc", "bilateralgpu", "vszipcl", "vszipcu")
 
 
-def _bilateral(clip: vs.VideoNode, sigmaS: float = 3.0, sigmaR: float = 0.02, gpu: bool | None = None, tools=None,
-               **kwargs) -> vs.VideoNode:
+def _bilateral(clip: vs.VideoNode, sigmaS: float = 3.0, sigmaR: float = 0.02, gpu: bool | None = None, tools: Optional[Mapping[str, str]] = None,
+               **kwargs: Any) -> vs.VideoNode:
     """Bilateral filter — tools['bilateral'], else a loaded GPU port (bilateralgpu_rtc, bilateralgpu, vszipcl, vszipcu) unless gpu is False, then vszip, then bilateral."""
     order = (() if gpu is False else _BILATERAL_PORTS) + ("vszip", "bilateral")
     namespace = pick_tool(tools, 'bilateral', order, lambda name: hasattr(core, name),
@@ -85,7 +86,7 @@ def _temporal_soften(
     chroma_threshold: int,
     scenechange: int,
     mode: int,
-    tools=None,
+    tools: Optional[Mapping[str, str]] = None,
 ) -> vs.VideoNode:
     """TemporalSoften — tools['temporalsoften'], else focus2, else zsmooth."""
     if pick_tool(tools, 'temporalsoften', ('focus2', 'zsmooth'), lambda name: name == 'zsmooth' or hasattr(core, 'focus2')) == 'focus2':
@@ -110,12 +111,12 @@ def _weave_fields(clip: vs.VideoNode) -> vs.VideoNode:
     return core.std.DoubleWeave(clip)[::2]
 
 
-def _mt_logic(a: vs.VideoNode, b: vs.VideoNode, mode: str = "min", tools=None) -> vs.VideoNode:
+def _mt_logic(a: vs.VideoNode, b: vs.VideoNode, mode: str = "min", tools: Optional[Mapping[str, str]] = None) -> vs.VideoNode:
     op = "x y min" if mode == "min" else "x y max"
     return _expr([a, b], op, tools=tools)
 
 
-def _mt_binarize(clip: vs.VideoNode, threshold: int, tools=None) -> vs.VideoNode:
+def _mt_binarize(clip: vs.VideoNode, threshold: int, tools: Optional[Mapping[str, str]] = None) -> vs.VideoNode:
     peak = (1 << clip.format.bits_per_sample) - 1
     return _expr([clip], f"x {threshold} > {peak} 0 ?", tools=tools)
 
@@ -160,7 +161,7 @@ def LUTDeRainbow(
     y: bool = True,
     linkUV: bool = True,
     mask: bool = False,
-    tools=None,
+    tools: Optional[Mapping[str, str]] = None,
 ) -> vs.VideoNode:
     """
     LUTDeRainbow — frame-based derainbowing by Scintilla.
@@ -265,7 +266,7 @@ def SRFComb(
     RainbowThSAD: int = 500,
     SpatialDeDotCraw: bool = True,
     tff: bool | None = None,
-    tools=None,
+    tools: Optional[Mapping[str, str]] = None,
 ) -> vs.VideoNode:
     """
     SRFComb by real.finder — field-space version.
@@ -494,7 +495,7 @@ def SRFComb2(
     progressive: bool | None = None,
     contrasharp: bool = True,
     bilateral_gpu: bool | None = None,
-    tools=None,
+    tools: Optional[Mapping[str, str]] = None,
 ) -> vs.VideoNode:
     """
     SRFComb2 — spatial + temporal dot-crawl and rainbow artefact reduction.
@@ -835,7 +836,7 @@ def SRFComb2(
 #   scenechange: https://github.com/Tatsh/scenechange            (feeds the scene-change props
 #            that Cnr4 and TemporalSoften consume; without it misc.SCDetect steps in, which
 #            needs no plugin at all)
-def ChubbyRain2(c, th=10, radius=10, show=False, sft=10, interlaced=False, tools=None):
+def ChubbyRain2(c: vs.VideoNode, th: int = 10, radius: int = 10, show: bool = False, sft: int = 10, interlaced: bool = False, scd_thscd1: float = 400.0, scd_thscd2: float = 130.0, tools: Optional[Mapping[str, str]] = None) -> vs.VideoNode:
     if interlaced:
         c = core.std.SeparateFields(c)
 
@@ -857,13 +858,14 @@ def ChubbyRain2(c, th=10, radius=10, show=False, sft=10, interlaced=False, tools
     if pick_tool(tools, 'cnr', ('zsmooth', 'cnr2'), lambda name: name == 'cnr2' or hasattr(core, 'zsmooth')) == 'zsmooth':
         # Cnr4 and the TemporalSoften below both consume _SceneChangePrev/Next; Cnr2 did
         # the detection internally via scdthr=10.0, so reproduce that ~10% threshold here.
-        if pick_tool(tools, 'scd', ('scd', 'misc', 'std'), lambda name: name != 'scd' or (hasattr(core, 'scd') and not is_float)) == 'scd':
+        if pick_tool(tools, 'scd', ('scd', 'misc', 'std'), lambda name: name != 'scd' or (hasattr(core, 'scd') and not is_float),
+                     candidates=('scd', 'misc', 'std', 'mv')) == 'scd':
             # scd.Detect's thresh is an absolute 0-254 (x2^(bits-8)) luma-diff value, not a
             # percentage, so scale the 10% onto that range.
             thresh = max(1, round(0.10 * 254 * (1 << max(bits - 8, 0))))
             cc = core.scd.Detect(clip=cc, thresh=thresh)
         else:
-            cc = SCDetect(clip=cc, threshold=0.10, tools=tools)
+            cc = SCDetect(clip=cc, threshold=0.10, scd_thscd1=scd_thscd1, scd_thscd2=scd_thscd2, tools=tools)
 
         # mode/tmode/radius/sense/str below reproduce Cnr2's defaults
         # (mode="oxx", scdthr=10.0, ln/un/vn=35/47/47, lm/um/vm=192/255/255)

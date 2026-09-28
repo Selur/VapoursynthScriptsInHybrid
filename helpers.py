@@ -6,7 +6,7 @@ core = vs.core
 
 import math
 import warnings
-from typing import Optional, Union, Sequence, Dict, Any, Mapping, Callable
+from typing import Optional, Union, Sequence, Dict, Any, Mapping, Callable, Tuple, List
 
 ## Tool choice -----------------------------------------------------------------------------------
 # Family -> {value: (namespace, function)}. The value is what a `tools` dict names; the function is
@@ -44,7 +44,7 @@ TOOLS: Dict[str, Dict[str, tuple]] = {
     'tcanny':         {'tcanny': ('tcanny', None), 'std': ('std', None)},
     'fft3d':          {'neo_fft3d': ('neo_fft3d', None), 'neo_fft': ('neo_fft', 'FFT3D'), 'fft3dfilter': ('fft3dfilter', None)},
     'f3kdb':          {'vszip': ('vszip', 'Deband'), 'neo_f3kdb': ('neo_f3kdb', None), 'f3kdb': ('f3kdb', None)},
-    'scd':            {'scd': ('scd', None), 'misc': ('misc', 'SCDetect'), 'std': ('std', None)},
+    'scd':            {'scd': ('scd', None), 'misc': ('misc', 'SCDetect'), 'std': ('std', None), 'mv': ('mv', 'SCDetection')},
     'hysteresis':     {'hysteresis': ('hysteresis', None), 'misc': ('misc', 'Hysteresis')},
     'grain':          {'noise': ('noise', None), 'grain': ('grain', None)},
     'removedirt':     {'removedirt': ('removedirt', 'SCSelect'), 'rdvs': ('rdvs', None)},
@@ -73,6 +73,8 @@ def tool_loaded(family: str, name: str) -> bool:
         return function is None or hasattr(core.std, function)
     if namespace == 'dfttest2':
         return any(hasattr(core, ns) for ns in _DFTTEST2_NAMESPACES)
+    if family == 'scd' and name == 'mv':
+        return any(hasattr(core, ns) and hasattr(getattr(core, ns), 'SCDetection') for ns in ('mvu', 'mv'))
     if not hasattr(core, namespace):
         return False
     return function is None or hasattr(getattr(core, namespace), function)
@@ -126,7 +128,7 @@ _FUNCTION_NAMES = {
 
 
 def tool_function(tools: Optional[Mapping[str, str]], family: str, function: str,
-                  order: Optional[Sequence[str]] = None):
+                  order: Optional[Sequence[str]] = None) -> Callable[..., Any]:
     '''`function` of the implementation of `family` to use, for families whose implementations take the same arguments.
 
     tool_function(tools, 'rg', 'Repair') is core.zsmooth.Repair or core.rgvs.Repair; the name is the one of the first
@@ -135,11 +137,11 @@ def tool_function(tools: Optional[Mapping[str, str]], family: str, function: str
     '''
     order = tuple(order or _FUNCTION_ORDER[family])
 
-    def name_in(value):
+    def name_in(value: str) -> Tuple[str, str]:
         namespace = tool_namespace(family, value)
         return namespace, _FUNCTION_NAMES.get((namespace, function), function)
 
-    def usable(value):
+    def usable(value: str) -> bool:
         namespace, name = name_in(value)
         return hasattr(core, namespace) and hasattr(getattr(core, namespace), name) if namespace != 'std' \
             else hasattr(core.std, name)
@@ -153,7 +155,7 @@ class Range:
     LIMITED = vs.RANGE_LIMITED
     FULL = vs.RANGE_FULL
 
-def resolve_range(value, name: str) -> int | None:
+def resolve_range(value: Optional[Union[int, str]], name: str) -> int | None:
     if value is None:
         return None
 
@@ -219,10 +221,10 @@ def cround(x: float) -> int:
 def m4(x: Union[float, int]) -> int:
     return 16 if x < 16 else cround(x / 4) * 4
 
-def scale(value, peak):
+def scale(value: float, peak: float) -> float:
     return cround(value * peak / 255) if peak != 1 else value / 255
 
-def clamp(minimum, value, maximum):
+def clamp(minimum: int, value: float, maximum: int) -> int:
     return int(max(minimum, min(round(value), maximum)))
 
 def scale_value(value: Union[int, float],
@@ -431,7 +433,7 @@ def _pow_guard(expr: str) -> str:
             out += ['powe!', 'powb!', 'powb@', '0', '<=', 'powe@', 'powe@', 'trunc', '=', 'not', 'and', '0', 'powb@', 'powe@', 'pow', '?']
     return ' '.join(out)
 
-def _akarin_expr(clips, expr, *args, **kwargs):
+def _akarin_expr(clips: Union[vs.VideoNode, Sequence[vs.VideoNode]], expr: Union[str, List[str], Tuple[str, ...]], *args: Any, **kwargs: Any) -> vs.VideoNode:
     '''akarin.Expr with the pow workaround of _pow_guard.'''
     expr = [_pow_guard(e) for e in expr] if isinstance(expr, (list, tuple)) else _pow_guard(expr)
     return core.akarin.Expr(clips, expr, *args, **kwargs)
@@ -440,12 +442,12 @@ def bilateral_port_args(namespace: str, sigma_spatial: float) -> Dict[str, Any]:
     '''Extra arguments for a GPU bilateral port: bilateralgpu_rtc fails with shared memory above radius 49 (radius ~ 3 * sigma_spatial).'''
     return {'use_shared_memory': False} if namespace == 'bilateralgpu_rtc' and 3 * sigma_spatial >= 49 else {}
 
-def get_expr(tools: Optional[Mapping[str, str]] = None):
+def get_expr(tools: Optional[Mapping[str, str]] = None) -> Callable[..., vs.VideoNode]:
     '''Return the Expr backend: tools['expr'], else the best available of akarin, cranexpr, std.'''
     name = pick_tool(tools, 'expr', ('akarin', 'cranexpr', 'std'))
     return _akarin_expr if name == 'akarin' else getattr(core, tool_namespace('expr', name)).Expr
 
-def get_rg(is_float: bool = False, tools: Optional[Mapping[str, str]] = None):
+def get_rg(is_float: bool = False, tools: Optional[Mapping[str, str]] = None) -> Callable[..., vs.VideoNode]:
     '''Return the RemoveGrain implementation: tools['rg'], else zsmooth, rgsf (float only), rgvs.'''
     name = pick_tool(tools, 'rg', ('zsmooth', 'rgsf', 'rgvs') if is_float else ('zsmooth', 'rgvs'))
     return getattr(core, tool_namespace('rg', name or 'rgvs')).RemoveGrain
@@ -614,7 +616,7 @@ def _nnedi3CanRun(namespace: str, kwargs: Dict[str, Any]) -> bool:
 
 
 def NNEDI3(clip: vs.VideoNode, gpu: Optional[bool] = None, device: Optional[int] = None,
-           tools: Optional[Mapping[str, str]] = None, **kwargs) -> vs.VideoNode:
+           tools: Optional[Mapping[str, str]] = None, **kwargs: Any) -> vs.VideoNode:
     '''Calls the NNEDI3 implementation that is loaded.
 
     Looked for in this order, the first one that is loaded and can serve the call wins:
@@ -700,7 +702,7 @@ def _eedi3_args(namespace: str, function: str, clip: vs.VideoNode, kwargs: Dict[
 
 
 def EEDI3(clip: vs.VideoNode, gpu: Optional[bool] = None, device: Optional[int] = None,
-          tools: Optional[Mapping[str, str]] = None, **kwargs) -> vs.VideoNode:
+          tools: Optional[Mapping[str, str]] = None, **kwargs: Any) -> vs.VideoNode:
     '''Calls the EEDI3 implementation that is loaded.
 
     Looked for in this order, the first one that is loaded and can serve the call wins:
@@ -768,7 +770,7 @@ def _dfttest2CpuCanRun(kwargs: Dict[str, Any]) -> bool:
         and not any(name in kwargs for name in _DFTTEST_NOT_IN_DFTTEST2)
 
 
-def _dfttest2GpuBackend(kwargs: Dict[str, Any], device_id: int):
+def _dfttest2GpuBackend(kwargs: Dict[str, Any], device_id: int) -> Any:
     '''The GPU backend of dfttest2 for this call: the fixed-block kernels where they fit, the FFT ones otherwise.'''
     import dfttest2
     if _dfttest2FixedBlock(kwargs):
@@ -782,7 +784,7 @@ def _dfttest2GpuBackend(kwargs: Dict[str, Any], device_id: int):
 
 
 def DFTTest(clip: vs.VideoNode, cuda: Optional[bool] = None, tools: Optional[Mapping[str, str]] = None,
-            device_id: Optional[int] = None, **kwargs) -> vs.VideoNode:
+            device_id: Optional[int] = None, **kwargs: Any) -> vs.VideoNode:
     '''Calls the first DFTTest implementation that is loaded, GPU ones first.
 
     Looked for in this order: core.vszipcu.DFTTest (CUDA), dfttest2.DFTTest on a GPU backend (CUDA/HIP) and

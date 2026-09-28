@@ -1,9 +1,11 @@
+from __future__ import annotations
+from typing import List, Mapping, Optional, Sequence, Tuple
 import vapoursynth as vs
 from vapoursynth import core
 from misc import get_mv
 
 class ReplaceMultipleFrames:
-    def __init__(self, clip: vs.VideoNode, intervals: list, method: str = 'SVP', rifeModel: int = 22, rifeTTA=False, rifeUHD=False, device_index: int = 0, debug: bool = False, tools=None):
+    def __init__(self, clip: vs.VideoNode, intervals: list, method: str = 'SVP', rifeModel: int = 22, rifeTTA: bool = False, rifeUHD: bool = False, device_index: int = 0, debug: bool = False, tools: Optional[Mapping[str, str]] = None) -> None:
         """Initialize the frame replacement/interpolation class.
         
         Args:
@@ -25,12 +27,12 @@ class ReplaceMultipleFrames:
         self.rifeModel = rifeModel
         self.rifeTTA = rifeTTA
         self.rifeUHD = rifeUHD
-        self.smooth = None  # Cache for interpolated frames
+        self.smooth: Optional[vs.VideoNode] = None  # Cache for interpolated frames
         self.smooth_start = -1  # Start frame of cached interpolation
         self.smooth_end = -1  # End frame of cached interpolation
         self.debug = debug
 
-    def validate_intervals(self, intervals):
+    def validate_intervals(self, intervals: Sequence[Sequence[int]]) -> List[Tuple[int, int]]:
         """Validate that intervals are properly formatted and within acceptable range.
         
         Args:
@@ -56,7 +58,7 @@ class ReplaceMultipleFrames:
             validated.append((start, end))
         return validated
 
-    def interpolate(self, n, f):
+    def interpolate(self, n: int, f: vs.VideoFrame) -> vs.VideoNode:
         """Main interpolation function called for each frame.
         
         Args:
@@ -79,7 +81,7 @@ class ReplaceMultipleFrames:
         # Return original frame if not in any interval
         return self.clip[n]
 
-    def interpolate_between_frames(self, start, end, index, num):
+    def interpolate_between_frames(self, start: int, end: int, index: int, num: int) -> vs.VideoNode:
         """Create interpolation between two frames and cache the result.
         
         Args:
@@ -112,7 +114,7 @@ class ReplaceMultipleFrames:
         # Return the correct interpolated frame
         return self.smooth[index]
 
-    def interpolateWithSVP(self, clip, num):
+    def interpolateWithSVP(self, clip: vs.VideoNode, num: int) -> vs.VideoNode:
         """Interpolate frames using SVP (SmoothVideo Project) method.
         
         Args:
@@ -131,7 +133,7 @@ class ReplaceMultipleFrames:
             f"{{rate:{{num:{num},den:1,abs:true}}}}"
         )
 
-    def interpolateWithRIFE(self, clip, num):
+    def interpolateWithRIFE(self, clip: vs.VideoNode, num: int) -> vs.VideoNode:
         """Interpolate frames using RIFE (Real-Time Intermediate Flow Estimation) method.
         
         Args:
@@ -145,7 +147,7 @@ class ReplaceMultipleFrames:
             raise ValueError("RIFE requires RGBS format")
         return core.rife.RIFE(clip, model=self.rifeModel, factor_num=num, tta=self.rifeTTA, uhd=self.rifeUHD, gpu_id=self.device_index)
 
-    def interpolateWithMV(self, clip, num):
+    def interpolateWithMV(self, clip: vs.VideoNode, num: int) -> vs.VideoNode:
         """Interpolate frames using motion vectors method.
         
         Args:
@@ -162,6 +164,6 @@ class ReplaceMultipleFrames:
         return MV.FlowFPS(clip, sup, bvec, fvec, num=num, den=1, mask=2)
 
     @property
-    def out(self):
+    def out(self) -> vs.VideoNode:
         """Property that returns the processed clip with interpolated frames."""
         return core.std.FrameEval(self.clip, self.interpolate, prop_src=self.clip)

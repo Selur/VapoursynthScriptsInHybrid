@@ -1,8 +1,9 @@
+from __future__ import annotations
 from vapoursynth import core
 import vapoursynth as vs
 
 import warnings
-from typing import Optional, Union, Sequence, List, Mapping
+from typing import Optional, Union, Sequence, List, Mapping, Any, Callable, Dict
 
 from helpers import get_expr, pick_tool
 
@@ -228,20 +229,53 @@ def _scd_thresh(threshold: float, bits: int) -> int:
     '''SCDetect's 0-1 threshold as scd.Detect's absolute luma difference (0-254 at 8 bit, times 2^(bits-8)).'''
     return max(1, round(threshold * 254 * (1 << max(bits - 8, 0))))
 
+def _scd_mv(clip: vs.VideoNode, thscd1: float, thscd2: float, tools: Optional[Mapping[str, str]]) -> vs.VideoNode:
+    '''SCDetect with motion vectors: Super, forward and backward Analyse, SCDetection per direction.
+
+    Forward vectors give _SceneChangePrev, backward vectors _SceneChangeNext. The analysis runs on an integer clip
+    (RGB as GRAY8, float as 16 bit); the first frame has no Prev and the last no Next scene change, like misc and std.
+    '''
+    sc = clip
+    if clip.format.color_family == vs.RGB:
+        sc = clip.resize.Point(format=vs.GRAY8, matrix_s='709')
+    elif clip.format.sample_type == vs.FLOAT:
+        sc = clip.resize.Point(format=clip.format.replace(sample_type=vs.INTEGER, bits_per_sample=16))
+    mv_tools = dict(tools or {})
+    if mv_tools.get('mv') == 'mvsf':
+        mv_tools['mv'] = 'mv'  # mvsf serves float clips only, the analysis clip is integer
+    mv = get_mv(tools=mv_tools)
+    sup = mv.Super(sc, pel=2, blksize=8, overlap=0)
+    forward = mv.Analyse(sup, isb=False, blksize=8, overlap=0)
+    backward = mv.Analyse(sup, isb=True, blksize=8, overlap=0)
+    sc = mv.SCDetection(sc, forward, thscd1=thscd1, thscd2=thscd2)
+    sc = mv.SCDetection(sc, backward, thscd1=thscd1, thscd2=thscd2)
+    last = clip.num_frames - 1
+
+    def _copy_props(n: int, f: list[vs.VideoFrame]) -> vs.VideoFrame:
+        fout = f[0].copy()
+        fout.props['_SceneChangePrev'] = 0 if n == 0 else int(f[1].props.get('_SceneChangePrev', 0))
+        fout.props['_SceneChangeNext'] = 0 if n == last else int(f[1].props.get('_SceneChangeNext', 0))
+        return fout
+
+    return clip.std.ModifyFrame(clips=[clip, sc], selector=_copy_props)
+
 def SCDetect(clip: vs.VideoNode, threshold: float = 0.1, plane: int = 0,
+             scd_thscd1: float = 400.0, scd_thscd2: float = 130.0,
              tools: Optional[Mapping[str, str]] = None) -> vs.VideoNode:
     """
     Scene change detection with _SceneChangePrev/_SceneChangeNext frame properties.
     Uses core.scd.Detect (integer clips) or core.misc.SCDetect if available (plane=0 only), otherwise falls back to
-    a std.PlaneStats-based reimplementation.
+    a std.PlaneStats-based reimplementation. Motion vectors (mv) only when tools['scd'] asks for them.
 
     Args:
         clip      : Input clip
-        threshold : Scene change threshold (default: 0.1, must be 0.0–1.0)
+        threshold : Scene change threshold (default: 0.1, must be 0.0–1.0); not used by mv
         plane     : Plane to analyze; only honoured in fallback path —
                     misc.SCDetect always uses plane 0
-        tools     : tools['scd'] ('scd', 'misc' or 'std') picks the implementation; scd and misc need plane 0,
-                    scd an integer clip
+        scd_thscd1: mv only: SCDetection thscd1, SAD of a block (normalized to 8x8) above which it counts as changed
+        scd_thscd2: mv only: SCDetection thscd2 (0-255), share of changed blocks for a scene change (130 = 51 %)
+        tools     : tools['scd'] ('scd', 'misc', 'std' or 'mv') picks the implementation; scd and misc need plane 0,
+                    scd an integer clip; mv uses tools['mv'] for the motion vectors
 
     Returns:
         Clip with _SceneChangePrev and _SceneChangeNext frame properties set.
@@ -254,8 +288,11 @@ def SCDetect(clip: vs.VideoNode, threshold: float = 0.1, plane: int = 0,
         raise vs.Error('SCDetect: clip must have more than one frame')
 
     usable = {'scd': hasattr(core, 'scd') and plane == 0 and clip.format.sample_type == vs.INTEGER,
-              'misc': hasattr(core, 'misc') and plane == 0, 'std': True}
-    detector = pick_tool(tools, 'scd', ('scd', 'misc', 'std'), usable.get)
+              'misc': hasattr(core, 'misc') and plane == 0, 'std': True,
+              'mv': has_mvutensils() or hasattr(core, 'mv')}
+    detector = pick_tool(tools, 'scd', ('scd', 'misc', 'std'), usable.get, candidates=('scd', 'misc', 'std', 'mv'))
+    if detector == 'mv':
+        return _scd_mv(clip, scd_thscd1, scd_thscd2, tools)
     if detector == 'scd':
       if clip.format.color_family == vs.RGB:
             sc = clip.resize.Point(format=vs.GRAY8, matrix_s='709')
@@ -302,7 +339,7 @@ def SCDetect(clip: vs.VideoNode, threshold: float = 0.1, plane: int = 0,
         selector=_set_sc_props
     )
 
-def _takes_tools(func) -> bool:
+def _takes_tools(func: Callable[..., Any]) -> bool:
     '''True if func accepts a tools keyword (named or through **kwargs).'''
     import inspect
     try:
@@ -313,17 +350,20 @@ def _takes_tools(func) -> bool:
 
 def scene_aware(
     clip: vs.VideoNode,
-    filter_func,
+    filter_func: Callable[..., vs.VideoNode],
     sc_threshold: float = 0.1,
     min_scene_len: int = 5,
     color_matrix: str = "709",
+    scd_thscd1: float = 400.0,
+    scd_thscd2: float = 130.0,
     tools: Optional[Mapping[str, str]] = None,
-    **filter_kwargs
+    **filter_kwargs: Any
 ) -> vs.VideoNode:
     """
     Automatically split a clip by scene changes and apply a filter separately per scene.
 
-    tools is used for the scene detection and passed on to filter_func when that takes a tools argument.
+    tools is used for the scene detection and passed on to filter_func when that takes a tools argument;
+    scd_thscd1/scd_thscd2 are the thresholds of the scene detection with tools['scd'] 'mv'.
     """
     if tools is not None and _takes_tools(filter_func):
         filter_kwargs['tools'] = tools
@@ -340,7 +380,7 @@ def scene_aware(
     elif clip.format.sample_type == vs.FLOAT and clip.format.bits_per_sample != 32:
         sc_src = core.resize.Bicubic(clip, format=vs.YUV420P8)
 
-    sc = SCDetect(sc_src, threshold=sc_threshold, tools=tools)
+    sc = SCDetect(sc_src, threshold=sc_threshold, scd_thscd1=scd_thscd1, scd_thscd2=scd_thscd2, tools=tools)
     sc_frames = [i for i in range(clip.num_frames) if sc.get_frame(i).props._SceneChangePrev == 1]
 
     # --- Remove very short segments
@@ -458,13 +498,13 @@ def DelayAudio(audio_clip: vs.AudioNode, delay_ms: float) -> vs.AudioNode:
 
 def AverageFrames(
     clip: vs.VideoNode, weights: Union[float, Sequence[float]], scenechange: Optional[float] = None, planes: Optional[Union[int, Sequence[int]]] = None,
-    tools: Optional[Mapping[str, str]] = None
+    scd_thscd1: float = 400.0, scd_thscd2: float = 130.0, tools: Optional[Mapping[str, str]] = None
 ) -> vs.VideoNode:
     if not isinstance(clip, vs.VideoNode):
         raise vs.Error('AverageFrames: this is not a clip')
 
     if scenechange:
-        clip = SCDetect(clip, threshold=scenechange, tools=tools)
+        clip = SCDetect(clip, threshold=scenechange, scd_thscd1=scd_thscd1, scd_thscd2=scd_thscd2, tools=tools)
     return clip.std.AverageFrames(weights=weights, scenechange=scenechange, planes=planes)
 
 # convert i.e. 1080p50 to 1080i25
@@ -481,7 +521,7 @@ def median_blur(
     radius: Union[int, Sequence[int]] = 2,
     planes: Optional[Union[int, Sequence[int]]] = None,
     tools: Optional[Mapping[str, str]] = None,
-    **kwargs
+    **kwargs: Any
 ) -> vs.VideoNode:
     """
     Standalone median-blur replacement for the deprecated CTMF filter.
@@ -565,7 +605,7 @@ def MinBlur(clp: vs.VideoNode, r: int = 1, planes: Optional[Union[int, Sequence[
     matrix2 = [1, 1, 1, 1, 1, 1, 1, 1, 1]
 
     # --- Helper: median with a fallback instead of a hard ctmf call ---
-    def _median(clip, radius, planes):
+    def _median(clip: vs.VideoNode, radius: int, planes: Optional[Union[int, Sequence[int]]]) -> vs.VideoNode:
         median = pick_tool(tools, 'median', ('ctmf', 'zsmooth'), lambda name: hasattr(core, name))
         if median == 'ctmf':
             return core.ctmf.CTMF(clip, radius=radius, planes=planes)
@@ -643,8 +683,8 @@ def mt_clamp(
     clip: vs.VideoNode,
     bright_limit: vs.VideoNode,
     dark_limit: vs.VideoNode,
-    overshoot: int = 0,
-    undershoot: int = 0,
+    overshoot: float = 0,
+    undershoot: float = 0,
     planes: Optional[Union[int, Sequence[int]]] = None,
     tools: Optional[Mapping[str, str]] = None,
 ) -> vs.VideoNode:
@@ -849,7 +889,7 @@ def _mvu_limit_to_float(limit: Optional[float], clip: vs.VideoNode) -> float:
     return limit * peak / 255.0
 
 
-def _legacy_limit(limit: float, clip: vs.VideoNode):
+def _legacy_limit(limit: float, clip: vs.VideoNode) -> float:
     '''DegrainN `limit`/`limitc` (0-255 int, 255 = off) -> mvtools' native-bit-depth integer limit.'''
     if clip.format.sample_type == vs.FLOAT:
         return limit
@@ -868,7 +908,7 @@ class MotionVectors:
     '''
 
     def __init__(self, prefer_mvutensils: Optional[bool] = None, legacy_ns: Optional[str] = None,
-                 tools: Optional[Mapping[str, str]] = None):
+                 tools: Optional[Mapping[str, str]] = None) -> None:
         '''
         prefer_mvutensils:
             None  -> use mvutensils automatically whenever core.mvu is available (default).
@@ -906,7 +946,7 @@ class MotionVectors:
         return radius
     # -- internal helpers ----------------------------------------------------
 
-    def _legacy_ns(self, clip: vs.VideoNode):
+    def _legacy_ns(self, clip: vs.VideoNode) -> vs.Plugin:
         '''Picks core.mvsf for float clips (if available) or core.mv, exactly like the old code did.'''
         if self._legacy == 'mvsf':
             if clip.format.sample_type == vs.FLOAT:
@@ -917,7 +957,7 @@ class MotionVectors:
             return core.mvsf
         return core.mv
 
-    def _legacy_analyse_func(self, ns):
+    def _legacy_analyse_func(self, ns: vs.Plugin) -> Callable[..., Any]:
         # Some mvsf builds expose "Analyze", others "Analyse"; mv always uses "Analyse".
         return getattr(ns, 'Analyse', None) or getattr(ns, 'Analyze')
 
@@ -968,9 +1008,9 @@ class MotionVectors:
     # -- Analyse / Analyze -------------------------------------------------
 
     def _mvu_analyse_kwargs(
-        self, blksize, blksizev, levels, search, searchparam, pelsearch, lambda_, chroma,
-        truemotion, lsad, plevel, global_, pnew, pzero, pglobal, overlap, overlapv,
-        badsad, badrange, meander, trymany, fields, tff, dct,
+        self, blksize: int, blksizev: Optional[int], levels: int, search: int, searchparam: int, pelsearch: int, lambda_: Optional[int], chroma: bool,
+        truemotion: bool, lsad: Optional[int], plevel: Optional[int], global_: Optional[bool], pnew: Optional[int], pzero: Optional[int], pglobal: int, overlap: int, overlapv: Optional[int],
+        badsad: int, badrange: int, meander: bool, trymany: bool, fields: bool, tff: Optional[bool], dct: int,
     ) -> dict:
         '''Shared mvutensils Analyse/AnalyseMany kwarg translation (everything except delta/isb/radius).'''
         kwargs = dict(
@@ -1050,10 +1090,10 @@ class MotionVectors:
             fields=fields, tff=tff, search_coarse=search_coarse, dct=dct,
         )
 
-    def Analyse(self, *args, **kwargs) -> vs.VideoNode:
+    def Analyse(self, *args: Any, **kwargs: Any) -> vs.VideoNode:
         return self._analyse(*args, **kwargs)
 
-    def Analyze(self, *args, **kwargs) -> vs.VideoNode:
+    def Analyze(self, *args: Any, **kwargs: Any) -> vs.VideoNode:
         return self._analyse(*args, **kwargs)
 
     # -- AnalyseMany ---------------------------------------------------------
@@ -1119,7 +1159,7 @@ class MotionVectors:
     def Recalculate(
         self,
         super: vs.VideoNode,
-        vectors,
+        vectors: Union[vs.VideoNode, Sequence[vs.VideoNode]],
         thsad: float = 200.0,
         smooth: int = 1,
         blksize: int = 8,
@@ -1137,7 +1177,7 @@ class MotionVectors:
         fields: bool = False,
         tff: Optional[bool] = None,
         dct: int = 0,
-    ):
+    ) -> Any:  # a clip for one vector, a list for a list of vectors
         if isinstance(vectors, (list, tuple)):
             if self.use_mvu:
                 # mvutensils takes/returns a whole vector list in one call (e.g. from AnalyseMany).
@@ -1196,7 +1236,7 @@ class MotionVectors:
         self,
         clip: vs.VideoNode,
         super: vs.VideoNode,
-        vectors,
+        vectors: vs.VideoNode,
         scbehavior: int = 1,
         thsad: float = 10000.0,
         fields: bool = False,
@@ -1224,7 +1264,7 @@ class MotionVectors:
         self,
         clip: vs.VideoNode,
         super: vs.VideoNode,
-        *vectors,
+        *vectors: Any,
         mvbw: Optional[vs.VideoNode] = None,
         mvfw: Optional[vs.VideoNode] = None,
         mvbw2: Optional[vs.VideoNode] = None,
@@ -1328,7 +1368,7 @@ class MotionVectors:
             opt=opt,
         )
 
-    def _mvu_centre_from_clip(self, out, clip, super, vec_list, weight_args):
+    def _mvu_centre_from_clip(self, out: vs.VideoNode, clip: vs.VideoNode, super: vs.VideoNode, vec_list: Sequence[vs.VideoNode], weight_args: Dict[str, Any]) -> vs.VideoNode:
         '''Replaces the super's centre in mvu.Degrain output `out` by `clip`: out + W0 * (clip - centre).'''
         radius = len(vec_list) // 2
         planes = weight_args['planes']
@@ -1356,10 +1396,10 @@ class MotionVectors:
         expr = ['x y z a - * +' if p in planes else 'x' for p in range(clip.format.num_planes)]
         return get_expr(self._tools)([out, centre_weight, clip, centre], expr, format=clip.format.id)
 
-    def Degrain(self, clip, super, *vectors, **kwargs):
+    def Degrain(self, clip: vs.VideoNode, super: vs.VideoNode, *vectors: Any, **kwargs: Any) -> vs.VideoNode:
         return self._degrain(clip, super, *vectors, **kwargs)
 
-    def __getattr__(self, name: str):
+    def __getattr__(self, name: str) -> Callable[..., vs.VideoNode]:
         # Handles Degrain1..Degrain24 (and any future DegrainN) without hand-writing each one.
         if name.startswith('Degrain') and (name[len('Degrain'):] == '' or name[len('Degrain'):].isdigit()):
             return lambda clip, super, *vectors, **kwargs: self._degrain(clip, super, *vectors, **kwargs)
@@ -1368,7 +1408,7 @@ class MotionVectors:
     # -- Flow / FlowInter / FlowFPS / FlowBlur -------------------------------
 
     def Flow(
-        self, clip: vs.VideoNode, super: vs.VideoNode, vectors,
+        self, clip: vs.VideoNode, super: vs.VideoNode, vectors: Union[vs.VideoNode, Sequence[vs.VideoNode]],
         time: float = 100.0, mode: int = 0, fields: bool = False,
         thscd1: float = 400.0, thscd2: float = 130.0, tff: Optional[bool] = None,
     ) -> vs.VideoNode:
@@ -1379,7 +1419,7 @@ class MotionVectors:
         return ns.Flow(clip, super, vectors, time=time, mode=mode, fields=fields, thscd1=thscd1, thscd2=thscd2, tff=tff)
 
     def FlowInter(
-        self, clip: vs.VideoNode, super: vs.VideoNode, mvbw, mvfw,
+        self, clip: vs.VideoNode, super: vs.VideoNode, mvbw: vs.VideoNode, mvfw: vs.VideoNode,
         time: float = 50.0, ml: float = 100.0, blend: bool = True,
         thscd1: float = 400.0, thscd2: float = 130.0,
     ) -> vs.VideoNode:
@@ -1389,7 +1429,7 @@ class MotionVectors:
         return ns.FlowInter(clip, super, mvbw, mvfw, time=time, ml=ml, blend=blend, thscd1=thscd1, thscd2=thscd2)
 
     def FlowFPS(
-        self, clip: vs.VideoNode, super: vs.VideoNode, mvbw, mvfw,
+        self, clip: vs.VideoNode, super: vs.VideoNode, mvbw: vs.VideoNode, mvfw: vs.VideoNode,
         num: int = 25, den: int = 1, mask: int = 2, ml: float = 100.0, blend: bool = True,
         thscd1: float = 400.0, thscd2: float = 130.0,
     ) -> vs.VideoNode:
@@ -1400,7 +1440,7 @@ class MotionVectors:
         return ns.FlowFPS(clip, super, mvbw, mvfw, num=num, den=den, mask=mask, ml=ml, blend=blend, thscd1=thscd1, thscd2=thscd2)
 
     def FlowBlur(
-        self, clip: vs.VideoNode, super: vs.VideoNode, mvbw, mvfw,
+        self, clip: vs.VideoNode, super: vs.VideoNode, mvbw: vs.VideoNode, mvfw: vs.VideoNode,
         blur: float = 50.0, prec: int = 1, thscd1: float = 400.0, thscd2: float = 130.0,
     ) -> vs.VideoNode:
         if self.use_mvu:
@@ -1411,7 +1451,7 @@ class MotionVectors:
     # -- Mask ------------------------------------------------------------
 
     def Mask(
-        self, clip: vs.VideoNode, vectors,
+        self, clip: vs.VideoNode, vectors: vs.VideoNode,
         ml: float = 100.0, gamma: float = 1.0, kind: int = 0, time: float = 100.0, ysc: int = 0,
         thscd1: float = 400.0, thscd2: float = 130.0,
     ) -> vs.VideoNode:
@@ -1436,7 +1476,7 @@ class MotionVectors:
 
     # -- SCDetection -------------------------------------------------------
 
-    def SCDetection(self, clip: vs.VideoNode, vectors, thscd1: float = 400.0, thscd2: float = 130.0) -> vs.VideoNode:
+    def SCDetection(self, clip: vs.VideoNode, vectors: vs.VideoNode, thscd1: float = 400.0, thscd2: float = 130.0) -> vs.VideoNode:
         if self.use_mvu:
             return core.mvu.SCDetection(clip, vectors, thscd1=thscd1, thscd2=_mvu_scale_thscd2(thscd2))
         ns = self._legacy_ns(clip)
@@ -1452,7 +1492,7 @@ class MotionVectors:
                                  zoommax=(zoommax or 1.0) if self.use_mvu else zoommax, stab=stab, pixaspect=pixaspect,
                                  info=info, show=show, fields=fields, tff=bool(tff) if self.use_mvu else tff)
 
-    def DepanAnalyse(self, clip: vs.VideoNode, vectors, mask: Optional[vs.VideoNode] = None, zoom: bool = True, rot: bool = True,
+    def DepanAnalyse(self, clip: vs.VideoNode, vectors: vs.VideoNode, mask: Optional[vs.VideoNode] = None, zoom: bool = True, rot: bool = True,
                       pixaspect: float = 1.0, error: float = 15.0, info: bool = False, wrong: float = 10.0, zerow: float = 0.05,
                       thscd1: float = 400.0, thscd2: float = 130.0, fields: bool = False, tff: Optional[bool] = None) -> vs.VideoNode:
         ns = core.mvu if self.use_mvu else core.mv

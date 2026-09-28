@@ -1,15 +1,17 @@
+from __future__ import annotations
 # ===============================================================================
 # ===============================================================================
 #            RGBColor 2025-03-25
 # ===============================================================================
 # ===============================================================================
 
+from typing import Optional, Tuple, Union
 import vapoursynth as vs
 core = vs.core
 
 # -------------------------------------------------------------------------------
 
-def RGBColor(clip, color=None, matrix=None, range=None):
+def RGBColor(clip: vs.VideoNode, color: Optional[str] = None, matrix: Optional[Union[int, str]] = None, range: Optional[str] = None) -> Union[float, Tuple[float, float, float]]:
 
     RCE = "\nRGBColor:\n"
     if not isinstance(clip, vs.VideoNode): raise vs.Error(f'{RCE}clip must be a video')

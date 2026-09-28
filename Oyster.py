@@ -1,6 +1,8 @@
+from __future__ import annotations
 # Original: https://github.com/IFeelBloated/Oyster/blob/master/Oyster.py
 # modified by Selur, to support Akarin, znedi3, nnedi3cl, sneedif if present
 
+from typing import Any, Dict, Optional, Sequence
 import vapoursynth as vs
 import math
 import sys
@@ -13,11 +15,11 @@ msuper_args                    = dict(hpad=0, vpad=0, sharp=2, levels=0)
 manalyze_args                  = dict(search=3, truemotion=False, trymany=True, levels=0, badrange=-24, divide=0, dct=0)
 mrecalculate_args              = dict(truemotion=False, search=3, smooth=1, divide=0, dct=0)
 mdegrain_args                  = dict(thscd1=16711680.0, thscd2=255.0)
-nnedi_args                     = dict(field=1, dh=True, nns=4, qual=2, etype=1, nsize=0)
+nnedi_args: Dict[str, Any]     = dict(field=1, dh=True, nns=4, qual=2, etype=1, nsize=0)
 dfttest_args                   = dict(smode=0, sosize=0, tbsize=1, tosize=0, tmode=0)
 
 class get_core:
-      def __init__(self):
+      def __init__(self) -> None:
           self.core = vs.core
 
           # --- motion estimation ---
@@ -69,19 +71,19 @@ class get_core:
           self.ShufflePlanes   = self.core.std.ShufflePlanes
           self.SetFieldBased   = self.core.std.SetFieldBased
 
-      def FreqMerge(self, low, hi, sbsize, slocation):
+      def FreqMerge(self, low: vs.VideoNode, hi: vs.VideoNode, sbsize: int, slocation: Sequence[float]) -> vs.VideoNode:
           hif                  = self.MakeDiff(hi, self.DFTTest(hi, sbsize=sbsize, slocation=slocation, **dfttest_args))
           clip                 = self.MergeDiff(self.DFTTest(low, sbsize=sbsize, slocation=slocation, **dfttest_args), hif)
           return clip
 
-      def Pad(self, src, left, right, top, bottom):
+      def Pad(self, src: vs.VideoNode, left: int, right: int, top: int, bottom: int) -> vs.VideoNode:
           w                    = src.width
           h                    = src.height
           clip                 = self.Resample(src, w+left+right, h+top+bottom, -left, -top, w+left+right, h+top+bottom, kernel="point", **fmtc_args)
           return clip
 
-      def NLMeans(self, src, d, a, s, h, rclip, color):
-          def duplicate(src):
+      def NLMeans(self, src: vs.VideoNode, d: int, a: int, s: int, h: float, rclip: vs.VideoNode, color: bool) -> vs.VideoNode:
+          def duplicate(src: vs.VideoNode) -> vs.VideoNode:
               if d > 0:
                  blank         = self.Expr(src[0], "0.0") * d
                  clip          = blank + src + blank
@@ -97,7 +99,7 @@ class get_core:
           clip                 = self.Crop(nlm, a+s, a+s, a+s, a+s)
           return clip[d:clip.num_frames - d]
 
-      def ThrMerge(self, flt, src, ref=None, thr=0.0009765625, elast=None):
+      def ThrMerge(self, flt: vs.VideoNode, src: vs.VideoNode, ref: Optional[vs.VideoNode] = None, thr: float = 0.0009765625, elast: Optional[float] = None) -> vs.VideoNode:
           ref                  = src if ref is None else ref
           elast                = thr / 2 if elast is None else elast
           BExp                 = ["x {thr} {elast} + z - 2 {elast} * / * y {elast} z + {thr} - 2 {elast} * / * +".format(thr=thr, elast=elast)]
@@ -114,7 +116,7 @@ class get_core:
           clip                 = self.Expr([flt, ref, UDN, src], ["x y - abs {thr} {elast} + < z a ?".format(thr=thr, elast=elast)])
           return clip
 
-      def GenBlockMask(self, src):
+      def GenBlockMask(self, src: vs.VideoNode) -> vs.VideoNode:
           clip                 = self.BlankClip(src, 24, 24, color=0.0)
           clip                 = self.AddBorders(clip, 4, 4, 4, 4, color=1.0)
           clip                 = self.StackHorizontal([clip, clip, clip, clip])
@@ -131,7 +133,8 @@ class get_core:
           return clip
 
 class internal:
-      def super(core, src, pel):
+      @staticmethod
+      def super(core: get_core, src: vs.VideoNode, pel: int) -> vs.VideoNode:
           src                  = core.Pad(src, 128, 128, 128, 128)
           clip                 = core.Transpose(core.NNEDI(core.Transpose(core.NNEDI(src, **nnedi_args)), **nnedi_args))
           if pel == 4:
@@ -139,7 +142,7 @@ class internal:
           return clip
 
       @staticmethod
-      def svp_overlap_from_mv(blksize, mv_overlap):
+      def svp_overlap_from_mv(blksize: int, mv_overlap: int) -> int:
           """
           Convert MVTools pixel overlap to SVPFlow allowed index.
           Allowed fractions: 0, 1/8, 1/4, 1/2 of block
@@ -150,8 +153,8 @@ class internal:
           return diffs.index(min(diffs))
 
       @staticmethod
-      def svpflow_process(clip, new_num=None, new_den=1, preset='Medium', tuning='Film',
-                          super_clip=None, radius=2, pel=2, sad=400, short_time=False, color=False):
+      def svpflow_process(clip: vs.VideoNode, new_num: Optional[int] = None, new_den: int = 1, preset: str = 'Medium', tuning: str = 'Film',
+                          super_clip: Optional[vs.VideoNode] = None, radius: int = 2, pel: int = 2, sad: float = 400, short_time: bool = False, color: bool = False) -> Optional[vs.VideoNode]:
 
           core = vs.core
 
@@ -224,12 +227,13 @@ class internal:
               return None
 
 
-      def basic(core, src, super_clip=None, radius=2, pel=2, sad=400, short_time=False, color=False, use_svpflow=True):
+      @staticmethod
+      def basic(core: get_core, src: vs.VideoNode, super_clip: Optional[vs.VideoNode] = None, radius: int = 2, pel: int = 2, sad: float = 400, short_time: bool = False, color: bool = False, use_svpflow: bool = True) -> vs.VideoNode:
           plane = 4 if color else 0
 
           # Ensure src is single-precision float
           if src.format.sample_type != vs.FLOAT:
-              src = core.fmtc.bitdepth(src, bits=32, planes=[0,1,2])
+              src = core.core.fmtc.bitdepth(src, bits=32, planes=[0,1,2])
 
           src_padded = core.Pad(src, 128, 128, 128, 128)
 
@@ -269,15 +273,16 @@ class internal:
           clip = core.MDegrain(src_padded, supersharp, vmulti, thsad=sad, plane=plane, **mdegrain_args)
           return core.Crop(clip, 128, 128, 128, 128)
 
-      def deringing(core, src, ref, radius, h, sigma, \
-                    mse, hard_thr, block_size, block_step, group_size, bm_range, bm_step, ps_num, ps_range, ps_step, \
-                    lowpass, color, matrix):
+      @staticmethod
+      def deringing(core: get_core, src: vs.VideoNode, ref: vs.VideoNode, radius: int, h: float, sigma: float, \
+                    mse: Sequence[Optional[float]], hard_thr: float, block_size: int, block_step: int, group_size: int, bm_range: int, bm_step: int, ps_num: int, ps_range: int, ps_step: int, \
+                    lowpass: Sequence[float], color: bool, matrix: Optional[int]) -> vs.VideoNode:
           c1                   = 0.1134141984932795312503328847998
           c2                   = 2.8623043756241389436528021745239
           strength             = [h]
           strength            += [h * math.pow(c1 * h, c2) * math.log(1.0 + 1.0 / math.pow(c1 * h, c2))]
           strength            += [None]
-          def loop(flt, init, src, n):
+          def loop(flt: Optional[vs.VideoNode], init: vs.VideoNode, src: vs.VideoNode, n: int) -> vs.VideoNode:
               strength[2]      = n * strength[0] / 4 + strength[1] * (1 - n / 4)
               window           = int(32 / math.pow(2, n))
               flt              = init if n == 4 else flt
@@ -302,9 +307,10 @@ class internal:
           clip                 = loop(None, bm3d, refined, 4)
           return clip
 
-      def destaircase(core, src, ref, radius, sigma, \
-                      mse, hard_thr, block_size, block_step, group_size, bm_range, bm_step, ps_num, ps_range, ps_step, \
-                      thr, elast, lowpass, matrix):
+      @staticmethod
+      def destaircase(core: get_core, src: vs.VideoNode, ref: vs.VideoNode, radius: int, sigma: float, \
+                      mse: Sequence[Optional[float]], hard_thr: float, block_size: int, block_step: int, group_size: int, bm_range: int, bm_step: int, ps_num: int, ps_range: int, ps_step: int, \
+                      thr: float, elast: float, lowpass: Sequence[float], matrix: Optional[int]) -> vs.VideoNode:
           mask                 = core.GenBlockMask(core.ShufflePlanes(src, 0, vs.GRAY))
           ref                  = core.FreqMerge(src, ref, block_size // 2 * 2 + 1, lowpass)
           ref                  = core.ThrMerge(src, ref, thr=thr, elast=elast)
@@ -323,9 +329,10 @@ class internal:
           clip                 = core.MaskedMerge(src, ref, mask, first_plane=True)
           return clip
 
-      def deblocking(core, src, ref, radius, h, sigma, \
-                     mse, hard_thr, block_size, block_step, group_size, bm_range, bm_step, ps_num, ps_range, ps_step, \
-                     lowpass, color, matrix):
+      @staticmethod
+      def deblocking(core: get_core, src: vs.VideoNode, ref: vs.VideoNode, radius: int, h: float, sigma: float, \
+                     mse: Sequence[Optional[float]], hard_thr: float, block_size: int, block_step: int, group_size: int, bm_range: int, bm_step: int, ps_num: int, ps_range: int, ps_step: int, \
+                     lowpass: Sequence[float], color: bool, matrix: Optional[int]) -> vs.VideoNode:
           mask                 = core.GenBlockMask(core.ShufflePlanes(src, 0, vs.GRAY))
           cleansed             = core.NLMeans(ref, radius, block_size, math.ceil(block_size / 2), h, ref, color)
           dif                  = core.MakeDiff(ref, cleansed)
@@ -345,7 +352,7 @@ class internal:
           clip                 = core.MaskedMerge(src, ref, mask, first_plane=True)
           return clip
 
-def Super(src, pel=4):
+def Super(src: vs.VideoNode, pel: int = 4) -> vs.VideoNode:
     if not isinstance(src, vs.VideoNode):
        raise TypeError("Oyster.Super: src has to be a video clip!")
     elif src.format.sample_type != vs.FLOAT or src.format.bits_per_sample < 32:
@@ -365,7 +372,7 @@ def Super(src, pel=4):
     del core
     return clip
 
-def Basic(src, super=None, radius=6, pel=4, sad=2000.0, short_time=False):
+def Basic(src: vs.VideoNode, super: Optional[vs.VideoNode] = None, radius: int = 6, pel: int = 4, sad: float = 2000.0, short_time: bool = False) -> vs.VideoNode:
     if not isinstance(src, vs.VideoNode):
        raise TypeError("Oyster.Basic: src has to be a video clip!")
     elif src.format.sample_type != vs.FLOAT or src.format.bits_per_sample < 32:
@@ -407,9 +414,9 @@ def Basic(src, super=None, radius=6, pel=4, sad=2000.0, short_time=False):
     del core
     return clip
 
-def Deringing(src, ref, radius=6, h=6.4, sigma=16.0, \
-              mse=[None, None], hard_thr=3.2, block_size=8, block_step=1, group_size=32, bm_range=24, bm_step=1, ps_num=2, ps_range=8, ps_step=1, \
-              lowpass=None):
+def Deringing(src: vs.VideoNode, ref: vs.VideoNode, radius: int = 6, h: float = 6.4, sigma: float = 16.0, \
+              mse: Sequence[Optional[float]] = [None, None], hard_thr: float = 3.2, block_size: int = 8, block_step: int = 1, group_size: int = 32, bm_range: int = 24, bm_step: int = 1, ps_num: int = 2, ps_range: int = 8, ps_step: int = 1, \
+              lowpass: Optional[Sequence[float]] = None) -> vs.VideoNode:
     if not isinstance(src, vs.VideoNode):
        raise TypeError("Oyster.Deringing: src has to be a video clip!")
     elif src.format.sample_type != vs.FLOAT or src.format.bits_per_sample < 32:
@@ -463,9 +470,9 @@ def Deringing(src, ref, radius=6, h=6.4, sigma=16.0, \
     del core
     return clip
 
-def Destaircase(src, ref, radius=6, sigma=16.0, \
-                mse=[None, None], hard_thr=3.2, block_size=8, block_step=1, group_size=32, bm_range=24, bm_step=1, ps_num=2, ps_range=8, ps_step=1, \
-                thr=0.03125, elast=0.015625, lowpass=None):
+def Destaircase(src: vs.VideoNode, ref: vs.VideoNode, radius: int = 6, sigma: float = 16.0, \
+                mse: Sequence[Optional[float]] = [None, None], hard_thr: float = 3.2, block_size: int = 8, block_step: int = 1, group_size: int = 32, bm_range: int = 24, bm_step: int = 1, ps_num: int = 2, ps_range: int = 8, ps_step: int = 1, \
+                thr: float = 0.03125, elast: float = 0.015625, lowpass: Optional[Sequence[float]] = None) -> vs.VideoNode:
     if not isinstance(src, vs.VideoNode):
        raise TypeError("Oyster.Destaircase: src has to be a video clip!")
     elif src.format.sample_type != vs.FLOAT or src.format.bits_per_sample < 32:
@@ -520,9 +527,9 @@ def Destaircase(src, ref, radius=6, sigma=16.0, \
     del core
     return clip
 
-def Deblocking(src, ref, radius=6, h=6.4, sigma=16.0, \
-               mse=[None, None], hard_thr=3.2, block_size=8, block_step=1, group_size=32, bm_range=24, bm_step=1, ps_num=2, ps_range=8, ps_step=1, \
-               lowpass=[0.0,0.0, 0.12,1024.0, 1.0,1024.0]):
+def Deblocking(src: vs.VideoNode, ref: vs.VideoNode, radius: int = 6, h: float = 6.4, sigma: float = 16.0, \
+               mse: Sequence[Optional[float]] = [None, None], hard_thr: float = 3.2, block_size: int = 8, block_step: int = 1, group_size: int = 32, bm_range: int = 24, bm_step: int = 1, ps_num: int = 2, ps_range: int = 8, ps_step: int = 1, \
+               lowpass: Sequence[float] = [0.0,0.0, 0.12,1024.0, 1.0,1024.0]) -> vs.VideoNode:
     if not isinstance(src, vs.VideoNode):
        raise TypeError("Oyster.Deblocking: src has to be a video clip!")
     elif src.format.sample_type != vs.FLOAT or src.format.bits_per_sample < 32:

@@ -1,7 +1,8 @@
+from __future__ import annotations
 import vapoursynth as vs
 from vapoursynth import core
 
-def ChromaShift(clip, shift_left=0, shift_right=0, shift_top=0, shift_bottom=0):
+def ChromaShift(clip: vs.VideoNode, shift_left: int = 0, shift_right: int = 0, shift_top: int = 0, shift_bottom: int = 0) -> vs.VideoNode:
   
   core = vs.core
   chroma_u = core.std.ShufflePlanes(clip, planes=[1], colorfamily=vs.GRAY)
@@ -32,7 +33,7 @@ def ChromaShift(clip, shift_left=0, shift_right=0, shift_top=0, shift_bottom=0):
   return clip
   
 # added ChromaShiftSP from https://forum.doom9.org/showthread.php?p=1951117#post1951117
-def ChromaShiftSP (clip, X=0.0, Y=0.0, shiftU=True, shiftV=True, jeh=True):
+def ChromaShiftSP (clip: vs.VideoNode, X: float = 0.0, Y: float = 0.0, shiftU: bool = True, shiftV: bool = True, jeh: bool = True) -> vs.VideoNode:
 	#Vapoursynth version of Avisynth ChromaShiftSP
 	#Original AVS ChromaShift_SP: Shift chroma with subpixel accuracy, basic function by IanB, made standalone by McCauley
 	#X: positive values shift the chroma to left, negative values to right

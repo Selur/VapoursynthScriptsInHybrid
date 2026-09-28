@@ -1,11 +1,12 @@
+from __future__ import annotations
 import math
-from typing import Sequence, Union, Optional, Mapping
+from typing import Sequence, Union, Optional, Mapping, Callable, List
 import vapoursynth as vs
 from helpers import tool_function
 
 # based on vs-jetpack
 
-def _norm_planes(clip: vs.VideoNode, planes):
+def _norm_planes(clip: vs.VideoNode, planes: Optional[Union[int, Sequence[int]]]) -> List[int]:
     if planes is None:
         return list(range(clip.format.num_planes))
     elif isinstance(planes, int):
@@ -13,14 +14,14 @@ def _norm_planes(clip: vs.VideoNode, planes):
     return list(planes)
 
 
-def _gauss_kernel(sigma: float, radius: int):
+def _gauss_kernel(sigma: float, radius: int) -> List[float]:
     """Normalized 1D Gaussian kernel."""
     kernel = [math.exp(-(i * i) / (2.0 * sigma * sigma)) for i in range(-radius, radius + 1)]
     total = sum(kernel)
     return [v / total for v in kernel]
 
 
-def _boxblur_impl(tools: Optional[Mapping[str, str]] = None):
+def _boxblur_impl(tools: Optional[Mapping[str, str]] = None) -> Callable[..., vs.VideoNode]:
     """Pick the BoxBlur function: tools['boxblur'], else vszip, else std."""
     return tool_function(tools, 'boxblur', 'BoxBlur')
 

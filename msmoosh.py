@@ -42,7 +42,9 @@ MSharpen
   4. std.MaskedMerge(original, sharpened, edge_mask) – apply sharpening
      only at detected edges.
 """
+from __future__ import annotations
 
+from typing import Mapping, Optional, Sequence, Union
 import vapoursynth as vs
 from helpers import bilateral_port_args, get_expr, pick_tool
 
@@ -62,9 +64,11 @@ def _peak(bits: int) -> int:
     return (1 << bits) - 1
 
 
-def _plane_list(num_planes: int, planes) -> list:
+def _plane_list(num_planes: int, planes: Optional[Union[int, Sequence[int]]]) -> list:
     if planes is None:
         return list(range(num_planes))
+    if isinstance(planes, int):
+        return [planes]
     return sorted(set(planes))
 
 
@@ -72,7 +76,7 @@ def _is_rgb(clip: vs.VideoNode) -> bool:
     return _fmt(clip).color_family == vs.RGB
 
 
-def _get_format_id(color_family, sample_type, bits, subsampling_w, subsampling_h) -> int:
+def _get_format_id(color_family: vs.ColorFamily, sample_type: vs.SampleType, bits: int, subsampling_w: int, subsampling_h: int) -> int:
     """Return a format ID compatible with both R55+ (query_video_format) and older VS."""
     try:
         fmt = core.query_video_format(color_family, sample_type, bits, subsampling_w, subsampling_h)
@@ -81,7 +85,7 @@ def _get_format_id(color_family, sample_type, bits, subsampling_w, subsampling_h
     return fmt.id
 
 
-def _depth(clip: vs.VideoNode, bits: int, tools=None) -> vs.VideoNode:
+def _depth(clip: vs.VideoNode, bits: int, tools: Optional[Mapping[str, str]] = None) -> vs.VideoNode:
     """
     Linearly scale an integer clip to a different bit depth.
 
@@ -110,7 +114,7 @@ def _depth(clip: vs.VideoNode, bits: int, tools=None) -> vs.VideoNode:
 _BILATERAL_PORTS = ('bilateralgpu_rtc', 'bilateralgpu', 'vszipcl', 'vszipcu')
 
 
-def _bilateral(clip: vs.VideoNode, sigmaS: float, sigmaR: float, proc: list, tools=None) -> vs.VideoNode:
+def _bilateral(clip: vs.VideoNode, sigmaS: float, sigmaR: float, proc: list, tools: Optional[Mapping[str, str]] = None) -> vs.VideoNode:
     """Bilateral smoothing of the planes in `proc`: tools['bilateral'], else vszip, else bilateral; the GPU ports only on request."""
     name = pick_tool(tools, 'bilateral', ('vszip', 'bilateral'), candidates=_BILATERAL_PORTS + ('vszip', 'bilateral'))
     if name is None:
@@ -137,7 +141,7 @@ def _bilateral(clip: vs.VideoNode, sigmaS: float, sigmaR: float, proc: list, too
 def _make_edge_mask(clip: vs.VideoNode,
                     threshold_pct: float,
                     proc: list,
-                    tools=None) -> vs.VideoNode:
+                    tools: Optional[Mapping[str, str]] = None) -> vs.VideoNode:
     """
     Returns a hard binary edge mask in the same format as `clip`.
     Non-zero pixels = edge detected.
@@ -222,8 +226,8 @@ def MSmooth(clip: vs.VideoNode,
             threshold: float = 6.0,
             strength: int = 3,
             mask: bool = False,
-            planes=None,
-            tools=None) -> vs.VideoNode:
+            planes: Optional[Union[int, Sequence[int]]] = None,
+            tools: Optional[Mapping[str, str]] = None) -> vs.VideoNode:
     """
     Drop-in replacement for msmoosh.MSmooth.
 
@@ -295,8 +299,8 @@ def MSharpen(clip: vs.VideoNode,
              threshold: float = 6.0,
              strength: float = 39.0,
              mask: bool = False,
-             planes=None,
-             tools=None) -> vs.VideoNode:
+             planes: Optional[Union[int, Sequence[int]]] = None,
+             tools: Optional[Mapping[str, str]] = None) -> vs.VideoNode:
     """
     Drop-in replacement for msmoosh.MSharpen.
 

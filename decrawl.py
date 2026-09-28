@@ -1,3 +1,5 @@
+from __future__ import annotations
+from typing import Mapping, Optional, Sequence
 import vapoursynth as vs
 from vapoursynth import core
 
@@ -55,14 +57,14 @@ from misc import SCDetect
 #   (The scene change threshold, scnchg, is not reflected in the mask.)
 #
 ###################
-def LUTDeCrawl(input, ythresh=10, cthresh=10, maxdiff=50, scnchg=25, usemaxdiff=True, mask=False, tools=None):
-    def YDifferenceFromPrevious(n, f, clips):
+def LUTDeCrawl(input: vs.VideoNode, ythresh: float = 10, cthresh: float = 10, maxdiff: float = 50, scnchg: int = 25, usemaxdiff: bool = True, mask: bool = False, scd_thscd1: float = 400.0, scd_thscd2: float = 130.0, tools: Optional[Mapping[str, str]] = None) -> vs.VideoNode:
+    def YDifferenceFromPrevious(n: int, f: vs.VideoFrame, clips: Sequence[vs.VideoNode]) -> vs.VideoNode:
         if f.props['_SceneChangePrev']:
             return clips[0]
         else:
             return clips[1]
 
-    def YDifferenceToNext(n, f, clips):
+    def YDifferenceToNext(n: int, f: vs.VideoFrame, clips: Sequence[vs.VideoNode]) -> vs.VideoNode:
         if f.props['_SceneChangeNext']:
             return clips[0]
         else:
@@ -108,7 +110,7 @@ def LUTDeCrawl(input, ythresh=10, cthresh=10, maxdiff=50, scnchg=25, usemaxdiff=
     fixed_y = core.std.Merge(average_y, input_y)
 
     output = core.std.ShufflePlanes([core.std.MaskedMerge(input_y, fixed_y, themask), input], planes=[0, 1, 2], colorfamily=input.format.color_family)
-    input = SCDetect(input, threshold=scnchg / 255, tools=tools)
+    input = SCDetect(input, threshold=scnchg / 255, scd_thscd1=scd_thscd1, scd_thscd2=scd_thscd2, tools=tools)
     output = output.std.FrameEval(eval=partial(YDifferenceFromPrevious, clips=[input, output]), prop_src=input)
     output = output.std.FrameEval(eval=partial(YDifferenceToNext, clips=[input, output]), prop_src=input)
 

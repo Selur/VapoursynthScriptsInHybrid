@@ -1,3 +1,4 @@
+from __future__ import annotations
 import vapoursynth as vs
 from vapoursynth import core
 
@@ -37,10 +38,12 @@ def GrainFactory3(
     temp_avg: int = 0,
     ontop_grain: float = 0.0,
     seed: int = -1,
-    th1: int = 24,
-    th2: int = 56,
-    th3: int = 128,
-    th4: int = 160,
+    th1: float = 24,
+    th2: float = 56,
+    th3: float = 128,
+    th4: float = 160,
+    scd_thscd1: float = 400.0,
+    scd_thscd2: float = 130.0,
     tools: Optional[dict] = None,
 ) -> vs.VideoNode:
 # Validate input.
@@ -159,7 +162,7 @@ def GrainFactory3(
     # Optionally reduce temporal noise by averaging neighbouring frames.
     if temp_avg > 0:
         import misc
-        grainlayer = core.std.Merge(grainlayer, misc.AverageFrames(grainlayer, weights=[1] * 3, tools=tools), weight=[tmpavg])
+        grainlayer = core.std.Merge(grainlayer, misc.AverageFrames(grainlayer, weights=[1] * 3, scd_thscd1=scd_thscd1, scd_thscd2=scd_thscd2, tools=tools), weight=[tmpavg])
 
     # Optionally add a final layer of fine grain over the result.
     if ontop_grain > 0:

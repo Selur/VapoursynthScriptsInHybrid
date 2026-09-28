@@ -1,3 +1,5 @@
+from __future__ import annotations
+from typing import Mapping, Optional
 import vapoursynth as vs
 from vapoursynth import core
 
@@ -7,7 +9,7 @@ from helpers import scale, get_expr
 
 # Taken from old havsfunc
 # a.k.a. BalanceBordersMod
-def bbmod(c, cTop, cBottom, cLeft, cRight, thresh=128, blur=999, tools=None):
+def bbmod(c: vs.VideoNode, cTop: int, cBottom: int, cLeft: int, cRight: int, thresh: int = 128, blur: int = 999, tools: Optional[Mapping[str, str]] = None) -> vs.VideoNode:
     if not isinstance(c, vs.VideoNode):
         raise vs.Error('bbmod: this is not a clip')
 
@@ -25,7 +27,7 @@ def bbmod(c, cTop, cBottom, cLeft, cRight, thresh=128, blur=999, tools=None):
 
     BicubicResize = partial(core.resize.Bicubic, filter_param_a=1, filter_param_b=0)
 
-    def btb(c, cTop):
+    def btb(c: vs.VideoNode, cTop: int) -> vs.VideoNode:
         cWidth = c.width
         cHeight = c.height
         cTop = min(cTop, cHeight - 1)

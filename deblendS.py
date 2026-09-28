@@ -251,7 +251,7 @@ from __future__ import annotations
 import math
 import threading
 from dataclasses import dataclass
-from typing import Optional, Union
+from typing import Any, Dict, Mapping, Optional, Union
 
 from helpers import GetPlane, NLMeans, cround, scale_value, get_expr, get_rg, pick_tool, tool_loaded, tool_namespace
 
@@ -291,7 +291,7 @@ def _build_detection_clips(
     srad:  float = 12.0,
     mode:  int   = 2,
     bom:   bool  = False,
-    tools        = None,
+    tools: Optional[Mapping[str, str]]        = None,
 ) -> tuple[vs.VideoNode, vs.VideoNode, vs.VideoNode]:
     """
     Returns (bclp, dclp, det).
@@ -847,7 +847,7 @@ class Engine:
 # pp0 - pp3 blend reconstruction  (srestore's "bom" branch)
 # ---------------------------------------------------------------------------
 
-def _build_pp_clip(source: vs.VideoNode, omode: str, tools=None) -> vs.VideoNode:
+def _build_pp_clip(source: vs.VideoNode, omode: str, tools: Optional[Mapping[str, str]] = None) -> vs.VideoNode:
     """
     Build srestore's 'fin' clip: frame n is frame n of the source with
     the blend removed, rebuilt ("unblended") from its neighbours.
@@ -939,7 +939,7 @@ def _apply_dclip_denoise(
     denoise:   str,
     nlmeans_h: float = 7.0,
     mode:      int   = 2,
-    tools            = None,
+    tools: Optional[Mapping[str, str]]            = None,
 ) -> vs.VideoNode:
     """
     Apply a purely spatial denoise to dclip before detection thumbnail
@@ -1010,7 +1010,7 @@ def _apply_dclip_denoise(
             passes = ['YUV' if do_chroma else 'Y']
 
         # Common kwargs shared across all passes.
-        kw = dict(d=0, a=2, s=3, h=nlmeans_h, wmode=0, wref=1.0, tools=tools)
+        kw: Dict[str, Any] = dict(d=0, a=2, s=3, h=nlmeans_h, wmode=0, wref=1.0, tools=tools)
 
         for ch in passes:
             dclip = NLMeans(dclip, channels=ch, **kw)
@@ -1044,7 +1044,7 @@ def deblendS(
     nlmeans_h:            float                  = 7.0,
     thresh:               int                    = 16,
     bsize:                int                    = 32,
-    tools                                        = None,
+    tools: Optional[Mapping[str, str]]                                        = None,
 ) -> vs.VideoNode:
     if clip.format is None or clip.format.color_family != vs.YUV:
         raise vs.Error("deblendS: input must be a YUV clip with fixed format")
@@ -1272,7 +1272,7 @@ def deblendS6(
     nlmeans_h:            float                  = 7.0,
     thresh:               int                    = 16,
     bsize:                int                    = 32,
-    tools                                        = None,
+    tools: Optional[Mapping[str, str]]                                        = None,
 ) -> vs.VideoNode:
     """
     deblendS with omode=6 -- the cadence-resolving mode this script
@@ -1308,7 +1308,7 @@ def _build_of_clip(
     pel:       int  = 2,
     blksize:   int  = 16,
     prefer_sf: bool = False,
-    tools           = None,
+    tools: Optional[Mapping[str, str]]           = None,
 ) -> vs.VideoNode:
     """
     Build the motion-compensated clip used to reconstruct blend frames.

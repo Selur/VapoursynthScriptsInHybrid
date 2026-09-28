@@ -1,15 +1,16 @@
+from __future__ import annotations
 import vapoursynth as vs
 from vapoursynth import core
 
 import math
 from functools import partial
-from typing import Optional, Union, Sequence, Any, Dict
+from typing import Optional, Union, Sequence, Any, Dict, Callable, Mapping
 
 from helpers import GetPlane, BoxFilter, scale, get_expr, get_rg, pick_tool, type_error, value_error
 from misc import SCDetect
 
 # taken from adjust
-def Tweak(clip, hue=None, sat=None, bright=None, cont=None, coring=True, tools=None):
+def Tweak(clip: vs.VideoNode, hue: Optional[float] = None, sat: Optional[float] = None, bright: Optional[float] = None, cont: Optional[float] = None, coring: bool = True, tools: Optional[Mapping[str, str]] = None) -> vs.VideoNode:
     if clip.format is None:
         raise vs.Error("Tweak: only clips with constant format are accepted.")
 
@@ -204,7 +205,7 @@ def SmoothLevels(
     Mfactor: Union[int, float] = 2,
     RGmode: int = 12,
     useDB: bool = False,
-    tools: Optional[Dict[str, str]] = None
+    tools: Optional[Mapping[str, str]] = None
 ) -> vs.VideoNode:
     """Optimized SmoothLevels function with performance improvements."""
     
@@ -323,7 +324,7 @@ def SmoothLevels(
         if not use_vszip:
             deband_func = core.neo_f3kdb.Deband if deband == 'neo_f3kdb' else core.f3kdb.Deband
 
-        def _deband(clip):
+        def _deband(clip: vs.VideoNode) -> vs.VideoNode:
             deband_in = EXPR(clip, expr=[deband_expr])
             if use_vszip:
                 out = core.vszip.Deband(deband_in, grain=[0, 0])
@@ -442,7 +443,7 @@ def HighBitDepthHistogram(clip: vs.VideoNode, method: str = "Classic") -> vs.Vid
 
 
 # based on: https://forum.videohelp.com/threads/396285-Converting-Blu-Ray-YUV-to-RGB-and-back-to-YUV#post2576719 by  _Al_
-def RGBAdjust(rgb: vs.VideoNode, r: float=1.0, g: float=1.0, b: float=1.0, a: float=1.0, rb: float=0.0, gb: float=0.0, bb: float=0.0, ab: float=0.0, rg: float=1.0, gg: float=1.0, bg: float=1.0, ag: float=1.0, tools=None):
+def RGBAdjust(rgb: vs.VideoNode, r: float=1.0, g: float=1.0, b: float=1.0, a: float=1.0, rb: float=0.0, gb: float=0.0, bb: float=0.0, ab: float=0.0, rg: float=1.0, gg: float=1.0, bg: float=1.0, ag: float=1.0, tools: Optional[Mapping[str, str]] = None) -> vs.VideoNode:
   funcName = 'RGBAdjust'
   if rgb.format.color_family != vs.RGB:
     raise ValueError(funcName + ': input clip needs to be RGB!')
@@ -493,7 +494,9 @@ def AutoGain(
     darken: bool = False,
     sc_threshold: float = 0.4,
     ema_alpha: float = 0.15,
-    tools: Optional[Dict[str, str]] = None
+    scd_thscd1: float = 400.0,
+    scd_thscd2: float = 130.0,
+    tools: Optional[Mapping[str, str]] = None
 ) -> vs.VideoNode:
     """
     AutoGain: Scene-aware automatic gain adjustment with EMA smoothing.
@@ -532,14 +535,14 @@ def AutoGain(
         raise ValueError("AutoGain: Only YUV clips supported.")
         
     if pick_tool(tools, 'planestats', ('vszip', 'std'), lambda name: name == 'std' or hasattr(core, 'vszip')) == 'vszip':
-      return AutoGainZ(clip, gain_limit, strength, darken, sc_threshold, ema_alpha, tools=tools)
+      return AutoGainZ(clip, gain_limit, strength, darken, sc_threshold, ema_alpha, scd_thscd1=scd_thscd1, scd_thscd2=scd_thscd2, tools=tools)
 
     # Extract luma plane
     Y = core.std.ShufflePlanes(clip, 0, vs.GRAY)
 
     # Plane statistics + scene detection
     stats = core.std.PlaneStats(Y)
-    sc = SCDetect(Y, threshold=sc_threshold, tools=tools)
+    sc = SCDetect(Y, threshold=sc_threshold, scd_thscd1=scd_thscd1, scd_thscd2=scd_thscd2, tools=tools)
     prop_src = core.std.CopyFrameProps(sc, stats)
 
     # Determine peak value
@@ -552,7 +555,7 @@ def AutoGain(
     state = {"scale": 1.0, "offset": 0.0, "first": True}
 
     # FrameEval callback
-    def apply_gain(n, f):
+    def apply_gain(n: int, f: vs.VideoFrame) -> vs.VideoNode:
         # Extract PlaneStats
         avg = f.props.get("PlaneStatsAverage", None)
         mn  = f.props.get("PlaneStatsMin", None)
@@ -614,7 +617,9 @@ def AutoGainZ(
     darken: bool = False,
     sc_threshold: float = 0.4,
     ema_alpha: float = 0.15,
-    tools: Optional[Dict[str, str]] = None
+    scd_thscd1: float = 400.0,
+    scd_thscd2: float = 130.0,
+    tools: Optional[Mapping[str, str]] = None
 ) -> vs.VideoNode:
     """
     AutoGain optimized with vszip PlaneAverage.
@@ -638,7 +643,7 @@ def AutoGainZ(
     )
 
     # Scene detection
-    sc = SCDetect(Y, threshold=sc_threshold, tools=tools)
+    sc = SCDetect(Y, threshold=sc_threshold, scd_thscd1=scd_thscd1, scd_thscd2=scd_thscd2, tools=tools)
 
     # Combine stats + scene detection properties
     prop_src = core.std.CopyFrameProps(sc, stats)
@@ -650,7 +655,7 @@ def AutoGainZ(
     state = {"scale": 1.0, "offset": 0.0, "first": True}
 
     # FrameEval lambda with minimal Python work
-    def apply_gain(n, f):
+    def apply_gain(n: int, f: vs.VideoFrame) -> vs.VideoNode:
         avg = f.props.get("y_avgAvg", None)
         if avg is None:
             return Y  # fallback
@@ -713,7 +718,7 @@ def AutoGainZ(
 
 
 # auto white from https://www.vapoursynth.com/doc/functions/frameeval.html
-def AutoWhiteAdjust(n, f, clip, core, tools=None):
+def AutoWhiteAdjust(n: int, f: Sequence[vs.VideoFrame], clip: vs.VideoNode, core: vs.Core, tools: Optional[Mapping[str, str]] = None) -> vs.VideoNode:
     small_number = 1e-9
 
     # Extract per-plane averages from PlaneStats props
@@ -739,7 +744,7 @@ def AutoWhiteAdjust(n, f, clip, core, tools=None):
     return EXPR(clip, expr=[f"x {r_gain} *", f"x {g_gain} *", f"x {b_gain} *"])
 
 # AutoWhiteAdjustZ version using vszip
-def AutoWhiteAdjustZ(clip, r, g, b, core, tools=None):
+def AutoWhiteAdjustZ(clip: vs.VideoNode, r: float, g: float, b: float, core: vs.Core, tools: Optional[Mapping[str, str]] = None) -> vs.VideoNode:
     small_number = 1e-9
 
     # Compute per-plane correction factors
@@ -767,7 +772,7 @@ def AutoWhiteAdjustZ(clip, r, g, b, core, tools=None):
 # This function calculates the correction gain for each color plane (red, green, blue) based on the average color values of each plane, and applies the correction gain to each pixel in the input clip.
 # The output is a video clip with corrected white balance.
 ###
-def AutoWhite(clip, tools=None):
+def AutoWhite(clip: vs.VideoNode, tools: Optional[Mapping[str, str]] = None) -> vs.VideoNode:
     if pick_tool(tools, 'planestats', ('vszip', 'std'), lambda name: name == 'std' or hasattr(core, 'vszip')) == 'vszip':
       return AutoWhiteZ(clip, tools=tools)
     # Compute per-plane stats separately (required for correct output)
@@ -781,7 +786,7 @@ def AutoWhite(clip, tools=None):
 
 
 # AutoWhite version using vszip
-def AutoWhiteZ(clip, tools=None):
+def AutoWhiteZ(clip: vs.VideoNode, tools: Optional[Mapping[str, str]] = None) -> vs.VideoNode:
     # One PlaneAverage per plane
     r_avg = core.vszip.PlaneAverage(clip, exclude=[-1], planes=[0], prop="r_avg")
     g_avg = core.vszip.PlaneAverage(clip, exclude=[-1], planes=[1], prop="g_avg")
@@ -805,7 +810,7 @@ def AutoWhiteZ(clip, tools=None):
 
 
 # ToneMapping Simple
-def tm(clip="",source_peak="",desat=50,lin=True,show_satmask=False,show_clipped=False, tools=None) :
+def tm(clip: vs.VideoNode, source_peak: float, desat: int = 50,lin: bool = True,show_satmask: bool = False,show_clipped: bool = False, tools: Optional[Mapping[str, str]] = None)  -> vs.VideoNode:
     c=clip
     o=c
     a=c
@@ -882,7 +887,7 @@ def tm(clip="",source_peak="",desat=50,lin=True,show_satmask=False,show_clipped=
  
     return c 
 
-def hablehdr10tosdr(clip, source_peak=1000, desat=50, tFormat=vs.YUV420P8, tMatrix="709", tRange="limited", color_loc="center", f_a=0.0, f_b=0.75, show_satmask=False,lin=True,show_clipped=False, tools=None) :
+def hablehdr10tosdr(clip: vs.VideoNode, source_peak: int = 1000, desat: int = 50, tFormat: Union[int, vs.PresetVideoFormat] = vs.YUV420P8, tMatrix: str = "709", tRange: str = "limited", color_loc: str = "center", f_a: float = 0.0, f_b: float = 0.75, show_satmask: bool = False,lin: bool = True,show_clipped: bool = False, tools: Optional[Mapping[str, str]] = None)  -> vs.VideoNode:
   core = vs.core
   clip=core.resize.Bicubic(clip=clip, format=vs.RGBS, filter_param_a=f_a, filter_param_b=f_b, range_in_s="limited", matrix_in_s="2020ncl", primaries_in_s="2020", primaries_s="2020", transfer_in_s="st2084", transfer_s="linear",dither_type="none", nominal_luminance=1000)
   clip=tm(clip=clip,source_peak=source_peak,desat=desat,show_satmask=show_satmask,lin=lin,show_clipped=show_clipped,tools=tools) 
@@ -891,7 +896,7 @@ def hablehdr10tosdr(clip, source_peak=1000, desat=50, tFormat=vs.YUV420P8, tMatr
     
   return clip
   
-def tm_simple(clip="",source_peak="", tools=None) :
+def tm_simple(clip: vs.VideoNode, source_peak: float, tools: Optional[Mapping[str, str]] = None)  -> vs.VideoNode:
     core = vs.core
     c=clip
     o=c
@@ -950,7 +955,7 @@ def tm_simple(clip="",source_peak="", tools=None) :
 
 
    
-def simplehdr10tosdr(clip, source_peak=1000, tFormat=vs.YUV420P8, tMatrix="709", tRange="limited", color_loc="center", f_a=0.0, f_b=0.75, tools=None) :
+def simplehdr10tosdr(clip: vs.VideoNode, source_peak: int = 1000, tFormat: Union[int, vs.PresetVideoFormat] = vs.YUV420P8, tMatrix: str = "709", tRange: str = "limited", color_loc: str = "center", f_a: float = 0.0, f_b: float = 0.75, tools: Optional[Mapping[str, str]] = None)  -> vs.VideoNode:
   core = vs.core
   clip=core.resize.Bicubic(clip=clip, format=vs.RGBS,filter_param_a=f_a,filter_param_b=f_b, range_in_s="limited", matrix_in_s="2020ncl", primaries_in_s="2020", primaries_s="2020", transfer_in_s="st2084", transfer_s="linear",dither_type="none", nominal_luminance=1000)
   clip=tm_simple(clip=clip,source_peak=source_peak,tools=tools)
@@ -964,7 +969,7 @@ def simplehdr10tosdr(clip, source_peak=1000, tFormat=vs.YUV420P8, tMatrix="709",
 # Type aliases
 def SmoothGrad(input: vs.VideoNode, radius: int = 9, thr: float = 0.25,
                ref: Optional[vs.VideoNode] = None, elast: float = 3.0,
-               planes: Optional[Union[int, Sequence[int]]] = None, tools: Optional[Dict[str, str]] = None,
+               planes: Optional[Union[int, Sequence[int]]] = None, tools: Optional[Mapping[str, str]] = None,
                **limit_filter_args: Any) -> vs.VideoNode:
     '''Avisynth's SmoothGrad
 
@@ -1002,7 +1007,7 @@ def SmoothGrad(input: vs.VideoNode, radius: int = 9, thr: float = 0.25,
 
     return LimitFilter(smooth, input, ref, thr, elast, planes=planes, tools=tools, **limit_filter_args)
  
-def ClipRGB(clip: vs.VideoNode, min8: int = 16, max8: int = 235, tools=None) -> vs.VideoNode:
+def ClipRGB(clip: vs.VideoNode, min8: int = 16, max8: int = 235, tools: Optional[Mapping[str, str]] = None) -> vs.VideoNode:
     """
     Hard-clips all RGB channels of a clip to a specified limited-range interval,
     scaled to the clip's bit depth. Useful for enforcing broadcast-safe RGB levels.
@@ -1087,7 +1092,7 @@ def ClipRGB(clip: vs.VideoNode, min8: int = 16, max8: int = 235, tools=None) -> 
 ##         - False: use the std.Lut implementation if available
 ##         default: True
 ################################################################################################################################
-def LimitFilter(flt, src, ref=None, thr=None, elast=None, brighten_thr=None, thrc=None, force_expr=None, planes=None, tools=None):
+def LimitFilter(flt: vs.VideoNode, src: vs.VideoNode, ref: Optional[vs.VideoNode] = None, thr: Optional[Union[float, Sequence[float]]] = None, elast: Optional[Union[float, Sequence[float]]] = None, brighten_thr: Optional[Union[float, Sequence[float]]] = None, thrc: Optional[Union[float, Sequence[float]]] = None, force_expr: Optional[bool] = None, planes: Optional[Union[int, Sequence[int]]] = None, tools: Optional[Mapping[str, str]] = None) -> vs.VideoNode:
     # input clip
     if not isinstance(flt, vs.VideoNode):
         raise type_error('"flt" must be a clip!')
@@ -1234,7 +1239,7 @@ def LimitFilter(flt, src, ref=None, thr=None, elast=None, brighten_thr=None, thr
 
 
 ################################################################################################################################
-def _limit_filter_expr(defref, thr, elast, largen_thr, value_range):
+def _limit_filter_expr(defref: bool, thr: float, elast: float, largen_thr: float, value_range: float) -> str:
     flt = " x "
     src = " y "
     ref = " z " if defref else src
@@ -1288,7 +1293,7 @@ def _limit_filter_expr(defref, thr, elast, largen_thr, value_range):
 ################################################################################################################################
 ## Helper function: CheckColorFamily()
 ################################################################################################################################
-def CheckColorFamily(color_family, valid_list=None, invalid_list=None):
+def CheckColorFamily(color_family: vs.ColorFamily, valid_list: Optional[Sequence[str]] = None, invalid_list: Optional[Sequence[str]] = None) -> None:
     if valid_list is None:
         valid_list = ('RGB', 'YUV', 'GRAY')
     if invalid_list is None:
@@ -1316,7 +1321,7 @@ def CheckColorFamily(color_family, valid_list=None, invalid_list=None):
 ##         - False: delete corresponding frame properties if exist
 ##         - {int}: set to this value
 ################################################################################################################################
-def SetColorSpace(clip, ChromaLocation=None, ColorRange=None, Primaries=None, Matrix=None, Transfer=None):
+def SetColorSpace(clip: vs.VideoNode, ChromaLocation: Optional[Union[bool, int]] = None, ColorRange: Optional[Union[bool, int]] = None, Primaries: Optional[Union[bool, int]] = None, Matrix: Optional[Union[bool, int]] = None, Transfer: Optional[Union[bool, int]] = None) -> vs.VideoNode:
     # input clip
     if not isinstance(clip, vs.VideoNode):
         raise type_error('"clip" must be a clip!')
@@ -1384,7 +1389,7 @@ def SetColorSpace(clip, ChromaLocation=None, ColorRange=None, Primaries=None, Ma
 ################################################################################################################################
 
 
-def FixChromaticAberration(clip, red=1.0, green=1.0, blue=1.0, x=None, y=None, resizer=None):
+def FixChromaticAberration(clip: vs.VideoNode, red: float = 1.0, green: float = 1.0, blue: float = 1.0, x: Optional[float] = None, y: Optional[float] = None, resizer: Optional[Callable[..., vs.VideoNode]] = None) -> vs.VideoNode:
     """
     VapourSynth port of the Avisynth FixChromaticAberration function.
 
@@ -1427,7 +1432,7 @@ def FixChromaticAberration(clip, red=1.0, green=1.0, blue=1.0, x=None, y=None, r
     x = max(0, min(x, w - 1))
     y = max(0, min(y, h - 1))
 
-    def process_channel(scale):
+    def process_channel(scale: float) -> vs.VideoNode:
         if scale == 1.0:
             return c
 

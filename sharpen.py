@@ -1,10 +1,11 @@
+from __future__ import annotations
 from vapoursynth import core
 import vapoursynth as vs
 
 import math
 import importlib
 from functools import partial
-from typing import Optional, Union, Sequence
+from typing import Optional, Union, Sequence, Dict, List, Mapping
 
 from misc import MinBlur, mt_clamp, AverageFrames
 from helpers import GetPlane, cround, scale, clamp, Padding, DFTTest, get_expr, get_rg, pick_tool, tool_function, tool_loaded, m4
@@ -302,9 +303,9 @@ from color import LimitFilter
 ###                   - dest_y      = oy
 ###
 ################################################################################################
-def LSFmod(input, strength=None, Smode=None, Smethod=None, kernel=11, preblur=None, secure=None, source=None, Szrp=16, Spwr=None, SdmpLo=None, SdmpHi=None, Lmode=None, overshoot=None, undershoot=None,
-           overshoot2=None, undershoot2=None, soft=None, soothe=None, keep=None, edgemode=0, edgemaskHQ=None, ss_x=None, ss_y=None, dest_x=None, dest_y=None, defaults='fast', cuda=False,
-           tools=None):
+def LSFmod(input: vs.VideoNode, strength: Optional[float] = None, Smode: Optional[int] = None, Smethod: Optional[int] = None, kernel: int = 11, preblur: Optional[int] = None, secure: Optional[bool] = None, source: Optional[vs.VideoNode] = None, Szrp: int = 16, Spwr: Optional[float] = None, SdmpLo: Optional[float] = None, SdmpHi: Optional[float] = None, Lmode: Optional[int] = None, overshoot: Optional[float] = None, undershoot: Optional[float] = None,
+           overshoot2: Optional[float] = None, undershoot2: Optional[float] = None, soft: Optional[float] = None, soothe: Optional[bool] = None, keep: Optional[float] = None, edgemode: int = 0, edgemaskHQ: Optional[bool] = None, ss_x: Optional[float] = None, ss_y: Optional[float] = None, dest_x: Optional[int] = None, dest_y: Optional[int] = None, defaults: str = 'fast', cuda: bool = False,
+           scd_thscd1: float = 400.0, scd_thscd2: float = 130.0, tools: Optional[Mapping[str, str]] = None) -> vs.VideoNode:
     # cuda: True looks for a GPU DFTTest implementation (vszipcu, then dfttest2), False stays on CPU.
     if not isinstance(input, vs.VideoNode):
         raise vs.Error('LSFmod: this is not a clip')
@@ -496,7 +497,7 @@ def LSFmod(input, strength=None, Smode=None, Smethod=None, kernel=11, preblur=No
     ### SOOTHE
     if soothe:
         diff = core.std.MakeDiff(tmp, PP1)
-        diff = EXPR([diff, AverageFrames(diff, weights=[1] * 3, scenechange=32 / 255, tools=tools)],
+        diff = EXPR([diff, AverageFrames(diff, weights=[1] * 3, scenechange=32 / 255, scd_thscd1=scd_thscd1, scd_thscd2=scd_thscd2, tools=tools)],
                              expr=[f'x {neutral} - y {neutral} - * 0 < x {neutral} - 100 / {keep} * {neutral} + x {neutral} - abs y {neutral} - abs > x {keep} * y {100 - keep} * + 100 / x ? ?'])
         PP2 = core.std.MakeDiff(tmp, diff)
     else:
@@ -534,7 +535,7 @@ def LSFmod(input, strength=None, Smode=None, Smethod=None, kernel=11, preblur=No
         return out
 
 
-def FineSharp(clip, mode=1, sstr=2.5, cstr=None, xstr=0, lstr=1.5, pstr=1.28, ldmp=None, hdmp=0.01, rep=12, tools=None):
+def FineSharp(clip: vs.VideoNode, mode: int = 1, sstr: float = 2.5, cstr: Optional[float] = None, xstr: int = 0, lstr: float = 1.5, pstr: float = 1.28, ldmp: Optional[float] = None, hdmp: float = 0.01, rep: int = 12, tools: Optional[Mapping[str, str]] = None) -> vs.VideoNode:
     """
     Original author: Didée (https://forum.doom9.org/showthread.php?t=166082)
     Small and relatively fast realtime-sharpening function, for 1080p,
@@ -621,7 +622,7 @@ def FineSharp(clip, mode=1, sstr=2.5, cstr=None, xstr=0, lstr=1.5, pstr=1.28, ld
 
     return core.std.ShufflePlanes([shrp, clip], [0, 1, 2], color) if color in [vs.YUV] else shrp
 
-def DetailSharpen(clip, z=4, sstr=1.5, power=4, ldmp=1, mode=1, med=False, tools=None):
+def DetailSharpen(clip: vs.VideoNode, z: int = 4, sstr: float = 1.5, power: int = 4, ldmp: int = 1, mode: int = 1, med: bool = False, tools: Optional[Mapping[str, str]] = None) -> vs.VideoNode:
     """
     From: https://forum.doom9.org/showthread.php?t=163598
     Didée: Wanna some sharpening that causes no haloing, without any edge masking?
@@ -664,7 +665,7 @@ def DetailSharpen(clip, z=4, sstr=1.5, power=4, ldmp=1, mode=1, med=False, tools
 
     return core.std.ShufflePlanes([tmp, clip], [0, 1, 2], color) if color in [vs.YUV] else tmp
 
-def psharpen(clip, strength=25, threshold=75, ss_x=1.0, ss_y=1.0, dest_x=None, dest_y=None, tools=None):
+def psharpen(clip: vs.VideoNode, strength: int = 25, threshold: int = 75, ss_x: float = 1.0, ss_y: float = 1.0, dest_x: Optional[int] = None, dest_y: Optional[int] = None, tools: Optional[Mapping[str, str]] = None) -> vs.VideoNode:
     """From http://forum.doom9.org/showpost.php?p=683344&postcount=28
 
     Sharpening function similar to LimitedSharpenFaster.
@@ -738,12 +739,12 @@ def psharpen(clip, strength=25, threshold=75, ss_x=1.0, ss_y=1.0, dest_x=None, d
 
 ########################### HELPER
 
-def spline(x, coordinates):
-    def get_matrix(px, py, l):
+def spline(x: float, coordinates: Dict[float, float]) -> float:
+    def get_matrix(px: Sequence[float], py: Sequence[float], l: int) -> List[List[float]]:
         matrix = []
         matrix.append([(i == 0) * 1.0 for i in range(l + 1)])
         for i in range(1, l - 1):
-            p = [0 for t in range(l + 1)]
+            p: List[float] = [0 for t in range(l + 1)]
             p[i - 1] = px[i] - px[i - 1]
             p[i] = 2 * (px[i + 1] - px[i - 1])
             p[i + 1] = px[i + 1] - px[i]
@@ -751,7 +752,7 @@ def spline(x, coordinates):
             matrix.append(p)
         matrix.append([(i == l - 1) * 1.0 for i in range(l + 1)])
         return matrix
-    def equation(matrix, dim):
+    def equation(matrix: List[List[float]], dim: int) -> None:
         for i in range(dim):
             num = matrix[i][i]
             for j in range(dim + 1):
@@ -785,7 +786,7 @@ def spline(x, coordinates):
     
 def ContraSharpening(
     denoised: vs.VideoNode, original: vs.VideoNode, radius: Optional[int] = None, rep: int = 1,
-    planes: Optional[Union[int, Sequence[int]]] = None, tools=None
+    planes: Optional[Union[int, Sequence[int]]] = None, tools: Optional[Mapping[str, str]] = None
 ) -> vs.VideoNode:
     '''
     contra-sharpening: sharpen the denoised clip, but don't add more to any pixel than what was removed previously.
@@ -851,7 +852,7 @@ def ContraSharpening(
     return last.std.Crop(pad, pad, pad, pad)
    
     
-def UnsharpMask(clip: vs.VideoNode, strength: int = 64, radius: int = 3, threshold: int = 8, tools=None) -> vs.VideoNode:
+def UnsharpMask(clip: vs.VideoNode, strength: int = 64, radius: int = 3, threshold: int = 8, tools: Optional[Mapping[str, str]] = None) -> vs.VideoNode:
     """Unsharp masking for sharpening a clip.
     It's a sharpening method based on subtracting a blurred version of an image from the original and boosting the difference.
 
@@ -926,10 +927,10 @@ def AWarpSharp2(
     thresh: int = 128,
     blur: int = 2,
     type: int = 0,
-    depth: list[int] = [16, 8, 8],
+    depth: Union[int, list[int]] = [16, 8, 8],
     chroma: int = 0,
     planes: list[int] | None = None,
-    tools=None
+    tools: Optional[Mapping[str, str]] = None
 ) -> vs.VideoNode:
     if pick_tool(tools, 'warp', ('warp', 'awarp')) == 'warp':
         return core.warp.AWarpSharp2(clip, thresh, blur, type, depth, chroma, planes)

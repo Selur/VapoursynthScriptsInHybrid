@@ -1,16 +1,17 @@
+from __future__ import annotations
 
 import vapoursynth as vs
 from vapoursynth import core
 
 import math
 
-from typing import Sequence, Union, Optional
+from typing import Any, Callable, Dict, Mapping, Optional, Sequence, Union
 from helpers import scale_value, cround, m4, DitherLumaRebuild, KNLMeansCL, NLMeans, DFTTest, get_expr, get_rg, pick_tool, tool_function
 from misc import get_mv, MinBlur
 from color import LimitFilter
 from sharpen import ContraSharpening
 
-def _boxblur_fn(tools=None):
+def _boxblur_fn(tools: Optional[Mapping[str, str]] = None) -> Callable[..., vs.VideoNode]:
     """Pick the BoxBlur: tools['boxblur'], else vszip, else std."""
     return tool_function(tools, 'boxblur', 'BoxBlur')
     
@@ -26,7 +27,7 @@ def STPresso(
     tbias: int = 49,
     back: int = 1,
     planes: Optional[Union[int, Sequence[int]]] = None,
-    tools=None,
+    tools: Optional[Mapping[str, str]] = None,
 ) -> vs.VideoNode:
     """
     Dampen the grain just a little, to keep the original look.
@@ -176,26 +177,26 @@ def STPresso(
 #                  * 2: extra pre- and postfiltering step
 
 def TemporalDegrain(          \
-      inpClip                 \
-    , denoiseClip   = None    \
-    , sigma         = 16      \
-    , blockWidth    = 16      \
-    , blockHeight   = 16      \
-    , sigma2        = None    \
-    , sigma3        = None    \
-    , sigma4        = None    \
-    , overlapWidth  = None    \
-    , overlapHeight = None    \
-    , blockSize     = 16      \
-    , pel           = 2       \
-    , overlapValue  = None    \
-    , degrain       = 2       \
-    , maxPxChange   = 255     \
-    , thrDegrain1   = 400     \
-    , thrDegrain2   = 300     \
-    , HQ            = 1       \
-    , tools         = None    \
-) :
+      inpClip: vs.VideoNode                 \
+    , denoiseClip: Optional[vs.VideoNode]   = None    \
+    , sigma: int         = 16      \
+    , blockWidth: int    = 16      \
+    , blockHeight: int   = 16      \
+    , sigma2: Optional[float]        = None    \
+    , sigma3: Optional[float]        = None    \
+    , sigma4: Optional[float]        = None    \
+    , overlapWidth: Optional[int]  = None    \
+    , overlapHeight: Optional[int] = None    \
+    , blockSize: int     = 16      \
+    , pel: int           = 2       \
+    , overlapValue: Optional[int]  = None    \
+    , degrain: int       = 2       \
+    , maxPxChange: int   = 255     \
+    , thrDegrain1: int   = 400     \
+    , thrDegrain2: int   = 300     \
+    , HQ: int            = 1       \
+    , tools: Optional[Mapping[str, str]]         = None    \
+)  -> vs.VideoNode:
 
     if int(degrain) != degrain or degrain < 1 or degrain > 3:
         raise SyntaxError(\
@@ -305,7 +306,7 @@ def TemporalDegrain(          \
     # version is more complicated.
     return ContraSharpening(nr2, inpClip, tools=tools)
 
-def MLDegrain(clip, scale1=1.5, scale2=2, thSAD=400, tr=3, rec=False, chroma=True, soft=[0]*3, tools=None):
+def MLDegrain(clip: vs.VideoNode, scale1: float = 1.5, scale2: int = 2, thSAD: int = 400, tr: int = 3, rec: bool = False, chroma: bool = True, soft: Sequence[float] = [0]*3, tools: Optional[Mapping[str, str]] = None) -> vs.VideoNode:
     """
     Multi-Level MDegrain
     Multi level in the sense of using multiple scalings.
@@ -355,7 +356,7 @@ def MLDegrain(clip, scale1=1.5, scale2=2, thSAD=400, tr=3, rec=False, chroma=Tru
     return core.std.MakeDiff(up3, M2)
 
 
-def MLD_helper(clip, srch, tr, thSAD, rec, chroma, soft, tools=None):
+def MLD_helper(clip: vs.VideoNode, srch: vs.VideoNode, tr: int, thSAD: int, rec: bool, chroma: bool, soft: float, tools: Optional[Mapping[str, str]] = None) -> vs.VideoNode:
     """ Helper function used in Multi-Level MDegrain"""
 
     if not isinstance(clip, vs.VideoNode) or clip.format.color_family not in [vs.GRAY, vs.YUV]:
@@ -372,8 +373,8 @@ def MLD_helper(clip, srch, tr, thSAD, rec, chroma, soft, tools=None):
     planes = [0, 1, 2] if chroma else [0]
     plane = 4 if chroma else 0
 
-    analyse_args = dict(blksize=bs, overlap=bs//2, search=5, chroma=chroma, truemotion=truemotion)
-    recalculate_args = dict(blksize=bs//2, overlap=bs//4, search=5, chroma=chroma, truemotion=truemotion)
+    analyse_args: Dict[str, Any] = dict(blksize=bs, overlap=bs//2, search=5, chroma=chroma, truemotion=truemotion)
+    recalculate_args: Dict[str, Any] = dict(blksize=bs//2, overlap=bs//4, search=5, chroma=chroma, truemotion=truemotion)
     sup1 = S(DitherLumaRebuild(srch, 1, tools=tools), hpad=bs, vpad=bs, pel=pel, sharp=1, rfilter=4,blksize=bs, overlap=bs//2)
 
     if soft > 0:
@@ -399,10 +400,10 @@ def MLD_helper(clip, srch, tr, thSAD, rec, chroma, soft, tools=None):
     return MV.Degrain(RG, sup2, *vecs, thsad=thSAD, plane=plane, centre_from_clip=soft > 0)
 
 
-def TemporalDegrain2(clip, degrainTR=1, degrainPlane=4, grainLevel=2, grainLevelSetup=False, meAlg=4, meAlgPar=None, meSubpel=None, meBlksz=None, meTM=False,
-    limitSigma=None, limitBlksz=None, fftThreads=None, postFFT=0, postTR=1, postSigma=1, postMix=0, postBlkSize=None, knlDevId=0, ppSAD1=None, ppSAD2=None, 
-    ppSCD1=None, thSCD2=128, DCT=0, SubPelInterp=2, SrchClipPP=None, GlobalMotion=True, ChromaMotion=True, rec=False, extraSharp=False, outputStage=2, neo=True,
-    tools=None):
+def TemporalDegrain2(clip: vs.VideoNode, degrainTR: int = 1, degrainPlane: int = 4, grainLevel: int = 2, grainLevelSetup: bool = False, meAlg: int = 4, meAlgPar: Optional[int] = None, meSubpel: Optional[int] = None, meBlksz: Optional[int] = None, meTM: bool = False,
+    limitSigma: Optional[float] = None, limitBlksz: Optional[int] = None, fftThreads: Optional[int] = None, postFFT: int = 0, postTR: int = 1, postSigma: int = 1, postMix: int = 0, postBlkSize: Optional[int] = None, knlDevId: int = 0, ppSAD1: Optional[float] = None, ppSAD2: Optional[float] = None, 
+    ppSCD1: Optional[float] = None, thSCD2: int = 128, DCT: int = 0, SubPelInterp: int = 2, SrchClipPP: Optional[int] = None, GlobalMotion: bool = True, ChromaMotion: bool = True, rec: bool = False, extraSharp: bool = False, outputStage: int = 2, neo: bool = True,
+    tools: Optional[Mapping[str, str]] = None) -> vs.VideoNode:
     """
     Temporal Degrain Updated by ErazorTT                               
                                                                           
@@ -630,9 +631,9 @@ def TemporalDegrain2(clip, degrainTR=1, degrainPlane=4, grainLevel=2, grainLevel
         expr = 'x {a} + y < x {b} + x {a} - y > x {b} - x y + 2 / ? ?'.format(a=7*bitDepthMultiplier, b=2*bitDepthMultiplier)
         srchClip = EXPR([spatialBlur, clip], [expr] if ChromaMotion or isGRAY else [expr, ''])
 
-    super_args = dict(pel=meSubpel, hpad=hpad, vpad=vpad, sharp=SubPelInterp, chroma=ChromaMotion, blksize=meBlksz, overlap=Overlap)
-    analyse_args = dict(blksize=meBlksz, overlap=Overlap, search=meAlg, searchparam=meAlgPar, pelsearch=meSubpel, truemotion=meTM, lambda_=Lambda, pnew=PNew, global_=GlobalMotion, dct=DCT, chroma=ChromaMotion)
-    recalculate_args = dict(thsad=thSAD1 // 2, blksize=max(meBlksz // 2, 4), overlap=max(Overlap // 2, 2), search=meAlg, searchparam=meAlgPar, truemotion=meTM, lambda_=Lambda/4, pnew=PNew, dct=DCT, chroma=ChromaMotion)
+    super_args: Dict[str, Any] = dict(pel=meSubpel, hpad=hpad, vpad=vpad, sharp=SubPelInterp, chroma=ChromaMotion, blksize=meBlksz, overlap=Overlap)
+    analyse_args: Dict[str, Any] = dict(blksize=meBlksz, overlap=Overlap, search=meAlg, searchparam=meAlgPar, pelsearch=meSubpel, truemotion=meTM, lambda_=Lambda, pnew=PNew, global_=GlobalMotion, dct=DCT, chroma=ChromaMotion)
+    recalculate_args: Dict[str, Any] = dict(thsad=thSAD1 // 2, blksize=max(meBlksz // 2, 4), overlap=max(Overlap // 2, 2), search=meAlg, searchparam=meAlgPar, truemotion=meTM, lambda_=Lambda/4, pnew=PNew, dct=DCT, chroma=ChromaMotion)
 
     lumaRebuild = DitherLumaRebuild(srchClip, s0=1, chroma=ChromaMotion, tools=tools)
 
@@ -731,7 +732,7 @@ def TemporalDegrain2(clip, degrainTR=1, degrainPlane=4, grainLevel=2, grainLevel
 """ From https://gist.github.com/4re/b5399b1801072458fc80#file-mcdegrainsharp-py 
 """
 
-def _sharpen(clip, strength, planes, tools=None):
+def _sharpen(clip: vs.VideoNode, strength: float, planes: Optional[Union[int, Sequence[int]]], tools: Optional[Mapping[str, str]] = None) -> vs.VideoNode:
     core = vs.core
     if pick_tool(tools, 'tcanny', ('tcanny', 'std')) == 'tcanny':
       blur = core.tcanny.TCanny(clip, sigma=strength, mode=-1, planes=planes)
@@ -742,7 +743,7 @@ def _sharpen(clip, strength, planes, tools=None):
     return EXPR([clip, blur], "x x + y -")
 
 
-def mcdegrainsharp(clip, frames=2, bblur=0.3, csharp=0.3, bsrch=True, thsad=400, plane=4, tools=None):
+def mcdegrainsharp(clip: vs.VideoNode, frames: int = 2, bblur: float = 0.3, csharp: float = 0.3, bsrch: bool = True, thsad: int = 400, plane: int = 4, tools: Optional[Mapping[str, str]] = None) -> vs.VideoNode:
     """Based on MCDegrain By Didee:
     http://forum.doom9.org/showthread.php?t=161594
     Also based on DiDee observations in this thread:

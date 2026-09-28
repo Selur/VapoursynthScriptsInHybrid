@@ -1,3 +1,5 @@
+from __future__ import annotations
+from typing import Sequence
 import vapoursynth as vs
 core = vs.core
 import qtgmc
@@ -59,7 +61,7 @@ def FieldMatch(c: vs.VideoNode) -> vs.VideoNode:
     # Precompute IsCombed for each clip
     combed_flags = [core.iscombed.IsCombed(clip, cthresh=12, chroma=True, blockx=16, blocky=32) for clip in candidates]
 
-    def select_frame(n, f):
+    def select_frame(n: int, f: Sequence[vs.VideoFrame]) -> vs.VideoNode:
         for i in range(len(combed_flags) - 1):  # skip deint until end
             if not f[i].props._Combed:
                 return candidates[i]
@@ -75,7 +77,7 @@ def FieldMatch(c: vs.VideoNode) -> vs.VideoNode:
 #   vinverse: https://github.com/Asd-g/vinverse or https://github.com/Selur/VapoursynthScriptsInHybrid/blob/master/residual.py#L13
 #   VapourSynth-VMAF: https://github.com/HomeOfVapourSynthEvolution/VapourSynth-VMAF
 #   BoxBlur (optional): https://github.com/dnjulek/vapoursynth-zip/
-def cFieldMatch(clip: vs.VideoNode, chroma: bool=False, vinverse: bool=False):
+def cFieldMatch(clip: vs.VideoNode, chroma: bool=False, vinverse: bool=False) -> vs.VideoNode:
     # Determine field order from frame properties:
     # _FieldBased = 2 → Top Field First (TFF)
     # _FieldBased = 1 → Bottom Field First (BFF)
@@ -127,7 +129,7 @@ def cFieldMatch(clip: vs.VideoNode, chroma: bool=False, vinverse: bool=False):
     out_clips  = [c, n, p]
     prop_clips = [c_m, n_m, p_m]
 
-    def select(n, f):
+    def select(n: int, f: Sequence[vs.VideoFrame]) -> vs.VideoNode:
         # Aggregate PSNR score:
         #   luma only (default) or luma + chroma if enabled
         A = f[0].props["psnr_y"] + (f[0].props["psnr_cb"] + f[0].props["psnr_cr"] if chroma else 0)
