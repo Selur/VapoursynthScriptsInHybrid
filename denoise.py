@@ -3,10 +3,11 @@ import vapoursynth as vs
 from vapoursynth import core
 
 import math
+import warnings
 
-from typing import Any, Dict, Mapping, Optional, Sequence, Union
+from typing import Any, Dict, List, Mapping, Optional, Sequence, Union
 
-from helpers import GetPlane, scale_value, scale, cround, DitherLumaRebuild, KNLMeansCL, DFTTest, BoxFilter, get_expr, get_rg, pick_tool, tool_function
+from helpers import GetPlane, scale_value, scale, cround, DitherLumaRebuild, KNLMeansCL, DFTTest, BoxFilter, get_expr, get_rg, pick_tool, tool_function, tool_loaded, _bm3d_first, _bm3d_order
 
 from misc import get_mv, MinBlur, SCDetect, mt_expand_multi
         
@@ -914,3 +915,157 @@ def Sharpen(clip: vs.VideoNode, amountH: float = 1.0, amountV: Optional[float] =
         clip = core.std.Convolution(clip, conv_mat_h, planes=planes, mode='h')
 
     return clip
+
+
+# Parameters of BM3D() that only the bm3d plugin (mawen1250) knows, and those only the BM3DCUDA ports know.
+_BM3D_PLUGIN_ONLY = ('matrix', 'profile1', 'profile2', 'hard_thr', 'block_size1', 'block_size2', 'group_size1', 'group_size2',
+                     'bm_step1', 'bm_step2', 'ps_step1', 'ps_step2', 'th_mse1', 'th_mse2')
+_BM3D_PORTS_ONLY = ('chroma', 'fast', 'extractor_exp', 'device')
+
+
+def _bm3d_sigma(value: Union[float, Sequence[float]], gray: bool) -> List[float]:
+    '''Three sigma values, the last one repeated; a Gray clip keeps only the first.'''
+    values = [float(value)] if isinstance(value, (int, float)) else [float(v) for v in value]
+    if not values:
+        raise vs.Error('BM3D: sigma must not be empty')
+    values = (values + [values[-1]] * 3)[:3]
+    return [values[0], 0.0, 0.0] if gray else values
+
+
+def _bm3d_warn_ignored(name: str, given: Sequence[str]) -> None:
+    '''One warning naming the given parameters the implementation `name` does not know.'''
+    unknown = _BM3D_PORTS_ONLY if name == 'bm3d' else _BM3D_PLUGIN_ONLY
+    if name == 'bm3dcpu':
+        unknown = unknown + ('fast', 'extractor_exp', 'device')
+    elif name != 'bm3d':
+        unknown = unknown + (() if name in ('bm3dcuda', 'bm3dhip') else ('fast', 'extractor_exp'))
+    ignored = [key for key in unknown if key in given]
+    if ignored:
+        warnings.warn(f'BM3D: {name} does not know {", ".join(ignored)}, ignored')
+
+
+def BM3D(clip: vs.VideoNode, sigma: Union[float, Sequence[float]] = 5.0,
+         radius1: int = 0, radius2: Optional[int] = None,
+         profile1: str = 'fast', profile2: Optional[str] = None,
+         refine: int = 1, sigma2: Optional[Union[float, Sequence[float]]] = None,
+         block_size1: Optional[int] = None, block_step1: Optional[int] = None, group_size1: Optional[int] = None,
+         bm_range1: Optional[int] = None, bm_step1: Optional[int] = None, ps_num1: Optional[int] = None,
+         ps_range1: Optional[int] = None, ps_step1: Optional[int] = None, th_mse1: Optional[float] = None,
+         hard_thr: Optional[float] = None,
+         block_size2: Optional[int] = None, block_step2: Optional[int] = None, group_size2: Optional[int] = None,
+         bm_range2: Optional[int] = None, bm_step2: Optional[int] = None, ps_num2: Optional[int] = None,
+         ps_range2: Optional[int] = None, ps_step2: Optional[int] = None, th_mse2: Optional[float] = None,
+         matrix: Optional[int] = None, chroma: bool = False, fast: Optional[bool] = None,
+         extractor_exp: Optional[int] = None, device: Optional[int] = None,
+         tools: Optional[Mapping[str, str]] = None) -> vs.VideoNode:
+    '''BM3D denoising: a basic estimate, then `refine` final estimates (V-BM3D from radius 1); names as in mvsfunc.
+
+    The clip must be 32-bit float (Gray, YUV or RGB). RGB is filtered in the opponent colour space (needs the bm3d
+    plugin). Planes with sigma 0 stay untouched; with luma only, the luma plane is filtered alone. sigma2, radius2 and
+    profile2 default to the values of the basic estimate. Implementation as in helpers.BM3D(): tools['bm3d'], else the
+    order bm3dcuda, bm3dhip, bm3dmetal, bm3dcpu, bm3d; a GPU plugin that cannot create its filter is skipped with a warning.
+    Parameters the chosen plugin does not know are ignored with a warning. matrix, profile*, block_size*, group_size*,
+    bm_step*, ps_step*, th_mse* and hard_thr exist in bm3d only, chroma (CBM3D, YUV444PS or RGB), fast, extractor_exp and
+    device in the BM3DCUDA ports only.
+    '''
+    fmt = clip.format
+    if fmt.sample_type != vs.FLOAT or fmt.bits_per_sample != 32:
+        raise vs.Error('BM3D: the clip must be 32-bit float')
+    if refine < 0:
+        raise vs.Error('BM3D: refine must not be negative')
+    gray = fmt.color_family == vs.GRAY
+    rgb = fmt.color_family == vs.RGB
+    radius2 = radius1 if radius2 is None else radius2
+    profile2 = profile1 if profile2 is None else profile2
+    device_id = device if device is not None and device >= 0 else None
+    first: Dict[str, Any] = dict(sigma=_bm3d_sigma(sigma, gray), radius=radius1, profile=profile1, block_size=block_size1,
+                                 block_step=block_step1, group_size=group_size1, bm_range=bm_range1, bm_step=bm_step1,
+                                 ps_num=ps_num1, ps_range=ps_range1, ps_step=ps_step1, th_mse=th_mse1, hard_thr=hard_thr)
+    final: Dict[str, Any] = dict(sigma=_bm3d_sigma(sigma if sigma2 is None else sigma2, gray), radius=radius2,
+                                 profile=profile2, block_size=block_size2, block_step=block_step2, group_size=group_size2,
+                                 bm_range=bm_range2, bm_step=bm_step2, ps_num=ps_num2, ps_range=ps_range2, ps_step=ps_step2,
+                                 th_mse=th_mse2, hard_thr=None)
+    used = [first] + [final] * refine
+    if not any(any(stage['sigma']) for stage in used):
+        return clip
+    luma_only = not gray and not any(any(stage['sigma'][1:]) for stage in used)
+
+    if rgb:
+        if not tool_loaded('bm3d', 'bm3d'):
+            raise vs.Error('BM3D: RGB input is filtered in the opponent colour space, which needs the bm3d plugin')
+        work = core.bm3d.RGB2OPP(clip, sample=1)
+    else:
+        work = clip
+    if chroma and not gray and not luma_only and (work.format.subsampling_w, work.format.subsampling_h) != (0, 0):
+        raise vs.Error('BM3D: chroma=True needs YUV444PS or RGB input')
+    plane_clip = core.std.ShufflePlanes(work, 0, vs.GRAY) if luma_only and not gray else work
+    planes = plane_clip.format.num_planes
+    use_chroma = chroma and planes == 3
+    # The bm3d plugin normalises sigma by the matrix, on a Gray clip as on a Y plane; OPP (100) means no normalisation.
+    matrix_arg = 100 if rgb else matrix
+    given = [key for key, value in (('matrix', matrix), ('hard_thr', hard_thr), ('chroma', use_chroma), ('fast', None if fast is None else 1),
+                                    ('extractor_exp', extractor_exp), ('device', device_id),
+                                    ('profile1', None if profile1 == 'fast' else profile1),
+                                    ('profile2', None if profile2 == 'fast' else profile2),
+                                    ('block_size1', block_size1), ('block_size2', block_size2),
+                                    ('group_size1', group_size1), ('group_size2', group_size2),
+                                    ('bm_step1', bm_step1), ('bm_step2', bm_step2), ('ps_step1', ps_step1),
+                                    ('ps_step2', ps_step2), ('th_mse1', th_mse1), ('th_mse2', th_mse2))
+             if value is not None and value is not False]
+
+    def make(name: str, ref: Optional[vs.VideoNode], stage: Dict[str, Any], is_final: bool) -> vs.VideoNode:
+        sig = stage['sigma'][:planes]
+        radius = stage['radius']
+        if name == 'bm3d':
+            options: Dict[str, Any] = {key: stage[key] for key in ('block_size', 'block_step', 'group_size', 'bm_range',
+                                                                   'bm_step', 'th_mse') if stage[key] is not None}
+            if radius > 0:
+                options['radius'] = radius
+                options.update({key: stage[key] for key in ('ps_num', 'ps_range', 'ps_step') if stage[key] is not None})
+            if stage['hard_thr'] is not None:
+                options['hard_thr'] = stage['hard_thr']
+            if matrix_arg is not None:
+                options['matrix'] = matrix_arg
+            if is_final:
+                out = (core.bm3d.VFinal if radius > 0 else core.bm3d.Final)(plane_clip, ref, profile=stage['profile'], sigma=sig, **options)
+            else:
+                out = (core.bm3d.VBasic if radius > 0 else core.bm3d.Basic)(plane_clip, profile=stage['profile'], sigma=sig, **options)
+            return core.bm3d.VAggregate(out, radius=radius, sample=1) if radius > 0 else out
+        options = {key: stage[key] for key in ('block_step', 'bm_range', 'ps_num', 'ps_range') if stage[key] is not None}
+        if use_chroma:
+            options['chroma'] = True
+        if name != 'bm3dcpu' and device_id is not None:
+            options['device_id'] = device_id
+        if name in ('bm3dcuda', 'bm3dhip'):
+            if fast is not None:
+                options['fast'] = int(fast)
+            if extractor_exp is not None:
+                options['extractor_exp'] = extractor_exp
+        if ref is not None:
+            options['ref'] = ref
+        return getattr(core, name).BM3Dv2(plane_clip, sigma=sig, radius=radius, **options)
+
+    chosen: List[str] = []
+
+    def run(ref: Optional[vs.VideoNode], stage: Dict[str, Any], is_final: bool) -> vs.VideoNode:
+        sig = stage['sigma'][:planes]
+        if not any(sig):
+            return plane_clip if ref is None else ref
+        if chosen:
+            result = make(chosen[0], ref, stage, is_final)
+        else:
+            name, result = _bm3d_first(_bm3d_order(None, tools), lambda n: make(n, ref, stage, is_final))
+            chosen.append(name)
+            _bm3d_warn_ignored(name, given)
+        if planes == 3 and not all(sig):
+            result = core.std.ShufflePlanes([result if s else plane_clip for s in sig], [0, 1, 2], vs.YUV)
+        return result
+
+    estimate = run(None, first, False)
+    for _ in range(refine):
+        estimate = run(estimate, final, True)
+    if plane_clip is not work:
+        estimate = core.std.ShufflePlanes([estimate, work, work], [0, 1, 2], vs.YUV)
+    if rgb:
+        estimate = core.bm3d.OPP2RGB(estimate, sample=1)
+    return core.std.CopyFrameProps(estimate, clip)

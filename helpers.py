@@ -841,6 +841,25 @@ def BM3D(clip: vs.VideoNode, sigma: Sequence[float], radius: int = 0, block_step
     '''
     if clip.format.sample_type != vs.FLOAT or clip.format.bits_per_sample != 32:
         raise vs.Error('BM3D: the clip must be 32-bit float')
+
+    def create(name: str) -> vs.VideoNode:
+        if name == 'bm3d':
+            if radius == 0:
+                return core.bm3d.Basic(clip, sigma=list(sigma), block_step=block_step, bm_range=bm_range)
+            basic = core.bm3d.VBasic(clip, sigma=list(sigma), radius=radius, block_step=block_step,
+                                     bm_range=bm_range, ps_num=ps_num, ps_range=ps_range)
+            return core.bm3d.VAggregate(basic, radius=radius, sample=1)
+        kwargs = dict(sigma=list(sigma), radius=radius, block_step=block_step, bm_range=bm_range, ps_num=ps_num,
+                      ps_range=ps_range, chroma=chroma)
+        if name != 'bm3dcpu' and device_id is not None and device_id >= 0:
+            kwargs['device_id'] = device_id
+        return getattr(core, name).BM3Dv2(clip, **kwargs)
+
+    return _bm3d_first(_bm3d_order(backend, tools), create)[1]
+
+
+def _bm3d_order(backend: Optional[str], tools: Optional[Mapping[str, str]]) -> Tuple[str, ...]:
+    '''The BM3D implementations in the order to try them; backend, else tools['bm3d'], moves one to the front.'''
     order = _BM3D_IMPLEMENTATIONS + ('bm3d',)
     if backend is None and tools:
         first = pick_tool(tools, 'bm3d', order)
@@ -852,23 +871,20 @@ def BM3D(clip: vs.VideoNode, sigma: Sequence[float], radius: int = 0, block_step
         if not hasattr(core, backend):
             warnings.warn(f'BM3D: {backend} is not loaded, trying the next implementation')
         # A GPU choice falls back to bm3dcpu first, as where only the chosen port and bm3dcpu are loaded.
-        first = (backend, 'bm3dcpu') if backend in ('bm3dcuda', 'bm3dhip', 'bm3dmetal') else (backend,)
-        order = first + tuple(name for name in order if name not in first)
+        first_names = (backend, 'bm3dcpu') if backend in ('bm3dcuda', 'bm3dhip', 'bm3dmetal') else (backend,)
+        order = first_names + tuple(name for name in order if name not in first_names)
+    return order
+
+
+def _bm3d_first(order: Sequence[str], create: Callable[[str], vs.VideoNode]) -> Tuple[str, vs.VideoNode]:
+    '''(name, result) of create(name) for the first loaded implementation in order that can create its filter.'''
     for name in order:
         if not hasattr(core, name):
             continue
         if name == 'bm3d':
-            if radius == 0:
-                return core.bm3d.Basic(clip, sigma=list(sigma), block_step=block_step, bm_range=bm_range)
-            basic = core.bm3d.VBasic(clip, sigma=list(sigma), radius=radius, block_step=block_step,
-                                     bm_range=bm_range, ps_num=ps_num, ps_range=ps_range)
-            return core.bm3d.VAggregate(basic, radius=radius, sample=1)
-        kwargs = dict(sigma=list(sigma), radius=radius, block_step=block_step, bm_range=bm_range, ps_num=ps_num,
-                      ps_range=ps_range, chroma=chroma)
-        if name != 'bm3dcpu' and device_id is not None and device_id >= 0:
-            kwargs['device_id'] = device_id
+            return name, create(name)
         try:
-            return getattr(core, name).BM3Dv2(clip, **kwargs)
+            return name, create(name)
         except vs.Error as error:
             warnings.warn(f'BM3D: {name} cannot be used ({str(error).splitlines()[0]}), trying the next implementation')
     raise vs.Error('BM3D: no usable BM3D plugin is loaded')
