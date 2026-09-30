@@ -1290,7 +1290,7 @@ class MotionVectors:
         """
         Degrain wrapper supporting both positional and named vector arguments.
 
-        centre_from_clip=True takes the centre pixels from `clip` on mvutensils too (mvu takes them from `super`).
+        centre_from_clip=True takes the centre pixels and the limit/limitc reference from `clip` on mvutensils too (mvu takes them from `super`).
 
         Positional (legacy):
             MV.Degrain2(clip, super, bw1, fw1, bw2, fw2)
@@ -1346,12 +1346,10 @@ class MotionVectors:
                 _mvu_limit_to_float(limit, clip),
                 _mvu_limit_to_float(limitc if limitc is not None else limit, clip),
             ]
-            out = core.mvu.Degrain(clip, super, vec_list, limit=mvu_limit, **weight_args)
             if centre_from_clip:
-                if any(l != float('inf') for l in mvu_limit):
-                    raise vs.Error('MV.Degrain: centre_from_clip does not support limit/limitc')
-                out = self._mvu_centre_from_clip(out, clip, super, vec_list, weight_args)
-            return out
+                out = core.mvu.Degrain(clip, super, vec_list, **weight_args)
+                return self._mvu_centre_from_clip(out, clip, super, vec_list, weight_args, mvu_limit)
+            return core.mvu.Degrain(clip, super, vec_list, limit=mvu_limit, **weight_args)
 
         ns = self._legacy_ns(clip)
         radius = len(vec_list) // 2
@@ -1368,8 +1366,8 @@ class MotionVectors:
             opt=opt,
         )
 
-    def _mvu_centre_from_clip(self, out: vs.VideoNode, clip: vs.VideoNode, super: vs.VideoNode, vec_list: Sequence[vs.VideoNode], weight_args: Dict[str, Any]) -> vs.VideoNode:
-        '''Replaces the super's centre in mvu.Degrain output `out` by `clip`: out + W0 * (clip - centre).'''
+    def _mvu_centre_from_clip(self, out: vs.VideoNode, clip: vs.VideoNode, super: vs.VideoNode, vec_list: Sequence[vs.VideoNode], weight_args: Dict[str, Any], limit: Sequence[float]) -> vs.VideoNode:
+        '''Replaces the super's centre in the unlimited mvu.Degrain output `out` by `clip`: out + W0 * (clip - centre), then limits the change against clip like mvtools.'''
         radius = len(vec_list) // 2
         planes = weight_args['planes']
         centre = core.mvu.Degrain(clip, super, vec_list, weights=[0] * radius + [1] + [0] * radius, **weight_args)
@@ -1393,7 +1391,19 @@ class MotionVectors:
             weight = core.mvu.Degrain(probe, core.mvu.Super(probe, **probe_super_args), vec_list, **weight_args)
             parts.append(core.std.SelectEvery(weight, m, j))
         centre_weight = core.std.Interleave(parts, extend=True)[:n]
-        expr = ['x y z a - * +' if p in planes else 'x' for p in range(clip.format.num_planes)]
+        expr = []
+        for p in range(clip.format.num_planes):
+            if p not in planes:
+                expr.append('x')
+                continue
+            plane_limit = limit[0 if p == 0 else 1]
+            if plane_limit == float('inf'):
+                expr.append('x y z a - * +')
+                continue
+            # Integer limits are rounded like mvu's nLimit (fLimit + 0.5).
+            if clip.format.sample_type == vs.INTEGER:
+                plane_limit = int(plane_limit + 0.5)
+            expr.append(f'x y z a - * + z {plane_limit} - max z {plane_limit} + min')
         return get_expr(self._tools)([out, centre_weight, clip, centre], expr, format=clip.format.id)
 
     def Degrain(self, clip: vs.VideoNode, super: vs.VideoNode, *vectors: Any, **kwargs: Any) -> vs.VideoNode:

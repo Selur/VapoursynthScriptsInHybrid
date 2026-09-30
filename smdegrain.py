@@ -129,8 +129,8 @@ def SMDegrain(input: vs.VideoNode, tr: int = 2, thSAD: int = 300, thSADC: Option
         raise vs.Error("SMDegrain: 'prefilter' only accepts integer and clip inputs")
     if preclip and prefilter.format.id != input.format.id:
         raise vs.Error("SMDegrain: 'prefilter' must be the same format as input")
-    if mfilter is not None and (not isinstance(mfilter, vs.VideoNode) or mfilter.format.id != input.format.id):
-        raise vs.Error("SMDegrain: 'mfilter' must be the same format as input")
+    if mfilter is not None and (not isinstance(mfilter, vs.VideoNode) or mfilter.format.id != input.format.id or (mfilter.width, mfilter.height) != (w, h)):
+        raise vs.Error("SMDegrain: 'mfilter' must be the same format and size as input")
     if not (isinstance(RefineMotion, int) and RefineMotion >= 0):
         raise vs.Error("SMDegrain: 'RefineMotion' must be a bool or a non-negative integer")
     if not (isinstance(tr, int) and tr >= 1):
@@ -165,8 +165,12 @@ def SMDegrain(input: vs.VideoNode, tr: int = 2, thSAD: int = 300, thSADC: Option
         h = h/2
 
     # Prefilter & Motion Filter
+    # mfilter is the clip MDegrain denoises; the references come from the render super of the input.
+    own_mfilter = mfilter is not None
     if mfilter is None:
         mfilter = inputP
+    elif interlaced:
+        mfilter = mfilter.std.SeparateFields(tff=tff)
     EXPR = get_expr(tools)
     if not GlobalR:
         if preclip:
@@ -252,8 +256,8 @@ def SMDegrain(input: vs.VideoNode, tr: int = 2, thSAD: int = 300, thSADC: Option
 
     # Finally, MDegrain
     if not GlobalO:
-        degrain_clip = mfilter if interlaced else inputP
-        output = MV.Degrain(degrain_clip, super_render, *vectors, thsad=thSAD, thsadc=thSADC, plane=plane, limit=limit, limitc=limitc, thscd1=thSCD1, thscd2=thSCD2)
+        output = MV.Degrain(mfilter, super_render, *vectors, thsad=thSAD, thsadc=thSADC, plane=plane, limit=limit, limitc=limitc, thscd1=thSCD1, thscd2=thSCD2,
+                            centre_from_clip=own_mfilter)
 
     # Low Frequency Restore (luma only): puts the low frequencies of mfilter back where the vectors are unreliable.
     if lfr_active and not GlobalO:
