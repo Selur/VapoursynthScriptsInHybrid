@@ -1,49 +1,8 @@
 from __future__ import annotations
-import re
 from typing import Optional
 from vapoursynth import core
 import vapoursynth as vs
 
-
-def _option(text: str, key: str, default: int) -> int:
-    match = re.search(r'(?<![A-Za-z_])"?%s"?\s*:\s*(\d+)' % key, text)
-    return int(match.group(1)) if match else default
-
-
-def _is_open_svpflow() -> bool:
-    # open-svpflow registers through API 4, SVPflow through API 3 (no return signature).
-    return getattr(core.svp2.SmoothFps, 'return_signature', 'any') != 'any'
-
-
-def _cpu_render_padding(height: int, SuperString: str, VectorsString: str) -> int:
-    # open-svpflow's CPU renderer panics on heights that are no multiple of the vertical block step; the rows returned fill that step.
-    if re.search(r'"?gpu"?\s*:\s*1', SuperString) or not _is_open_svpflow():
-        return 0
-    block = re.search(r'"?block"?\s*:\s*\{([^{}]*)\}', VectorsString)
-    block_options = block.group(1) if block else ''
-    block_height = _option(block_options, 'h', _option(block_options, 'w', 16))
-    overlap = _option(block_options, 'overlap', 2)
-    if overlap == 0:
-        return 0
-    if overlap == 3:
-        raise vs.Error('InterFrame: block overlap 3 is not supported with CPU rendering, use GPU or an overlap of 0-2')
-    step = block_height - block_height // (8 if overlap == 1 else 4)
-    if step % 2:
-        step *= 2
-    return (-height) % step
-
-
-def _pad_bottom(clip: vs.VideoNode, rows: int) -> vs.VideoNode:
-    return core.std.StackVertical([clip, core.std.Crop(clip, top=clip.height - rows)])
-
-
-def _smooth(clip: vs.VideoNode, SuperString: str, VectorsString: str, SmoothString: str) -> vs.VideoNode:
-    rows = _cpu_render_padding(clip.height, SuperString, VectorsString)
-    padded = _pad_bottom(clip, rows) if rows else clip
-    Super = padded.svp1.Super(SuperString)
-    Vectors = core.svp1.Analyse(Super['clip'], Super['data'], padded, VectorsString)
-    smooth = core.svp2.SmoothFps(padded, Super['clip'], Super['data'], Vectors['clip'], Vectors['data'], SmoothString)
-    return core.std.Crop(smooth, bottom=rows) if rows else smooth
 
 #------------------------------------------------------------------------------#
 #                                                                              #
@@ -155,7 +114,12 @@ def InterFrameCustom(Input: vs.VideoNode, Preset: str = 'Medium', Tuning: str = 
         else:
           SmoothString = overwriteSmooth
 
-        return _smooth(clip, SuperString, VectorsString, SmoothString)
+        # Make interpolation vector clip
+        Super = clip.svp1.Super(SuperString)
+        Vectors = core.svp1.Analyse(Super['clip'], Super['data'], clip, VectorsString)
+
+        # Put it together
+        return core.svp2.SmoothFps(clip, Super['clip'], Super['data'], Vectors['clip'], Vectors['data'], SmoothString)
 
     # Get either 1 or 2 clips depending on InputType
     if InputType == 'SBS':
@@ -278,7 +242,12 @@ def InterFrame(Input: vs.VideoNode, Preset: str = 'Medium', Tuning: str = 'Film'
         else:
             SmoothString += ',area_sharp:1.2},scene:{blend:true,mode:0}}'
 
-        return _smooth(clip, SuperString, VectorsString, SmoothString)
+        # Make interpolation vector clip
+        Super = clip.svp1.Super(SuperString)
+        Vectors = core.svp1.Analyse(Super['clip'], Super['data'], clip, VectorsString)
+
+        # Put it together
+        return core.svp2.SmoothFps(clip, Super['clip'], Super['data'], Vectors['clip'], Vectors['data'], SmoothString)
 
     # Get either 1 or 2 clips depending on InputType
     if InputType == 'SBS':
