@@ -14,7 +14,7 @@ import vapoursynth as vs
 # changes:                                                                     #
 #  20201108 - added  overwriteSuper, overwriteVectors, overwriteSmooth  (Selur)#
 #------------------------------------------------------------------------------#
-def InterFrameCustom(Input: vs.VideoNode, Preset: str = 'Medium', Tuning: str = 'Film', NewNum: Optional[int] = None, NewDen: int = 1, GPU: bool = False, InputType: str = '2D', OverrideAlgo: Optional[int] = None, OverrideArea: Optional[int] = None, FrameDouble: bool = False, overwriteSuper: str = '', overwriteVectors: str = '', overwriteSmooth: str = '') -> vs.VideoNode:
+def InterFrameCustom(Input: vs.VideoNode, Preset: str = 'Medium', Tuning: str = 'Film', NewNum: Optional[int] = None, NewDen: int = 1, GPU: bool = False, InputType: str = '2D', OverrideAlgo: Optional[int] = None, OverrideArea: Optional[int] = None, FrameDouble: bool = False, overwriteSuper: str = '', overwriteVectors: str = '', overwriteSmooth: str = '', AreaBlend: Optional[float] = None) -> vs.VideoNode:
     if not isinstance(Input, vs.VideoNode):
         raise vs.Error('InterFrame: This is not a clip')
 
@@ -107,10 +107,15 @@ def InterFrameCustom(Input: vs.VideoNode, Preset: str = 'Medium', Tuning: str = 
           else:
               SmoothString += 'area:0'
 
+          SmoothString += ',area_sharp:1.2'
+          # mask.area_blend exists since SVPflow 4.3.0.165 (default 0.4), 1.0 renders like 4.3.0.161
+          if AreaBlend is not None:
+              SmoothString += f',area_blend:{AreaBlend}'
+
           if Tuning == 'weak':
-              SmoothString += ',area_sharp:1.2},scene:{blend:true,mode:0,limits:{blocks:50}}}'
+              SmoothString += '},scene:{blend:true,mode:0,limits:{blocks:50}}}'
           else:
-              SmoothString += ',area_sharp:1.2},scene:{blend:true,mode:0}}'
+              SmoothString += '},scene:{blend:true,mode:0}}'
         else:
           SmoothString = overwriteSmooth
 
@@ -150,7 +155,7 @@ def InterFrameCustom(Input: vs.VideoNode, Preset: str = 'Medium', Tuning: str = 
 #                   about the content of non-existent frames                   #
 #      Its main use is to give videos higher framerates like newer TVs do      #
 #------------------------------------------------------------------------------#
-def InterFrame(Input: vs.VideoNode, Preset: str = 'Medium', Tuning: str = 'Film', NewNum: Optional[int] = None, NewDen: int = 1, GPU: bool = False, InputType: str = '2D', OverrideAlgo: Optional[int] = None, OverrideArea: Optional[int] = None, FrameDouble: bool = False) -> vs.VideoNode:
+def InterFrame(Input: vs.VideoNode, Preset: str = 'Medium', Tuning: str = 'Film', NewNum: Optional[int] = None, NewDen: int = 1, GPU: bool = False, InputType: str = '2D', OverrideAlgo: Optional[int] = None, OverrideArea: Optional[int] = None, FrameDouble: bool = False, AreaBlend: Optional[float] = None) -> vs.VideoNode:
     if not isinstance(Input, vs.VideoNode):
         raise vs.Error('InterFrame: this is not a clip')
 
@@ -237,10 +242,15 @@ def InterFrame(Input: vs.VideoNode, Preset: str = 'Medium', Tuning: str = 'Film'
         else:
             SmoothString += 'area:0'
 
+        SmoothString += ',area_sharp:1.2'
+        # mask.area_blend exists since SVPflow 4.3.0.165 (default 0.4), 1.0 renders like 4.3.0.161
+        if AreaBlend is not None:
+            SmoothString += f',area_blend:{AreaBlend}'
+
         if Tuning == 'weak':
-            SmoothString += ',area_sharp:1.2},scene:{blend:true,mode:0,limits:{blocks:50}}}'
+            SmoothString += '},scene:{blend:true,mode:0,limits:{blocks:50}}}'
         else:
-            SmoothString += ',area_sharp:1.2},scene:{blend:true,mode:0}}'
+            SmoothString += '},scene:{blend:true,mode:0}}'
 
         # Make interpolation vector clip
         Super = clip.svp1.Super(SuperString)
