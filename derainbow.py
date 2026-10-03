@@ -54,7 +54,7 @@ def _repair(clip: vs.VideoNode, ref: vs.VideoNode, mode: int, tools: Optional[Ma
 
 
 def _fft3d(clip: vs.VideoNode, tools: Optional[Mapping[str, str]] = None, **kwargs: Any) -> vs.VideoNode:
-    """FFT3D — tools['fft3d'], else neo_fft3d, neo_fft, fft3dfilter."""
+    """FFT3D — tools['fft3d'], else neo_fft, neo_fft3d, fft3dfilter."""
     return tool_function(tools, 'fft3d', 'FFT3D')(clip, **kwargs)
 
 
@@ -465,8 +465,9 @@ Requirements
   mv          https://github.com/Mr-Z-2697/vapoursynth-mvtools
   zsmooth     https://github.com/adworacz/zsmooth
   warp        https://github.com/dubhater/vapoursynth-awarpsharp2
-  neo_fft3d   https://github.com/HomeOfAviSynthPlusEvolution/neo_FFT3D
-  fft3dfilter https://github.com/myrsloik/VapourSynth-FFT3DFilter  (fallback for neo_fft3d)
+  neo_fft     https://github.com/HomeOfAviSynthPlusEvolution/neo-fft
+  neo_fft3d   https://github.com/HomeOfAviSynthPlusEvolution/neo_FFT3D  (API 3, fallback for neo_fft)
+  fft3dfilter https://github.com/myrsloik/VapourSynth-FFT3DFilter  (API 3, fallback for neo_fft)
   bilateralgpu https://github.com/WolframRhodium/VapourSynth-BilateralGPU
   vszip       https://github.com/dnjulek/vapoursynth-zip
   bilateral   https://github.com/HomeOfVapourSynthEvolution/VapourSynth-Bilateral (fallback)

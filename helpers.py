@@ -30,7 +30,7 @@ TOOLS: Dict[str, Dict[str, tuple]] = {
                        'eedi3m': ('eedi3m', 'EEDI3')},
     'eedi2':          {'eedi2': ('eedi2', None), 'eedi2cuda': ('eedi2cuda', None)},
     'dfttest':        {'vszipcu': ('vszipcu', 'DFTTest'), 'dfttest2': ('dfttest2', None), 'dfttest2cpu': ('dfttest2_cpu', None),
-                       'dfttest': ('dfttest', None)},
+                       'neo_fft': ('neo_fft', 'DFTTest'), 'dfttest': ('dfttest', None)},
     'nlmeans':        {'nlm_ispc': ('nlm_ispc', None), 'nlm_cuda': ('nlm_cuda', None), 'vszipcu': ('vszipcu', 'NLMeans'),
                        'vszipcl': ('vszipcl', 'NLMeans'), 'knlm': ('knlm', None)},
     'bm3d':           {'bm3dcuda': ('bm3dcuda', None), 'bm3dhip': ('bm3dhip', None), 'bm3dmetal': ('bm3dmetal', None),
@@ -42,7 +42,7 @@ TOOLS: Dict[str, Dict[str, tuple]] = {
     'warp':           {'warp': ('warp', None), 'awarp': ('awarp', None)},
     'edgemasks':      {'edgemasks': ('edgemasks', None), 'std': ('std', None)},
     'tcanny':         {'tcanny': ('tcanny', None), 'std': ('std', None)},
-    'fft3d':          {'neo_fft3d': ('neo_fft3d', None), 'neo_fft': ('neo_fft', 'FFT3D'), 'fft3dfilter': ('fft3dfilter', None)},
+    'fft3d':          {'neo_fft': ('neo_fft', 'FFT3D'), 'neo_fft3d': ('neo_fft3d', None), 'fft3dfilter': ('fft3dfilter', None)},
     'f3kdb':          {'vszip': ('vszip', 'Deband'), 'neo_f3kdb': ('neo_f3kdb', None), 'f3kdb': ('f3kdb', None)},
     'scd':            {'scd': ('scd', None), 'misc': ('misc', 'SCDetect'), 'std': ('std', None), 'mv': ('mv', 'SCDetection')},
     'hysteresis':     {'hysteresis': ('hysteresis', None), 'misc': ('misc', 'Hysteresis')},
@@ -119,7 +119,7 @@ def pick_tool(tools: Optional[Mapping[str, str]], family: str, order: Sequence[s
 _FUNCTION_ORDER = {
     'rg': ('zsmooth', 'rgvs'), 'fluxsmooth': ('zsmooth', 'flux'), 'tmedian': ('zsmooth', 'tmedian'),
     'dctfilter': ('oxidctf', 'zsmooth', 'dctf'), 'boxblur': ('vszip', 'std'), 'limiter': ('vszip', 'std'),
-    'hysteresis': ('hysteresis', 'misc'), 'grain': ('noise', 'grain'), 'fft3d': ('neo_fft3d', 'neo_fft', 'fft3dfilter'),
+    'hysteresis': ('hysteresis', 'misc'), 'grain': ('noise', 'grain'), 'fft3d': ('neo_fft', 'neo_fft3d', 'fft3dfilter'),
 }
 _FUNCTION_NAMES = {
     ('flux', 'FluxSmoothT'): 'SmoothT', ('flux', 'FluxSmoothST'): 'SmoothST',
@@ -735,7 +735,7 @@ def EEDI3(clip: vs.VideoNode, gpu: Optional[bool] = None, device: Optional[int] 
 
 
 ## DFTTest ---------------------------------------------------------------------------------------
-# Parameters core.dfttest.DFTTest knows but the GPU implementations do not.
+# Parameters core.dfttest.DFTTest and core.neo_fft.DFTTest know but the GPU implementations do not.
 _DFTTEST_NOT_IN_VSZIPCU = ('smode', 'tmode', 'tosize', 'nlocation', 'alpha', 'opt')
 _DFTTEST_NOT_IN_DFTTEST2 = ('tmode', 'tosize', 'opt')
 # GPU backends of dfttest2 that are fixed to sbsize=16 and tbsize in (1, 3, 5, 7); the CPU one ('dfttest2cpu') is too.
@@ -788,13 +788,14 @@ def DFTTest(clip: vs.VideoNode, cuda: Optional[bool] = None, tools: Optional[Map
     '''Calls the first DFTTest implementation that is loaded, GPU ones first.
 
     Looked for in this order: core.vszipcu.DFTTest (CUDA), dfttest2.DFTTest on a GPU backend (CUDA/HIP) and
-    core.dfttest.DFTTest (CPU). dfttest2's CPU backend is only used when tools['dfttest'] asks for 'dfttest2cpu'.
+    core.neo_fft.DFTTest or core.dfttest.DFTTest (CPU). dfttest2's CPU backend is only used when tools['dfttest'] asks
+    for 'dfttest2cpu'.
     Which of them is available is decided by whoever loaded the plugins.
 
     Args:
         cuda: False forces the CPU implementation, True and None look for a GPU one first.
             Kept for the callers that have their own cuda/opencl/gpu switch.
-        tools: tools['dfttest'] ('vszipcu', 'dfttest2', 'dfttest2cpu' or 'dfttest') names the implementation;
+        tools: tools['dfttest'] ('vszipcu', 'dfttest2', 'dfttest2cpu', 'neo_fft' or 'dfttest') names the implementation;
             `cuda` then has no effect.
         device_id: GPU for the CUDA ports; None or a negative value leaves the choice to the plugin.
             dfttest2 takes it through its GPU backend.
@@ -804,8 +805,9 @@ def DFTTest(clip: vs.VideoNode, cuda: Optional[bool] = None, tools: Optional[Map
     they cannot serve use the CPU version, which then has to be loaded as well.
     '''
     can_run = {'vszipcu': _vszipcuCanRun, 'dfttest2': _dfttest2CanRun, 'dfttest2cpu': _dfttest2CpuCanRun,
+               'neo_fft': lambda _: hasattr(core, 'neo_fft') and hasattr(core.neo_fft, 'DFTTest'),
                'dfttest': lambda _: hasattr(core, 'dfttest')}
-    order = ('dfttest',) if cuda is False else ('vszipcu', 'dfttest2', 'dfttest')
+    order = ('neo_fft', 'dfttest') if cuda is False else ('vszipcu', 'dfttest2', 'neo_fft', 'dfttest')
     name = pick_tool(tools, 'dfttest', order, lambda n: can_run[n](kwargs), candidates=tuple(can_run))
     on_device = device_id is not None and device_id >= 0
     if name == 'vszipcu':
@@ -818,6 +820,8 @@ def DFTTest(clip: vs.VideoNode, cuda: Optional[bool] = None, tools: Optional[Map
             kwargs['backend'] = dfttest2.Backend.CPU() if name == 'dfttest2cpu' \
                 else _dfttest2GpuBackend(kwargs, device_id if on_device else 0)
         return dfttest2.DFTTest(clip, **kwargs)
+    if name == 'neo_fft':
+        return core.neo_fft.DFTTest(clip, **kwargs)
     return core.dfttest.DFTTest(clip, **kwargs)
 
 

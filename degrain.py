@@ -659,9 +659,9 @@ def TemporalDegrain2(clip: vs.VideoNode, degrainTR: int = 1, degrainPlane: int =
         ovNum = [4, 4, 4, 3, 2, 2][grainLevel]
         ov = 2 * round(limitBlksz / ovNum * 0.5)
 
-        # neo=False keeps the original FFT3DFilter
-        fft3d = tool_function(tools, 'fft3d', 'FFT3D', None if neo else ('fft3dfilter',))
-        spat = fft3d(clip, planes=fPlane, sigma=limitSigma, sigma2=s2, sigma3=s3, sigma4=s4, bt=3, bw=limitBlksz, bh=limitBlksz, ow=ov, oh=ov, ncpu=fftThreads)
+        # neo=False keeps the original FFT3DFilter where it is loaded
+        fft3d = tool_function(tools, 'fft3d', 'FFT3D', None if neo else ('fft3dfilter', 'neo_fft'))
+        spat =fft3d(clip, planes=fPlane, sigma=limitSigma, sigma2=s2, sigma3=s3, sigma4=s4, bt=3, bw=limitBlksz, bh=limitBlksz, ow=ov, oh=ov, ncpu=fftThreads)
         spatD  = core.std.MakeDiff(clip, spat)
   
     # Update super args for all other motion analysis
@@ -709,9 +709,9 @@ def TemporalDegrain2(clip: vs.VideoNode, degrainTR: int = 1, degrainPlane: int =
       else:
         dnWindow = NLMeans(noiseWindow, d=postTR, a=2, h=postSigma/2, device_id=knlDevId, tools=tools)
     elif postFFT > 0:
-        # postFFT 1 is FFT3D, anything else keeps the original FFT3DFilter
-        fft3d = tool_function(tools, 'fft3d', 'FFT3D', None if postFFT == 1 else ('fft3dfilter',))
-        dnWindow = fft3d(noiseWindow, sigma=postSigma, planes=fPlane, bt=postTD, ncpu=fftThreads, bw=postBlkSize, bh=postBlkSize)
+        # postFFT 1 is FFT3D, anything else keeps the original FFT3DFilter where it is loaded
+        fft3d = tool_function(tools, 'fft3d', 'FFT3D', None if postFFT == 1 else ('fft3dfilter', 'neo_fft'))
+        dnWindow =fft3d(noiseWindow, sigma=postSigma, planes=fPlane, bt=postTD, ncpu=fftThreads, bw=postBlkSize, bh=postBlkSize)
     else:
         dnWindow = RG(noiseWindow, mode=1)
     
