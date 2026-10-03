@@ -690,7 +690,14 @@ def QTGMC(
         if bits > 8 and FastMA:
             srchClip = Depth(srchClip, 8, dither_type='none')
 
-    super_args = dict(pel=SubPel, hpad=hpad, vpad=vpad,blksize=BlockSize, overlap=Overlap)
+    # The refine grids RefineMotion and ShutterBlur recalculate with; mvutensils pads every super for them too.
+    refine_grids = []
+    if RefineMotion:
+        refine_grids.append(dict(blksize=max(BlockSize // 2, 4), overlap=max(Overlap // 2, 2)))
+    if ShutterBlur > 1:
+        sbBlockDivide = [1, 1, 2, 4][ShutterBlur]
+        refine_grids.append(dict(blksize=max(BlockSize // sbBlockDivide, 4), overlap=max(Overlap // sbBlockDivide, 2)))
+    super_args = dict(pel=SubPel, hpad=hpad, vpad=vpad, blksize=BlockSize, overlap=Overlap, recalculate=refine_grids)
     analyse_args = dict(
         blksize=BlockSize,
         overlap=Overlap,
