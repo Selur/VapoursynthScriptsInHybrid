@@ -209,8 +209,24 @@ def SMDegrain(input: vs.VideoNode, tr: int = 2, thSAD: int = 300, thSADC: Option
         if lfr_active:
             pref = _lfr_unsharp(pref, thSAD / 1800.0, planes, tools=tools)
 
+    search_params: Dict[str, Any] = dict(blksize=blksize, search=search, chroma=chroma, truemotion=truemotion, global_=MVglobal, overlap=overlap, dct=dct)
+    refine_search = {}
+    if v4formulas:
+        searchparam = (2 if is_uhd else 5) if refine_passes and truemotion else (1 if is_uhd else 2)
+        search_params.update(searchparam=searchparam, pelsearch=max(0, searchparam * 2 - 2), pglobal=11, plevel=0)
+        refine_search = dict(searchparam=max(0, cround(math.exp(0.69 * searchparam - 1.79) - 0.67)))
+    # Overlap of a refine pass: at most half its block size, a multiple of the chroma subsampling.
+    overlap_align = (1 << max(input.format.subsampling_w, input.format.subsampling_h)) if chroma else 1
+    refine_params = []
+    for i in range(1, refine_passes + 1):
+        refine_blksize = blksize >> i
+        refine_overlap = min(overlap >> i, refine_blksize // 2)
+        refine_overlap -= refine_overlap % overlap_align
+        refine_params.append(dict(thsad=thSAD_refine, blksize=refine_blksize, search=search, chroma=chroma, truemotion=truemotion, overlap=refine_overlap, dct=dct, **refine_search))
+
     # Motion vectors search
-    super_args: Dict[str, Any] = dict(hpad=hpad, vpad=vpad, pel=pel, blksize=blksize, overlap=overlap)
+    # The supers are padded for the refine grids too (mvutensils); every super below shares these args.
+    super_args: Dict[str, Any] = dict(hpad=hpad, vpad=vpad, pel=pel, blksize=blksize, overlap=overlap, recalculate=refine_params)
     # Subpixel 3
     if pelclip:
       nnediMode = 'nnedi3cl' if opencl else 'znedi3'
@@ -236,21 +252,6 @@ def SMDegrain(input: vs.VideoNode, tr: int = 2, thSAD: int = 300, thSADC: Option
         super_render = super_search
         if refine_passes:
             refine_super = super_render
-
-    search_params: Dict[str, Any] = dict(blksize=blksize, search=search, chroma=chroma, truemotion=truemotion, global_=MVglobal, overlap=overlap, dct=dct)
-    refine_search = {}
-    if v4formulas:
-        searchparam = (2 if is_uhd else 5) if refine_passes and truemotion else (1 if is_uhd else 2)
-        search_params.update(searchparam=searchparam, pelsearch=max(0, searchparam * 2 - 2), pglobal=11, plevel=0)
-        refine_search = dict(searchparam=max(0, cround(math.exp(0.69 * searchparam - 1.79) - 0.67)))
-    # Overlap of a refine pass: at most half its block size, a multiple of the chroma subsampling.
-    overlap_align = (1 << max(input.format.subsampling_w, input.format.subsampling_h)) if chroma else 1
-    refine_params = []
-    for i in range(1, refine_passes + 1):
-        refine_blksize = blksize >> i
-        refine_overlap = min(overlap >> i, refine_blksize // 2)
-        refine_overlap -= refine_overlap % overlap_align
-        refine_params.append(dict(thsad=thSAD_refine, blksize=refine_blksize, search=search, chroma=chroma, truemotion=truemotion, overlap=refine_overlap, dct=dct, **refine_search))
 
     vectors = get_motion_vectors(super_search, refine_super, search_params, refine_params, tr, interlaced, tools=tools)
 

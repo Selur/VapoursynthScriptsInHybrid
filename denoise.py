@@ -332,14 +332,13 @@ def MCTemporalDenoise(i: vs.VideoNode, radius: Optional[int] = None, pfMode: int
 
     ### PREPARING
     MV = get_mv(tools)
-    super_args: Dict[str, Any] = dict(hpad=0, vpad=0, pel=pel, chroma=chroma, sharp=MVsharp, blksize=blksize, overlap=overlap)
-    pMVS = MV.Super(p, rfilter=4 if refine else 2, **super_args)
-    if refine:
-        super_re_args: Dict[str, Any] = dict(hpad=0, vpad=0, pel=pel, chroma=chroma, sharp=MVsharp, blksize=max(blksize // 2, 4), overlap=max(overlap // 2, 2))
-        rMVS = MV.Super(p, levels=1, **super_re_args)
-
     analyse_args: Dict[str, Any] = dict(blksize=blksize, search=search, searchparam=searchparam, pelsearch=pelsearch, chroma=chroma, truemotion=truemotion, global_=MVglobal, overlap=overlap, dct=DCT)
     recalculate_args: Dict[str, Any] = dict(thsad=thSAD // 2, blksize=max(blksize // 2, 4), search=search, chroma=chroma, truemotion=truemotion, overlap=max(overlap // 2, 2), dct=DCT)
+    # Every super (search, refine, degrain) shares these args: on mvutensils their padding must match, and it covers the refine grid.
+    super_args: Dict[str, Any] = dict(hpad=0, vpad=0, pel=pel, chroma=chroma, sharp=MVsharp, blksize=blksize, overlap=overlap, recalculate=[recalculate_args] if refine else None)
+    pMVS = MV.Super(p, rfilter=4 if refine else 2, **super_args)
+    if refine:
+        rMVS = MV.Super(p, levels=1, **super_args)
     f1v = MV.Analyse(pMVS, isb=False, delta=1, **analyse_args)
     b1v = MV.Analyse(pMVS, isb=True, delta=1, **analyse_args)
     if refine:

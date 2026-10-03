@@ -825,11 +825,75 @@ def mt_inpand_multi(src: vs.VideoNode, mode: str = 'rectangle', planes: Optional
 # Super never took them). They are required only when mvutensils is actually in use
 # (mvutensils pads the super clip itself and needs to know the block geometry up
 # front) and should be passed the same values used in the matching Analyse() call.
+#
+# `recalculate` is a further optional keyword-only addition to `Super()`: the block
+# geometries of the Recalculate() passes that will refine vectors analysed from (or
+# consumed with) this super, as the kwarg dicts passed to Recalculate(). mvutensils pads
+# the super to a multiple of the Super() grid only, and Recalculate() fails at frame
+# time ("The chosen block size has no multiple that will process the entire frame
+# without exceeding the super clip padding") when the refine grid needs more padding;
+# mvtools silently ignored the uncovered edge. With `recalculate` the wrapper picks a
+# Super() grid whose padding covers every pass. Every super a set of vectors is used
+# with (search, refine, render) must be built with the same blksize/overlap/recalculate.
 
 
 def has_mvutensils() -> bool:
     '''Returns True if the mvutensils plugin (core.mvu) is loaded.'''
     return hasattr(core, 'mvu')
+
+
+# The block shapes mvutensils accepts (its CheckBlkSize), as (horizontal, vertical).
+_MVU_BLOCK_SHAPES = ((4, 4), (8, 4), (8, 8), (16, 2), (16, 8), (16, 16), (32, 16), (32, 32), (64, 32), (64, 64), (128, 64), (128, 128))
+
+
+def _mvu_block_aligned(size: int, blksize: int, overlap: int) -> int:
+    '''The width/height mvutensils pads a frame to so that whole blocks of this grid cover it (its BlockAlignedDimension).'''
+    step = blksize - overlap
+    aligned = step * ((size - overlap) // step) + overlap
+    return aligned + step if aligned < size else size
+
+
+def _mvu_super_grid(clip: vs.VideoNode, blksize: int, blksizev: int, overlap: int, overlapv: int,
+                    recalculate: Optional[Sequence[Mapping[str, Any]]]) -> Dict[str, List[int]]:
+    '''
+    The blksize/overlap to build an mvutensils super with so that its padding covers the Analyse grid
+    (blksize/overlap) and every Recalculate grid in `recalculate` (dicts with blksize/blksizev/overlap/
+    overlapv, other keys ignored). Analyse/Recalculate are always given their own grid explicitly, so the
+    super's grid only decides the padding; mvutensils raises at frame time when a grid doesn't fit.
+    '''
+    grids = [(blksize, blksizev, overlap, overlapv)]
+    for params in recalculate or ():
+        bx = params.get('blksize', 8)
+        by = params.get('blksizev') or bx
+        ox = params.get('overlap', 0)
+        oy = params.get('overlapv')
+        oy = ox if oy is None else oy
+        grids.append((bx, by, ox, oy))
+    need_w = max(_mvu_block_aligned(clip.width, bx, ox) for bx, by, ox, oy in grids)
+    need_h = max(_mvu_block_aligned(clip.height, by, oy) for bx, by, ox, oy in grids)
+    if _mvu_block_aligned(clip.width, blksize, overlap) == need_w and _mvu_block_aligned(clip.height, blksizev, overlapv) == need_h:
+        return dict(blksize=[blksize, blksizev], overlap=[overlap, overlapv])
+    # The Analyse grid pads too little for a refine pass: find a valid grid that pads enough for all of them.
+    # Prefer one that keeps the level count (blocks no larger than the Analyse grid's), then the least extra padding.
+    align_x = 1 << clip.format.subsampling_w
+    align_y = 1 << clip.format.subsampling_h
+    best = None
+    for bx, by in _MVU_BLOCK_SHAPES:
+        for ox in range(0, bx // 2 + 1, align_x):
+            w = _mvu_block_aligned(clip.width, bx, ox)
+            if w < need_w:
+                continue
+            for oy in range(0, by // 2 + 1, align_y):
+                h = _mvu_block_aligned(clip.height, by, oy)
+                if h < need_h:
+                    continue
+                key = (bx > blksize or by > blksizev, (w - need_w) + (h - need_h), abs(bx - blksize) + abs(by - blksizev), ox + oy)
+                if best is None or key < best[0]:
+                    best = (key, bx, by, ox, oy)
+    if best is None:
+        raise vs.Error(f'MV.Super: no mvutensils block size pads a {clip.width}x{clip.height} frame for the block sizes {grids}')
+    _, bx, by, ox, oy = best
+    return dict(blksize=[bx, by], overlap=[ox, oy])
 
 
 def _mvu_scale_thscd2(thscd2: float) -> float:
@@ -979,11 +1043,18 @@ class MotionVectors:
         blksizev: Optional[int] = None,
         overlap: Optional[int] = None,
         overlapv: Optional[int] = None,
+        recalculate: Optional[Sequence[Mapping[str, Any]]] = None,
     ) -> vs.VideoNode:
         '''
         blksize/overlap are only required when mvutensils is in use (it pads the super
         clip itself and needs the block geometry up front); pass the same values you
         use in the matching Analyse() call. They are ignored by the legacy backend.
+        recalculate: the block geometries of the Recalculate() passes the vectors will go
+        through, as the kwarg dicts given to Recalculate() (blksize/blksizev/overlap/overlapv
+        are read, the rest ignored). mvutensils pads the super for the Analyse grid only, so
+        a refine grid that needs more padding fails at frame time unless it is listed here.
+        Build every super the vectors are used with (search, refine, render) with the same
+        blksize/overlap/recalculate, their padding must match. Ignored by the legacy backend.
         '''
         if self.use_mvu:
             if blksize is None or overlap is None:
@@ -991,10 +1062,10 @@ class MotionVectors:
                     'MV.Super: mvutensils requires blksize and overlap to be passed '
                     '(use the same values as the matching Analyse() call)'
                 )
+            grid = _mvu_super_grid(clip, blksize, blksizev or blksize, overlap, (overlapv if overlapv is not None else overlap), recalculate)
             return core.mvu.Super(
                 clip,
-                blksize=[blksize, blksizev or blksize],
-                overlap=[overlap, overlapv or overlap],
+                **grid,
                 pad=[max(1, hpad), max(1, vpad)], # pad must be positive
                 pel=pel,
                 sharp=sharp,
@@ -1015,7 +1086,7 @@ class MotionVectors:
         '''Shared mvutensils Analyse/AnalyseMany kwarg translation (everything except delta/isb/radius).'''
         kwargs = dict(
             blksize=[blksize, blksizev or blksize],
-            overlap=[overlap, overlapv or overlap],
+            overlap=[overlap, (overlapv if overlapv is not None else overlap)],
             levels=levels,
             search=_mvu_search_mode(search),
             searchparam=searchparam,
@@ -1191,7 +1262,7 @@ class MotionVectors:
                     mvlambda=_mvu_lambda(lambda_, truemotion, blksize, blksizev or blksize),
                     chroma=chroma,
                     pnew=_mvu_pnew(pnew, truemotion),
-                    overlap=[overlap, overlapv or overlap],
+                    overlap=[overlap, (overlapv if overlapv is not None else overlap)],
                     meander=meander,
                     fields=fields,
                     tff=bool(tff),
@@ -1217,7 +1288,7 @@ class MotionVectors:
                 mvlambda=_mvu_lambda(lambda_, truemotion, blksize, blksizev or blksize),
                 chroma=chroma,
                 pnew=_mvu_pnew(pnew, truemotion),
-                overlap=[overlap, overlapv or overlap],
+                overlap=[overlap, (overlapv if overlapv is not None else overlap)],
                 meander=meander,
                 fields=fields,
                 tff=bool(tff),

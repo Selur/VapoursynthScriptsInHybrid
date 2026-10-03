@@ -375,7 +375,9 @@ def MLD_helper(clip: vs.VideoNode, srch: vs.VideoNode, tr: int, thSAD: int, rec:
 
     analyse_args: Dict[str, Any] = dict(blksize=bs, overlap=bs//2, search=5, chroma=chroma, truemotion=truemotion)
     recalculate_args: Dict[str, Any] = dict(blksize=bs//2, overlap=bs//4, search=5, chroma=chroma, truemotion=truemotion)
-    sup1 = S(DitherLumaRebuild(srch, 1, tools=tools), hpad=bs, vpad=bs, pel=pel, sharp=1, rfilter=4,blksize=bs, overlap=bs//2)
+    # Both supers share the grid (and, on mvutensils, the padding for the refine pass).
+    super_args: Dict[str, Any] = dict(hpad=bs, vpad=bs, pel=pel, blksize=bs, overlap=bs//2, recalculate=[recalculate_args] if rec else None)
+    sup1 = S(DitherLumaRebuild(srch, 1, tools=tools), sharp=1, rfilter=4, **super_args)
 
     if soft > 0:
         if clip.width > 1280:
@@ -386,10 +388,10 @@ def MLD_helper(clip: vs.VideoNode, srch: vs.VideoNode, tr: int, thSAD: int, rec:
             RG = MinBlur(clip, 1, planes, tools=tools)
         RG = core.std.Merge(clip, RG, [soft] if chroma or isGRAY else [soft, 0]) if soft < 1 else RG
         EXPR = get_expr(tools)
-        sup2 = S(EXPR([clip, RG], ['x dup y - +'] if chroma or isGRAY else ['x dup y - +', '']), hpad=bs, vpad=bs, pel=pel, levels=1, rfilter=1, blksize=bs, overlap=bs//2)
+        sup2 = S(EXPR([clip, RG], ['x dup y - +'] if chroma or isGRAY else ['x dup y - +', '']), levels=1, rfilter=1, **super_args)
     else:
         RG = clip
-        sup2 = S(clip, hpad=bs, vpad=bs, pel=pel, levels=1, rfilter=1, blksize=bs, overlap=bs//2)
+        sup2 = S(clip, levels=1, rfilter=1, **super_args)
 
     # AnalyseMany returns [bv1, fv1, bv2, fv2, ...] directly; MV.Degrain() picks Degrain1/2/3/N
     # (or mvu.Degrain for any radius) from how many vectors it's given.
@@ -631,9 +633,10 @@ def TemporalDegrain2(clip: vs.VideoNode, degrainTR: int = 1, degrainPlane: int =
         expr = 'x {a} + y < x {b} + x {a} - y > x {b} - x y + 2 / ? ?'.format(a=7*bitDepthMultiplier, b=2*bitDepthMultiplier)
         srchClip = EXPR([spatialBlur, clip], [expr] if ChromaMotion or isGRAY else [expr, ''])
 
-    super_args: Dict[str, Any] = dict(pel=meSubpel, hpad=hpad, vpad=vpad, sharp=SubPelInterp, chroma=ChromaMotion, blksize=meBlksz, overlap=Overlap)
     analyse_args: Dict[str, Any] = dict(blksize=meBlksz, overlap=Overlap, search=meAlg, searchparam=meAlgPar, pelsearch=meSubpel, truemotion=meTM, lambda_=Lambda, pnew=PNew, global_=GlobalMotion, dct=DCT, chroma=ChromaMotion)
     recalculate_args: Dict[str, Any] = dict(thsad=thSAD1 // 2, blksize=max(meBlksz // 2, 4), overlap=max(Overlap // 2, 2), search=meAlg, searchparam=meAlgPar, truemotion=meTM, lambda_=Lambda/4, pnew=PNew, dct=DCT, chroma=ChromaMotion)
+    # On mvutensils the supers are padded for the refine grid too; every super below shares these args.
+    super_args: Dict[str, Any] = dict(pel=meSubpel, hpad=hpad, vpad=vpad, sharp=SubPelInterp, chroma=ChromaMotion, blksize=meBlksz, overlap=Overlap, recalculate=[recalculate_args] if rec else None)
 
     lumaRebuild = DitherLumaRebuild(srchClip, s0=1, chroma=ChromaMotion, tools=tools)
 
