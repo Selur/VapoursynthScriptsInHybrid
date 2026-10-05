@@ -516,15 +516,15 @@ tools: Optional[Mapping[str, str]] = None) -> vs.VideoNode:
     fpsnum, fpsden = clip.fps_num, clip.fps_den
 
     ablksize = ablksize or (32 if clip.width > 2400 else 16 if clip.width > 960 else 8)
-    aoverlap = aoverlap or ablksize // 2
-    asearch  = asearch  or 5
-    ssharp   = ssharp   or 1
-    rfilter  = rfilter  or 2
+    aoverlap = ablksize // 2 if aoverlap is None else aoverlap
+    asearch  = 5 if asearch is None else asearch  # 0 (OneTime) is a valid search type
+    ssharp   = 1 if ssharp is None else ssharp
+    rfilter  = 2 if rfilter is None else rfilter
 
     if rec:
         rblksize = rblksize or ablksize
-        rsearch  = rsearch  or asearch
-        roverlap = roverlap or rblksize // 2
+        rsearch  = asearch if rsearch is None else rsearch
+        roverlap = rblksize // 2 if roverlap is None else roverlap
 
     thsad2 = thsad2 or thsad
     if radT >= 3:
