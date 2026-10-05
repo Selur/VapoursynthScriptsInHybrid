@@ -131,6 +131,8 @@ def SMDegrain(input: vs.VideoNode, tr: int = 2, thSAD: int = 300, thSADC: Option
         raise vs.Error("SMDegrain: 'prefilter' must be the same format as input")
     if mfilter is not None and (not isinstance(mfilter, vs.VideoNode) or mfilter.format.id != input.format.id or (mfilter.width, mfilter.height) != (w, h)):
         raise vs.Error("SMDegrain: 'mfilter' must be the same format and size as input")
+    if thSCD1 <= 0:
+        raise vs.Error("SMDegrain: 'thSCD1' must be greater than 0 (0 marks every block as changed, so nothing gets filtered)")
     if not (isinstance(RefineMotion, int) and RefineMotion >= 0):
         raise vs.Error("SMDegrain: 'RefineMotion' must be a bool or a non-negative integer")
     if not (isinstance(tr, int) and tr >= 1):
