@@ -194,7 +194,7 @@ def classic(clip, strength=500, tr=6, denoise=False, exclude=None, debug=False, 
     clip_sup = core.mvu.Super(clip, blksize=blksize, overlap=overlap, pel=pel, sharp=subpixel, onelevel=True)
     
     # analyse and degrain
-    vecs = core.mvu.AnalyseMany(pref_sup, radius=tr, search=search, searchparam=searchparam, chroma=chroma, mvlambda=0, lsad=400, plevel=0, pnew=0, pzero=0, globalmv=False, fields=False, satd=False)
+    vecs = core.mvu.AnalyseMany(pref_sup, radius=tr, search=search, searchparam=searchparam, chroma=chroma, mvlambda=0, lsad=400, plevel=0, pnew=0, pzero=0, globalmv=False, satd=False)
     clip = core.mvu.Degrain(clip, clip_sup, vecs, thsad=[strength, strengthc], planes=[0, 1, 2] if chroma else [0], thscd1=thscd1, thscd2=thscd2)
 
 

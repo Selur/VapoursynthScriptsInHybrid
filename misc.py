@@ -896,6 +896,24 @@ def _mvu_super_grid(clip: vs.VideoNode, blksize: int, blksizev: int, overlap: in
     return dict(blksize=[bx, by], overlap=[ox, oy])
 
 
+def _mvu_takes_fields() -> bool:
+    '''mvutensils up to v9 takes fields/tff in Analyse, AnalyseMany, Recalculate, Compensate and Flow; v10 removed them:
+    on separated fields the search finds the half-line offset between fields of opposite parity itself, and the vectors carry it.'''
+    return 'fields:' in core.mvu.Analyse.signature
+
+
+def _mvu_fields(fields: bool, tff: Optional[bool]) -> Dict[str, bool]:
+    '''fields/tff for an mvutensils call, or nothing where the loaded version no longer takes them.'''
+    return dict(fields=fields, tff=bool(tff)) if _mvu_takes_fields() else {}
+
+
+def _mvu_pad(clip: vs.VideoNode, hpad: int, vpad: int) -> List[int]:
+    '''mvutensils super padding: positive, and (since v10) a multiple of the chroma subsampling.'''
+    align_x = 1 << clip.format.subsampling_w
+    align_y = 1 << clip.format.subsampling_h
+    return [-(-max(1, hpad) // align_x) * align_x, -(-max(1, vpad) // align_y) * align_y]
+
+
 def _mvu_scale_thscd2(thscd2: float) -> float:
     '''mvtools/mvsf thscd2 is a 0-256 int; mvutensils thscd2 is a 0-100 float percentage.'''
     return max(0.0, min(100.0, thscd2 * 100.0 / 256.0))
@@ -1066,7 +1084,7 @@ class MotionVectors:
             return core.mvu.Super(
                 clip,
                 **grid,
-                pad=[max(1, hpad), max(1, vpad)], # pad must be positive
+                pad=_mvu_pad(clip, hpad, vpad),
                 pel=pel,
                 sharp=sharp,
                 rfilter=_mvu_rfilter(rfilter),
@@ -1101,9 +1119,8 @@ class MotionVectors:
             badrange=badrange,
             meander=meander,
             trymany=(2 if trymany else 0),
-            fields=fields,
-            tff=bool(tff),
             satd=_mvu_dct_to_satd(dct),
+            **_mvu_fields(fields, tff),
         )
         kwargs['pzero'] = pzero if pzero is not None else kwargs['pnew']
         if pelsearch:
@@ -1264,9 +1281,8 @@ class MotionVectors:
                     pnew=_mvu_pnew(pnew, truemotion),
                     overlap=[overlap, (overlapv if overlapv is not None else overlap)],
                     meander=meander,
-                    fields=fields,
-                    tff=bool(tff),
                     satd=_mvu_dct_to_satd(dct),
+                    **_mvu_fields(fields, tff),
                 ))
             # Legacy mv/mvsf Recalculate only takes a single vector clip at a time.
             return [
@@ -1290,9 +1306,8 @@ class MotionVectors:
                 pnew=_mvu_pnew(pnew, truemotion),
                 overlap=[overlap, (overlapv if overlapv is not None else overlap)],
                 meander=meander,
-                fields=fields,
-                tff=bool(tff),
                 satd=_mvu_dct_to_satd(dct),
+                **_mvu_fields(fields, tff),
             )
         ns = self._legacy_ns(super)
         return ns.Recalculate(
@@ -1319,8 +1334,8 @@ class MotionVectors:
         if self.use_mvu:
             # mvutensils dropped `scbehavior`.
             return core.mvu.Compensate(
-                clip, super, vectors, thsad=thsad, fields=fields, time=time,
-                thscd1=thscd1, thscd2=_mvu_scale_thscd2(thscd2), tff=bool(tff),
+                clip, super, vectors, thsad=thsad, time=time,
+                thscd1=thscd1, thscd2=_mvu_scale_thscd2(thscd2), **_mvu_fields(fields, tff),
             )
         ns = self._legacy_ns(clip)
         return ns.Compensate(clip, super, vectors, scbehavior=scbehavior, thsad=thsad, fields=fields, time=time, thscd1=thscd1, thscd2=thscd2, tff=tff)
@@ -1495,7 +1510,7 @@ class MotionVectors:
     ) -> vs.VideoNode:
         if self.use_mvu:
             # mvutensils dropped `mode` (only the old mode=0 behaviour remains).
-            return core.mvu.Flow(clip, super, vectors, time=time, fields=fields, thscd1=thscd1, thscd2=_mvu_scale_thscd2(thscd2), tff=bool(tff))
+            return core.mvu.Flow(clip, super, vectors, time=time, thscd1=thscd1, thscd2=_mvu_scale_thscd2(thscd2), **_mvu_fields(fields, tff))
         ns = self._legacy_ns(clip)
         return ns.Flow(clip, super, vectors, time=time, mode=mode, fields=fields, thscd1=thscd1, thscd2=thscd2, tff=tff)
 
