@@ -148,7 +148,27 @@ def tool_function(tools: Optional[Mapping[str, str]], family: str, function: str
 
     value = pick_tool(tools, family, order, usable) or order[-1]
     namespace, name = name_in(value)
+    if (namespace, name) == ('hysteresis', 'Hysteresis'):
+        return _stride_aligned_hysteresis
     return getattr(getattr(core, namespace), name)
+
+
+def _stride_aligned_hysteresis(clipa: vs.VideoNode, clipb: vs.VideoNode,
+                               planes: Optional[Union[int, Sequence[int]]] = None) -> vs.VideoNode:
+    '''hysteresis.Hysteresis on clips padded on the right to whole 64-byte rows, cropped back afterwards.'''
+    fmt = clipa.format
+    if fmt is None or clipa.width == 0:
+        return core.hysteresis.Hysteresis(clipa, clipb, planes=planes)
+    # The plugin (1.2.0) indexes pixels by width instead of stride, rows of a multiple of 64 bytes avoid that.
+    step = (64 // fmt.bytes_per_sample) << fmt.subsampling_w
+    pad = -clipa.width % step
+    if pad == 0:
+        return core.hysteresis.Hysteresis(clipa, clipb, planes=planes)
+    # Borders are 0 in every plane (AddBorders would make chroma grey), so they never join two mask areas.
+    unmarked = [0] * fmt.num_planes
+    result = core.hysteresis.Hysteresis(core.std.AddBorders(clipa, right=pad, color=unmarked),
+                                        core.std.AddBorders(clipb, right=pad, color=unmarked), planes=planes)
+    return core.std.Crop(result, right=pad)
 
 
 class Range:
