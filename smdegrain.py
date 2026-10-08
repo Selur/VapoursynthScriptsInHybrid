@@ -360,16 +360,31 @@ def _average(clips: Sequence[vs.VideoNode], tools: Optional[Mapping[str, str]] =
 def _bm3d_prefilter(clip: vs.VideoNode, chroma: bool, device: Optional[int], backend: Optional[str] = None, tools: Optional[Mapping[str, str]] = None) -> vs.VideoNode:
     '''BM3D prefilter like Dogway's ex_BM3D preset "normal" (sigma 10, chroma 5, radius 1) on the chosen or first loaded BM3D plugin.'''
     fmt = clip.format
+    if fmt.sample_type != vs.INTEGER:
+        raise vs.Error('SMDegrain: prefilter 5 (BM3D) needs an integer clip')
     params: Dict[str, Any] = dict(radius=1, block_step=4, bm_range=16, ps_range=5, device_id=device if isinstance(device, int) else None,
                   backend=backend, tools=tools)
+    expr = get_expr(tools)
     if chroma and fmt.color_family != vs.GRAY:
-        # Chroma is denoised together with luma (CBM3D), which needs 4:4:4.
-        work = BM3D(core.resize.Bicubic(clip, format=vs.YUV444PS), sigma=[10.0, 5.0, 5.0], chroma=True, **params)
-        return core.resize.Bicubic(work, format=fmt.id)
+        # Chroma is denoised together with luma (CBM3D), which needs 4:4:4; the float step is x / peak (zimg would stretch limited range to 0..1).
+        bits = max(fmt.bits_per_sample, 16)
+        work_fmt = core.query_video_format(vs.YUV, vs.INTEGER, bits, 0, 0)
+        peak = (1 << bits) - 1
+        work = clip if work_fmt.id == fmt.id else core.resize.Bicubic(clip, format=work_fmt.id)
+        work = BM3D(expr(work, f'x {peak} /', format=vs.YUV444PS), sigma=[10.0, 5.0, 5.0], chroma=True, **params)
+        work = expr(work, f'x {peak} *', format=work_fmt.id)
+        return work if work_fmt.id == fmt.id else core.resize.Bicubic(work, format=fmt.id, chromaloc=_chroma_location(clip))
     luma = core.std.ShufflePlanes(clip, 0, vs.GRAY)
-    work = BM3D(core.resize.Point(luma, format=vs.GRAYS), sigma=[10.0], **params)
-    work = core.resize.Point(work, format=luma.format.id)
+    peak = (1 << fmt.bits_per_sample) - 1
+    work = BM3D(expr(luma, f'x {peak} /', format=vs.GRAYS), sigma=[10.0], **params)
+    work = expr(work, f'x {peak} *', format=luma.format.id)
     return work if fmt.color_family == vs.GRAY else core.std.ShufflePlanes([work, clip], [0, 1, 2], vs.YUV)
+
+def _chroma_location(clip: vs.VideoNode) -> Optional[int]:
+    '''_ChromaLocation of frame 0 for the resize back from 4:4:4 (that clip carries none, zimg would site the chroma left).'''
+    with clip.get_frame(0) as f:
+        value = f.props.get('_ChromaLocation')
+    return None if value is None else int(value)
 
 def _dgdenoise_prefilter(clip: vs.VideoNode, chroma: bool, device: Optional[int]) -> vs.VideoNode:
     '''DGDenoise prefilter with Dogway's strengths (luma 0.10, chroma 0.05); DGDenoise takes YV12, YUV420P16 and YUV444P16 only.'''
