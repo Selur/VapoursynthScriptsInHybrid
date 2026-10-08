@@ -119,7 +119,7 @@ def _adddiff(base: vs.VideoNode, diff: vs.VideoNode, tools: Optional[Mapping[str
     bits = base.format.bits_per_sample
     mid  = 1 << (bits - 1)
     peak = (1 << bits) - 1
-    return _expr2(base, diff, f'x y + {mid} - 0 {peak} clamp', tools=tools)
+    return _expr2(base, diff, f'x y + {mid} - 0 max {peak} min', tools=tools)
 
 
 # ---------------------------------------------------------------------------
@@ -142,8 +142,8 @@ def _exaggerated_chroma_diff(source: vs.VideoNode,
         """Add addend chroma onto base chroma (+mid offset); luma untouched."""
         exprs = [
             '',                                        # luma: unchanged
-            f'x y + {mid} - 0 {peak} clamp',          # U: accumulate
-            f'x y + {mid} - 0 {peak} clamp',          # V: accumulate
+            f'x y + {mid} - 0 max {peak} min',        # U: accumulate
+            f'x y + {mid} - 0 max {peak} min',        # V: accumulate
         ]
         return _expr_fn(tools=tools)([base, addend], exprs)
 
@@ -371,7 +371,7 @@ def _unsharp_mask(clip: vs.VideoNode,
     diff           = _makediff(luma, blurred)
     sharpened_diff = _expr1(diff,
         f'x {1 << (bits-1)} - dup abs {threshold} > dup {s} * 0 ? + '
-        f'{1 << (bits-1)} + 0 {peak} clamp', tools=tools)
+        f'{1 << (bits-1)} + 0 max {peak} min', tools=tools)
     # Add sharpening back: base + diff - mid  (core.std.AddDiff does not exist in VS)
     result_luma    = _adddiff(luma, sharpened_diff, tools=tools)
 
@@ -430,7 +430,7 @@ def _restore_grain(filtered: vs.VideoNode,
         f'swap {str2} swap - 0 max - '             # - max(str2 - abs_d, 0)
         f'0 max '                                  # clamp clamped >= 0
         f'swap dup abs 1 max / * '                 # * weight = d / max(abs_d,1)
-        f'{mid} + 0 {peak} clamp'                  # + mid, clamp to valid range
+        f'{mid} + 0 max {peak} min'                # + mid, clamp to valid range
     )
     grain_diff  = _expr1(diff, expr, tools=tools)
     result_luma = _adddiff(flt_luma, grain_diff, tools=tools)
@@ -458,6 +458,7 @@ def SpotLess(
     ablksize: int = None,
     aoverlap: int = None,
     asearch: int = None,
+    asearchparam: int = None,
     ssharp: int = None,
     pglobal: bool = True,
     rec: bool = False,
@@ -472,6 +473,7 @@ def SpotLess(
     mStart: bool = False,
     mEnd: bool = False,
     iterations: int = 1,
+    fasthbd: bool = False,
     debugmask: bool = False,
 tools: Optional[Mapping[str, str]] = None) -> vs.VideoNode:
     """
@@ -487,6 +489,7 @@ tools: Optional[Mapping[str, str]] = None) -> vs.VideoNode:
         ablksize:   Block size for mv.Analyse. Auto if None.
         aoverlap:   Overlap. Default ablksize//2.
         asearch:    Search type. Default 5.
+        asearchparam: Search radius for mv.Analyse. Default 2.
         ssharp:     mv.Super sharpness. Default 1.
         pglobal:    Global motion estimation.
         rec:        Enable recalculation pass.
@@ -501,6 +504,7 @@ tools: Optional[Mapping[str, str]] = None) -> vs.VideoNode:
         mStart:     Mirror-pad beginning of clip.
         mEnd:       Mirror-pad end of clip.
         iterations: Repeat the denoising chain N times.
+        fasthbd:    Run the motion search on an 8-bit copy (faster for high bit depth, compensation stays at full depth).
         debugmask:  Return [input | denoised | diff] vertical stack.
     """
     MV = get_mv(tools)
@@ -531,6 +535,7 @@ tools: Optional[Mapping[str, str]] = None) -> vs.VideoNode:
         thsad2 = (thsad + thsad2) // 2
 
     S, A, R, C = MV.Super, MV.Analyse, MV.Recalculate, MV.Compensate
+    fasthbd = fasthbd and clip.format.sample_type == vs.INTEGER and clip.format.bits_per_sample > 8
 
     if mStart or mEnd:
         head = core.std.Reverse(core.std.Trim(clip, 1, radT)) if mStart else None
@@ -544,12 +549,14 @@ tools: Optional[Mapping[str, str]] = None) -> vs.VideoNode:
     denoised = clip
     for _ in range(iterations):
         supclip    = ref or (core.std.Convolution(denoised, [1,2,1,2,4,2,1,2,1])
-                             if blur else denoised) 
-                             
+                             if blur else denoised)
+        if fasthbd:
+            supclip = core.resize.Point(supclip, format=supclip.format.replace(bits_per_sample=8).id)
+
         sup        = S(supclip, hpad=ablksize, vpad=ablksize,
                      pel=pel, sharp=ssharp, rfilter=rfilter, blksize=ablksize, overlap=aoverlap)
 
-        if blur or ref is not None:
+        if blur or ref is not None or fasthbd:
             sup_render = S(denoised, hpad=ablksize, vpad=ablksize,
                           pel=pel, sharp=ssharp, rfilter=rfilter, levels=1, blksize=ablksize, overlap=aoverlap)
         else:
@@ -559,6 +566,8 @@ tools: Optional[Mapping[str, str]] = None) -> vs.VideoNode:
 
         kw = dict(search=asearch, blksize=ablksize, overlap=aoverlap,
                 chroma=chroma, truemotion=truemotion, pglobal=pglobal)
+        if asearchparam is not None:
+          kw['searchparam'] = asearchparam
 
         for d in range(1, radT + 1):
           bv.append(A(sup, isb=True,  delta=d, **kw))
@@ -613,6 +622,7 @@ def SpotDelta(
     ablksize: Optional[int] = None,
     aoverlap: Optional[int] = None,
     asearch: Optional[int] = None,
+    asearchparam: Optional[int] = None,
     truemotion: bool = False,
     blur: bool = False,
     smoother: str = 'zsmooth',
@@ -630,6 +640,7 @@ def SpotDelta(
     mStart: bool = False,              # mirror-pad clip start to reduce border artefacts
     mEnd: bool = False,                # mirror-pad clip end
     iterations: int = 1,              # repeat denoising chain N times
+    fasthbd: bool = False,             # motion search on an 8-bit copy
 
     # Sharpening
     sharpen_it: bool = True,
@@ -674,7 +685,8 @@ tools: Optional[Mapping[str, str]] = None) -> vs.VideoNode:
     chroma          Use chroma in block matching.
     ablksize        MV block size. Auto-scaled to resolution if None.
     aoverlap        MV overlap. Default ablksize//2.
-    asearch         MV search param. Default aoverlap//2.
+    asearch         MV search type. Default 5.
+    asearchparam    MV search radius. Default aoverlap//2.
     truemotion      MV truemotion flag. Default False.
     blur            Blur before vector analysis. Default False.
     smoother        'tmedian' | 'ttsmooth' | 'zsmooth'. Default 'tmedian'.
@@ -690,6 +702,7 @@ tools: Optional[Mapping[str, str]] = None) -> vs.VideoNode:
     mStart          Mirror-pad clip start to reduce border artefacts. Default False.
     mEnd            Mirror-pad clip end. Default False.
     iterations      Repeat the SpotLess denoising chain N times. Default 1.
+    fasthbd         Run the motion search on an 8-bit copy; faster for high bit depth. Default False.
     sharpen_it      Sharpen input before SpotLess (recommended). Default True.
                     When False, the original clip is passed to SpotLess and
                     DeltaRestore unmodified – no sharpening is applied anywhere.
@@ -753,16 +766,16 @@ tools: Optional[Mapping[str, str]] = None) -> vs.VideoNode:
     # ── SpotLess ──────────────────────────────────────────────────────────
     _blksz    = ablksize or (32 if clip.width > 1920 else 16 if clip.width > 960 else 8)
     _olap     = aoverlap or (_blksz // 2)
-    _schparam = asearch  or min(_olap // 2, 7)
+    _schparam = _olap // 2 if asearchparam is None else asearchparam
 
     sl_kw: Dict[str, Any] = dict(
         radT=radT, thsad=thsad, thsad2=thsad2, pel=pel, chroma=chroma,
-        ablksize=_blksz, aoverlap=_olap, asearch=_schparam,
+        ablksize=_blksz, aoverlap=_olap, asearch=asearch, asearchparam=_schparam,
         ssharp=ssharp, pglobal=pglobal,
         rec=rec, rblksize=rblksize, roverlap=roverlap, rsearch=rsearch,
         truemotion=truemotion, rfilter=rfilter,
         blur=blur, smoother=smoother,
-        ref=ref, mStart=mStart, mEnd=mEnd, iterations=iterations,
+        ref=ref, mStart=mStart, mEnd=mEnd, iterations=iterations, fasthbd=fasthbd,
         tools=tools,
     )
 
@@ -805,7 +818,7 @@ tools: Optional[Mapping[str, str]] = None) -> vs.VideoNode:
 
     # Dark / light masks: restore dark blobs near light blobs (e.g. shadows)
     dark  = _luma_delta_mask(source_lvl_shp, source_lvl_shp_spt,
-                             '<', brightness=dark2_brt,
+                             '<', brightness=0.97,
                              limit_brightness=0.66, spot_size=5, tools=tools)
     light = _luma_delta_mask(source_lvl_shp, source_lvl_shp_spt,
                              '>', brightness=light_brt, spot_size=5, tools=tools)
