@@ -914,6 +914,17 @@ def _mvu_pad(clip: vs.VideoNode, hpad: int, vpad: int) -> List[int]:
     return [-(-max(1, hpad) // align_x) * align_x, -(-max(1, vpad) // align_y) * align_y]
 
 
+def _mvu_super_geometry(super: vs.VideoNode) -> Dict[str, Any]:
+    '''blksize/overlap/pad/pel of an mvutensils super, for a second Super that has to match it.'''
+    sp = super.get_frame(0).props
+    return dict(
+        blksize=[sp['MVUtensilsSuperBlkSizeX'], sp['MVUtensilsSuperBlkSizeY']],
+        overlap=[sp['MVUtensilsSuperOverlapX'], sp['MVUtensilsSuperOverlapY']],
+        pad=[sp['MVUtensilsSuperHPad'], sp['MVUtensilsSuperVPad']],
+        pel=sp['MVUtensilsSuperPel'],
+    )
+
+
 def _mvu_scale_thscd2(thscd2: float) -> float:
     '''mvtools/mvsf thscd2 is a 0-256 int; mvutensils thscd2 is a 0-100 float percentage.'''
     return max(0.0, min(100.0, thscd2 * 100.0 / 256.0))
@@ -1432,6 +1443,10 @@ class MotionVectors:
                 _mvu_limit_to_float(limit, clip),
                 _mvu_limit_to_float(limitc if limitc is not None else limit, clip),
             ]
+            if centre_from_clip and 'centersuper:' in core.mvu.Degrain.signature:
+                # mvutensils 10+: a one-level super of clip supplies the centre pixels and the limit reference.
+                centre_super = core.mvu.Super(clip, onelevel=True, **_mvu_super_geometry(super))
+                return core.mvu.Degrain(clip, super, vec_list, limit=mvu_limit, centersuper=centre_super, **weight_args)
             if centre_from_clip:
                 out = core.mvu.Degrain(clip, super, vec_list, **weight_args)
                 return self._mvu_centre_from_clip(out, clip, super, vec_list, weight_args, mvu_limit)
@@ -1453,24 +1468,17 @@ class MotionVectors:
         )
 
     def _mvu_centre_from_clip(self, out: vs.VideoNode, clip: vs.VideoNode, super: vs.VideoNode, vec_list: Sequence[vs.VideoNode], weight_args: Dict[str, Any], limit: Sequence[float]) -> vs.VideoNode:
-        '''Replaces the super's centre in the unlimited mvu.Degrain output `out` by `clip`: out + W0 * (clip - centre), then limits the change against clip like mvtools.'''
+        '''mvutensils up to v9 (no centersuper): replaces the super's centre in the unlimited mvu.Degrain output `out` by `clip`: out + W0 * (clip - centre), then limits the change against clip like mvtools.'''
         radius = len(vec_list) // 2
         planes = weight_args['planes']
         centre = core.mvu.Degrain(clip, super, vec_list, weights=[0] * radius + [1] + [0] * radius, **weight_args)
         # W0 (the per-pixel centre weight) depends only on the vectors: Degrain a float probe that is 1 on frame n and 0 on all of n's references.
-        sp = super.get_frame(0).props
         m = max(abs(v.get_frame(0).props['MVUtensilsAnalysisDeltaFrame']) for v in vec_list) + 1
         fmt = clip.format.replace(sample_type=vs.FLOAT, bits_per_sample=32)
         n = clip.num_frames
         ones = core.std.BlankClip(clip, format=fmt.id, length=(n + m - 1) // m, color=[1.0] * fmt.num_planes)
         zeros = core.std.BlankClip(ones, color=[0.0] * fmt.num_planes)
-        probe_super_args = dict(
-            blksize=[sp['MVUtensilsSuperBlkSizeX'], sp['MVUtensilsSuperBlkSizeY']],
-            overlap=[sp['MVUtensilsSuperOverlapX'], sp['MVUtensilsSuperOverlapY']],
-            pad=[sp['MVUtensilsSuperHPad'], sp['MVUtensilsSuperVPad']],
-            pel=sp['MVUtensilsSuperPel'],
-            onelevel=True,
-        )
+        probe_super_args = dict(onelevel=True, **_mvu_super_geometry(super))
         parts = []
         for j in range(m):
             probe = core.std.Interleave([ones if i == j else zeros for i in range(m)])[:n]
