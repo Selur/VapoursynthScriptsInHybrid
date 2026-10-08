@@ -807,7 +807,7 @@ def mt_inpand_multi(src: vs.VideoNode, mode: str = 'rectangle', planes: Optional
 #   - Degrain family: `limit`/`limitc` are always given on the 8-bit scale (0-255 int,
 #     255 == "off") and converted to mvu's float `limit` (per-plane, inf == "off") or to
 #     mvtools' native-bit-depth integer, both scaled to the clip's peak value.
-#   - Degrain family: mvu takes the centre pixels from `super`, mvtools from `clip`; `centre_from_clip=True` restores mvtools' behaviour.
+#   - Degrain family: mvu takes the centre pixels from `super`, mvtools from `clip`; `centre_from_clip=True` restores mvtools' behaviour (mvutensils 10+, via centersuper).
 #   - Mask: mvu splits `Mask(kind=0/1/2)` into three separate functions and drops the
 #     `clip`/`ysc` arguments, returning a single grayscale plane instead of a
 #     clip-shaped/UV-colored mask. Code relying on the old multi-plane mask shape
@@ -1443,13 +1443,12 @@ class MotionVectors:
                 _mvu_limit_to_float(limit, clip),
                 _mvu_limit_to_float(limitc if limitc is not None else limit, clip),
             ]
-            if centre_from_clip and 'centersuper:' in core.mvu.Degrain.signature:
-                # mvutensils 10+: a one-level super of clip supplies the centre pixels and the limit reference.
+            if centre_from_clip:
+                if 'centersuper:' not in core.mvu.Degrain.signature:
+                    raise vs.Error('MV.Degrain: centre_from_clip needs mvutensils 10 or newer (Degrain without centersuper).')
+                # A one-level super of clip supplies the centre pixels and the limit reference.
                 centre_super = core.mvu.Super(clip, onelevel=True, **_mvu_super_geometry(super))
                 return core.mvu.Degrain(clip, super, vec_list, limit=mvu_limit, centersuper=centre_super, **weight_args)
-            if centre_from_clip:
-                out = core.mvu.Degrain(clip, super, vec_list, **weight_args)
-                return self._mvu_centre_from_clip(out, clip, super, vec_list, weight_args, mvu_limit)
             return core.mvu.Degrain(clip, super, vec_list, limit=mvu_limit, **weight_args)
 
         ns = self._legacy_ns(clip)
@@ -1466,39 +1465,6 @@ class MotionVectors:
             thscd2=thscd2,
             opt=opt,
         )
-
-    def _mvu_centre_from_clip(self, out: vs.VideoNode, clip: vs.VideoNode, super: vs.VideoNode, vec_list: Sequence[vs.VideoNode], weight_args: Dict[str, Any], limit: Sequence[float]) -> vs.VideoNode:
-        '''mvutensils up to v9 (no centersuper): replaces the super's centre in the unlimited mvu.Degrain output `out` by `clip`: out + W0 * (clip - centre), then limits the change against clip like mvtools.'''
-        radius = len(vec_list) // 2
-        planes = weight_args['planes']
-        centre = core.mvu.Degrain(clip, super, vec_list, weights=[0] * radius + [1] + [0] * radius, **weight_args)
-        # W0 (the per-pixel centre weight) depends only on the vectors: Degrain a float probe that is 1 on frame n and 0 on all of n's references.
-        m = max(abs(v.get_frame(0).props['MVUtensilsAnalysisDeltaFrame']) for v in vec_list) + 1
-        fmt = clip.format.replace(sample_type=vs.FLOAT, bits_per_sample=32)
-        n = clip.num_frames
-        ones = core.std.BlankClip(clip, format=fmt.id, length=(n + m - 1) // m, color=[1.0] * fmt.num_planes)
-        zeros = core.std.BlankClip(ones, color=[0.0] * fmt.num_planes)
-        probe_super_args = dict(onelevel=True, **_mvu_super_geometry(super))
-        parts = []
-        for j in range(m):
-            probe = core.std.Interleave([ones if i == j else zeros for i in range(m)])[:n]
-            weight = core.mvu.Degrain(probe, core.mvu.Super(probe, **probe_super_args), vec_list, **weight_args)
-            parts.append(core.std.SelectEvery(weight, m, j))
-        centre_weight = core.std.Interleave(parts, extend=True)[:n]
-        expr = []
-        for p in range(clip.format.num_planes):
-            if p not in planes:
-                expr.append('x')
-                continue
-            plane_limit = limit[0 if p == 0 else 1]
-            if plane_limit == float('inf'):
-                expr.append('x y z a - * +')
-                continue
-            # Integer limits are rounded like mvu's nLimit (fLimit + 0.5).
-            if clip.format.sample_type == vs.INTEGER:
-                plane_limit = int(plane_limit + 0.5)
-            expr.append(f'x y z a - * + z {plane_limit} - max z {plane_limit} + min')
-        return get_expr(self._tools)([out, centre_weight, clip, centre], expr, format=clip.format.id)
 
     def Degrain(self, clip: vs.VideoNode, super: vs.VideoNode, *vectors: Any, **kwargs: Any) -> vs.VideoNode:
         return self._degrain(clip, super, *vectors, **kwargs)
