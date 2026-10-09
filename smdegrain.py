@@ -192,7 +192,7 @@ def SMDegrain(input: vs.VideoNode, tr: int = 2, thSAD: int = 300, thSADC: Option
             raise vs.Error("SMDegrain: 'prefilter' must be -1 to 6 or a clip")
         elif prefilter == 4:
             # Takes the first NLMeans implementation that is loaded: nlm_ispc (CPU),
-            # nlm_cuda (CUDA), knlm (KNLMeansCL, OpenCL). Usually exactly one of
+            # nlm_cuda (CUDA), knlmvk (Vulkan), knlm (KNLMeansCL, OpenCL). Usually exactly one of
             # them is loaded for this filter - nlm_ispc when 'opencl' is off,
             # otherwise whichever GPU port was chosen.
             # device_type/device_id only reach knlm and nlm_cuda; 'device' is -1 or None

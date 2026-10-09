@@ -32,7 +32,7 @@ TOOLS: Dict[str, Dict[str, tuple]] = {
     'dfttest':        {'vszipcu': ('vszipcu', 'DFTTest'), 'dfttest2': ('dfttest2', None), 'dfttest2cpu': ('dfttest2_cpu', None),
                        'neo_fft': ('neo_fft', 'DFTTest'), 'dfttest': ('dfttest', None)},
     'nlmeans':        {'nlm_ispc': ('nlm_ispc', None), 'nlm_cuda': ('nlm_cuda', None), 'vszipcu': ('vszipcu', 'NLMeans'),
-                       'vszipcl': ('vszipcl', 'NLMeans'), 'knlm': ('knlm', None)},
+                       'vszipcl': ('vszipcl', 'NLMeans'), 'knlmvk': ('knlmvk', None), 'knlm': ('knlm', None)},
     'bm3d':           {'bm3dcuda': ('bm3dcuda', None), 'bm3dhip': ('bm3dhip', None), 'bm3dmetal': ('bm3dmetal', None),
                        'bm3dvk': ('bm3dvk', None), 'bm3dcpu': ('bm3dcpu', None), 'bm3d': ('bm3d', None)},
     'bilateral':      {'bilateralgpu_rtc': ('bilateralgpu_rtc', None), 'bilateralgpu': ('bilateralgpu', None),
@@ -921,7 +921,7 @@ def _bm3d_first(order: Sequence[str], create: Callable[[str], vs.VideoNode]) -> 
 # The NLMeans implementations, in the order they are preferred when more than one is loaded.
 # The name of the call differs only for KNLMeansCL.
 _NLMEANS_IMPLEMENTATIONS = (('nlm_ispc', 'NLMeans'), ('nlm_cuda', 'NLMeans'), ('vszipcu', 'NLMeans'),
-                            ('vszipcl', 'NLMeans'), ('knlm', 'KNLMeansCL'))
+                            ('vszipcl', 'NLMeans'), ('knlmvk', 'KNLMeans'), ('knlm', 'KNLMeansCL'))
 
 
 def NLMeans(
@@ -941,8 +941,9 @@ def NLMeans(
     """Calls the NLMeans implementation that is loaded, with the arguments it understands.
 
     d, a, s, h, channels, wmode, wref and rclip mean the same everywhere. device_type exists in
-    knlm alone, device_id in everything but nlm_ispc; a negative device_id means "the plugin
-    picks" and is left out. tools['nlmeans'] names the implementation to use.
+    knlm alone, device_id in everything but nlm_ispc and knlmvk; a negative device_id means "the plugin
+    picks" and is left out. tools['nlmeans'] names the implementation to use. knlmvk (Vulkan,
+    VapourSynth R80+) returns GPU-resident frames and is downloaded here.
     """
     functions = dict(_NLMEANS_IMPLEMENTATIONS)
     namespace = pick_tool(tools, 'nlmeans', list(functions), lambda n: hasattr(core, n))
@@ -951,11 +952,12 @@ def NLMeans(
         kwargs = {'d': d, 'a': a, 's': s, 'h': h, 'channels': channels, 'wmode': wmode,
                   'wref': wref, 'rclip': rclip}
         kwargs = {key: value for key, value in kwargs.items() if value is not None}
-        if device_id is not None and device_id >= 0 and namespace != 'nlm_ispc':
+        if device_id is not None and device_id >= 0 and namespace not in ('nlm_ispc', 'knlmvk'):
             kwargs['device_id'] = device_id
         if device_type is not None and namespace == 'knlm':
             kwargs['device_type'] = device_type
-        return getattr(getattr(core, namespace), name)(clip, **kwargs)
+        out = getattr(getattr(core, namespace), name)(clip, **kwargs)
+        return core.std.GPUDownload(out) if namespace == 'knlmvk' else out
     raise vs.Error('NLMeans: none of %s is loaded'
                    % ', '.join(namespace for namespace, _ in _NLMEANS_IMPLEMENTATIONS))
 
