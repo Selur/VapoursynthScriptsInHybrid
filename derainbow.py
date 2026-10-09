@@ -5,7 +5,7 @@ import vapoursynth as vs
 
 core = vs.core
 
-from helpers import GetPlane, scale, bilateral_port_args, get_expr, pick_tool, tool_function
+from helpers import GetPlane, scale, bilateral_port_args, get_expr, gpu_download, pick_tool, tool_function
 
 try:
     from color import Tweak as _color_tweak  # type: ignore
@@ -58,19 +58,25 @@ def _fft3d(clip: vs.VideoNode, tools: Optional[Mapping[str, str]] = None, **kwar
     return tool_function(tools, 'fft3d', 'FFT3D')(clip, **kwargs)
 
 
-_BILATERAL_PORTS = ("bilateralgpu_rtc", "bilateralgpu", "vszipcl", "vszipcu")
+_BILATERAL_PORTS = ("bilateralgpu_rtc", "bilateralgpu", "vszipcl", "vszipcu", "vsfeel")
 
 
 def _bilateral(clip: vs.VideoNode, sigmaS: float = 3.0, sigmaR: float = 0.02, gpu: bool | None = None, tools: Optional[Mapping[str, str]] = None,
                **kwargs: Any) -> vs.VideoNode:
-    """Bilateral filter — tools['bilateral'], else a loaded GPU port (bilateralgpu_rtc, bilateralgpu, vszipcl, vszipcu) unless gpu is False, then vszip, then bilateral."""
+    """Bilateral filter — tools['bilateral'], else a loaded GPU port (bilateralgpu_rtc, bilateralgpu, vszipcl, vszipcu, vsfeel) unless gpu is False, then vszip, then bilateral."""
     order = (() if gpu is False else _BILATERAL_PORTS) + ("vszip", "bilateral")
     namespace = pick_tool(tools, 'bilateral', order, lambda name: hasattr(core, name),
                           candidates=_BILATERAL_PORTS + ("vszip", "bilateral"))
     # The GPU ports name the sigmas sigma_spatial/sigma_color, on the same scale as sigmaS/sigmaR.
     if namespace in _BILATERAL_PORTS:
-        return getattr(core, namespace).Bilateral(clip, sigma_spatial=sigmaS, sigma_color=sigmaR,
-                                                  **bilateral_port_args(namespace, sigmaS), **kwargs)
+        # vsfeel takes 16 bit integer or float only; other integer depths run at 16 bit.
+        work = clip
+        if namespace == 'vsfeel' and clip.format.sample_type == vs.INTEGER and clip.format.bits_per_sample != 16:
+            work = core.resize.Point(clip, format=clip.format.replace(bits_per_sample=16))
+        out = getattr(core, namespace).Bilateral(work, sigma_spatial=sigmaS, sigma_color=sigmaR,
+                                                 **bilateral_port_args(namespace, sigmaS), **kwargs)
+        out = gpu_download(namespace, out)
+        return out if work is clip else core.resize.Point(out, format=clip.format)
     if namespace is not None:
         return getattr(core, namespace).Bilateral(clip, sigmaS=sigmaS, sigmaR=sigmaR, **kwargs)
     raise RuntimeError(

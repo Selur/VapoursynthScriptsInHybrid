@@ -4,7 +4,7 @@ from vapoursynth import core
 
 from typing import Any, Dict, Sequence, Union, Optional, Mapping
 
-from helpers import GetPlane, BoxFilter, DFTTest, bilateral_port_args, get_expr, pick_tool, tool_function, type_error, value_error
+from helpers import GetPlane, BoxFilter, DFTTest, bilateral_port_args, get_expr, gpu_download, pick_tool, tool_function, type_error, value_error
 
 TYPEDICT = {vs.VideoNode: 'clip', int: 'int', float: 'float', bool: 'bool', str: 'str', list: 'list', tuple: 'tuple'}
 from misc import mt_expand_multi, mt_inpand_multi
@@ -174,12 +174,13 @@ def GradFun3(src: vs.VideoNode, thr: Optional[float] = None, radius: Optional[in
         # smode 2 on the GPU: the ports take sigma_color on the same 0-1 scale as sigmaR.
         thr_1 = max(thr * 4.5, 1.25)
         r4 = max(radius * 4 / 3, 4.0)
-        namespace = pick_tool(tools, 'bilateral', ('bilateralgpu_rtc', 'bilateralgpu', 'vszipcl', 'vszipcu'),
+        namespace = pick_tool(tools, 'bilateral', ('bilateralgpu_rtc', 'bilateralgpu', 'vszipcl', 'vszipcu', 'vsfeel'),
                               lambda name: hasattr(core, name))
         if namespace is None:
-            raise vs.Error(funcname + ': smode=5 needs bilateralgpu_rtc, bilateralgpu, vszipcl or vszipcu')
+            raise vs.Error(funcname + ': smode=5 needs bilateralgpu_rtc, bilateralgpu, vszipcl, vszipcu or vsfeel')
         last = getattr(core, namespace).Bilateral(src, ref=ref, sigma_spatial=r4 / 2, sigma_color=thr_1 / 255,
                                                   **bilateral_port_args(namespace, r4 / 2))
+        last = gpu_download(namespace, last)
         # The ports filter every plane; the planes not asked for stay untouched, as with smode 2.
         if len(planes) < src.format.num_planes:
             last = core.std.ShufflePlanes([last if p in planes else src for p in range(src.format.num_planes)],

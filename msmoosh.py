@@ -46,7 +46,7 @@ from __future__ import annotations
 
 from typing import Mapping, Optional, Sequence, Union
 import vapoursynth as vs
-from helpers import bilateral_port_args, get_expr, pick_tool
+from helpers import bilateral_port_args, get_expr, gpu_download, pick_tool
 
 core = vs.core
 
@@ -111,7 +111,7 @@ def _depth(clip: vs.VideoNode, bits: int, tools: Optional[Mapping[str, str]] = N
     return get_expr(tools)([clip], expr, format=fmt_id)
 
 
-_BILATERAL_PORTS = ('bilateralgpu_rtc', 'bilateralgpu', 'vszipcl', 'vszipcu')
+_BILATERAL_PORTS = ('bilateralgpu_rtc', 'bilateralgpu', 'vszipcl', 'vszipcu', 'vsfeel')
 
 
 def _bilateral(clip: vs.VideoNode, sigmaS: float, sigmaR: float, proc: list, tools: Optional[Mapping[str, str]] = None) -> vs.VideoNode:
@@ -121,11 +121,12 @@ def _bilateral(clip: vs.VideoNode, sigmaS: float, sigmaR: float, proc: list, too
         raise vs.Error("MSmooth: a bilateral plugin is required (vszip or bilateral)")
     if name not in _BILATERAL_PORTS:
         return getattr(core, name).Bilateral(clip, sigmaS=sigmaS, sigmaR=sigmaR, planes=proc, algorithm=0)
-    # Fallback only: the GPU ports take 8/16 bit integer, callers should convert beforehand; 9-15 bit runs at 16 bit here.
+    # Fallback only: the GPU ports take 8/16 bit integer (vsfeel 16 alone), callers should convert beforehand; other depths run at 16 bit here.
     bits = clip.format.bits_per_sample
-    work = clip if bits in (8, 16) else _depth(clip, 16, tools)
+    work = clip if bits == 16 or (bits == 8 and name != 'vsfeel') else _depth(clip, 16, tools)
     # The GPU ports take sigma_spatial/sigma_color on the same scale and filter every plane.
     smoothed = getattr(core, name).Bilateral(work, sigma_spatial=sigmaS, sigma_color=sigmaR, **bilateral_port_args(name, sigmaS))
+    smoothed = gpu_download(name, smoothed)
     smoothed = _depth(smoothed, bits, tools)
     num_planes = clip.format.num_planes
     if len(proc) < num_planes:

@@ -30,14 +30,14 @@ TOOLS: Dict[str, Dict[str, tuple]] = {
                        'eedi3m': ('eedi3m', 'EEDI3')},
     'eedi2':          {'eedi2': ('eedi2', None), 'eedi2cuda': ('eedi2cuda', None)},
     'dfttest':        {'vszipcu': ('vszipcu', 'DFTTest'), 'dfttest2': ('dfttest2', None), 'dfttest2cpu': ('dfttest2_cpu', None),
-                       'neo_fft': ('neo_fft', 'DFTTest'), 'dfttest': ('dfttest', None)},
+                       'vsfeel': ('vsfeel', 'DFTTest'), 'neo_fft': ('neo_fft', 'DFTTest'), 'dfttest': ('dfttest', None)},
     'nlmeans':        {'nlm_ispc': ('nlm_ispc', None), 'nlm_cuda': ('nlm_cuda', None), 'vszipcu': ('vszipcu', 'NLMeans'),
                        'vszipcl': ('vszipcl', 'NLMeans'), 'knlmvk': ('knlmvk', None), 'knlm': ('knlm', None)},
     'bm3d':           {'bm3dcuda': ('bm3dcuda', None), 'bm3dhip': ('bm3dhip', None), 'bm3dmetal': ('bm3dmetal', None),
                        'bm3dvk': ('bm3dvk', None), 'bm3dcpu': ('bm3dcpu', None), 'bm3d': ('bm3d', None)},
     'bilateral':      {'bilateralgpu_rtc': ('bilateralgpu_rtc', None), 'bilateralgpu': ('bilateralgpu', None),
                        'vszipcl': ('vszipcl', 'Bilateral'), 'vszipcu': ('vszipcu', 'Bilateral'),
-                       'vszip': ('vszip', 'Bilateral'), 'bilateral': ('bilateral', None)},
+                       'vsfeel': ('vsfeel', 'Bilateral'), 'vszip': ('vszip', 'Bilateral'), 'bilateral': ('bilateral', None)},
     'dctfilter':      {'oxidctf': ('oxidctf', None), 'zsmooth': ('zsmooth', 'DCTFilter'), 'dctf': ('dctf', None)},
     'warp':           {'warp': ('warp', None), 'awarp': ('awarp', None)},
     'edgemasks':      {'edgemasks': ('edgemasks', None), 'std': ('std', None)},
@@ -458,6 +458,15 @@ def _akarin_expr(clips: Union[vs.VideoNode, Sequence[vs.VideoNode]], expr: Union
     expr = [_pow_guard(e) for e in expr] if isinstance(expr, (list, tuple)) else _pow_guard(expr)
     return core.akarin.Expr(clips, expr, *args, **kwargs)
 
+# Namespaces whose functions return GPU-resident frames (VapourSynth R80+); their results are downloaded by gpu_download().
+_GPU_RESIDENT = ('vsfeel', 'bm3dvk', 'knlmvk')
+
+
+def gpu_download(namespace: str, clip: vs.VideoNode) -> vs.VideoNode:
+    '''The clip as CPU frames: std.GPUDownload behind a namespace that returns GPU-resident frames, unchanged otherwise.'''
+    return core.std.GPUDownload(clip) if namespace in _GPU_RESIDENT else clip
+
+
 def bilateral_port_args(namespace: str, sigma_spatial: float) -> Dict[str, Any]:
     '''Extra arguments for a GPU bilateral port: bilateralgpu_rtc fails with shared memory above radius 49 (radius ~ 3 * sigma_spatial).'''
     return {'use_shared_memory': False} if namespace == 'bilateralgpu_rtc' and 3 * sigma_spatial >= 49 else {}
@@ -773,6 +782,16 @@ def _vszipcuCanRun(kwargs: Dict[str, Any]) -> bool:
     return not any(name in kwargs for name in _DFTTEST_NOT_IN_VSZIPCU)
 
 
+def _vsfeelCanRun(clip: vs.VideoNode, kwargs: Dict[str, Any]) -> bool:
+    # Vulkan port of the fixed-block kernels: 16x16 spatial window, odd temporal window; 16 bit integer or 32 bit float
+    # input, other integer depths are run at 16 bit by DFTTest().
+    if not hasattr(core, 'vsfeel') or kwargs.get('sbsize', 16) != 16 or kwargs.get('tbsize', 3) % 2 == 0:
+        return False
+    if clip.format.sample_type == vs.FLOAT and clip.format.bits_per_sample != 32:
+        return False
+    return not any(name in kwargs for name in _DFTTEST_NOT_IN_VSZIPCU)
+
+
 def _dfttest2FixedBlock(kwargs: Dict[str, Any]) -> bool:
     return kwargs.get('sbsize', 16) == 16 and kwargs.get('tbsize', 3) in (1, 3, 5, 7)
 
@@ -807,15 +826,15 @@ def DFTTest(clip: vs.VideoNode, cuda: Optional[bool] = None, tools: Optional[Map
             device_id: Optional[int] = None, **kwargs: Any) -> vs.VideoNode:
     '''Calls the first DFTTest implementation that is loaded, GPU ones first.
 
-    Looked for in this order: core.vszipcu.DFTTest (CUDA), dfttest2.DFTTest on a GPU backend (CUDA/HIP) and
-    core.neo_fft.DFTTest or core.dfttest.DFTTest (CPU). dfttest2's CPU backend is only used when tools['dfttest'] asks
+    Looked for in this order: core.vszipcu.DFTTest (CUDA), dfttest2.DFTTest on a GPU backend (CUDA/HIP), core.vsfeel.DFTTest
+    (Vulkan, VapourSynth R80+, GPU-resident frames downloaded here) and core.neo_fft.DFTTest or core.dfttest.DFTTest (CPU). dfttest2's CPU backend is only used when tools['dfttest'] asks
     for 'dfttest2cpu'.
     Which of them is available is decided by whoever loaded the plugins.
 
     Args:
         cuda: False forces the CPU implementation, True and None look for a GPU one first.
             Kept for the callers that have their own cuda/opencl/gpu switch.
-        tools: tools['dfttest'] ('vszipcu', 'dfttest2', 'dfttest2cpu', 'neo_fft' or 'dfttest') names the implementation;
+        tools: tools['dfttest'] ('vszipcu', 'dfttest2', 'dfttest2cpu', 'vsfeel', 'neo_fft' or 'dfttest') names the implementation;
             `cuda` then has no effect.
         device_id: GPU for the CUDA ports; None or a negative value leaves the choice to the plugin.
             dfttest2 takes it through its GPU backend.
@@ -825,15 +844,24 @@ def DFTTest(clip: vs.VideoNode, cuda: Optional[bool] = None, tools: Optional[Map
     they cannot serve use the CPU version, which then has to be loaded as well.
     '''
     can_run = {'vszipcu': _vszipcuCanRun, 'dfttest2': _dfttest2CanRun, 'dfttest2cpu': _dfttest2CpuCanRun,
+               'vsfeel': lambda kw: _vsfeelCanRun(clip, kw),
                'neo_fft': lambda _: hasattr(core, 'neo_fft') and hasattr(core.neo_fft, 'DFTTest'),
                'dfttest': lambda _: hasattr(core, 'dfttest')}
-    order = ('neo_fft', 'dfttest') if cuda is False else ('vszipcu', 'dfttest2', 'neo_fft', 'dfttest')
+    order = ('neo_fft', 'dfttest') if cuda is False else ('vszipcu', 'dfttest2', 'vsfeel', 'neo_fft', 'dfttest')
     name = pick_tool(tools, 'dfttest', order, lambda n: can_run[n](kwargs), candidates=tuple(can_run))
     on_device = device_id is not None and device_id >= 0
     if name == 'vszipcu':
         if on_device:
             kwargs['device_id'] = device_id
         return core.vszipcu.DFTTest(clip, **kwargs)
+    if name == 'vsfeel':
+        if on_device:
+            kwargs['device_id'] = device_id
+        work = clip
+        if clip.format.sample_type == vs.INTEGER and clip.format.bits_per_sample != 16:
+            work = core.resize.Point(clip, format=clip.format.replace(bits_per_sample=16))
+        out = core.std.GPUDownload(core.vsfeel.DFTTest(work, **kwargs))
+        return out if work is clip else core.resize.Point(out, format=clip.format)
     if name in ('dfttest2', 'dfttest2cpu'):
         import dfttest2
         if 'backend' not in kwargs:
