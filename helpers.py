@@ -34,7 +34,7 @@ TOOLS: Dict[str, Dict[str, tuple]] = {
     'nlmeans':        {'nlm_ispc': ('nlm_ispc', None), 'nlm_cuda': ('nlm_cuda', None), 'vszipcu': ('vszipcu', 'NLMeans'),
                        'vszipcl': ('vszipcl', 'NLMeans'), 'knlm': ('knlm', None)},
     'bm3d':           {'bm3dcuda': ('bm3dcuda', None), 'bm3dhip': ('bm3dhip', None), 'bm3dmetal': ('bm3dmetal', None),
-                       'bm3dcpu': ('bm3dcpu', None), 'bm3d': ('bm3d', None)},
+                       'bm3dvk': ('bm3dvk', None), 'bm3dcpu': ('bm3dcpu', None), 'bm3d': ('bm3d', None)},
     'bilateral':      {'bilateralgpu_rtc': ('bilateralgpu_rtc', None), 'bilateralgpu': ('bilateralgpu', None),
                        'vszipcl': ('vszipcl', 'Bilateral'), 'vszipcu': ('vszipcu', 'Bilateral'),
                        'vszip': ('vszip', 'Bilateral'), 'bilateral': ('bilateral', None)},
@@ -846,7 +846,7 @@ def DFTTest(clip: vs.VideoNode, cuda: Optional[bool] = None, tools: Optional[Map
 
 
 # The BM3D implementations with the BM3DCUDA interface, in the order they are preferred when more than one is loaded.
-_BM3D_IMPLEMENTATIONS = ('bm3dcuda', 'bm3dhip', 'bm3dmetal', 'bm3dcpu')
+_BM3D_IMPLEMENTATIONS = ('bm3dcuda', 'bm3dhip', 'bm3dmetal', 'bm3dvk', 'bm3dcpu')
 
 
 def BM3D(clip: vs.VideoNode, sigma: Sequence[float], radius: int = 0, block_step: int = 8, bm_range: int = 9,
@@ -855,9 +855,9 @@ def BM3D(clip: vs.VideoNode, sigma: Sequence[float], radius: int = 0, block_step
     '''Basic BM3D estimate (aggregated when radius > 0) on the BM3D plugin that is loaded.
 
     The clip must be 32-bit float, chroma=True (CBM3D, block matching on luma) needs YUV444PS; the result is
-    32-bit float. Looked for in this order: bm3dcuda, bm3dhip, bm3dmetal, bm3dcpu, then core.bm3d. backend
-    ('bm3dcuda', 'bm3dhip', 'bm3dmetal', 'bm3dcpu' or 'bm3d') moves that implementation to the front, a GPU one
-    followed by bm3dcpu; it matters where every plugin is autoloaded (Linux, macOS), with explicit loading only
+    32-bit float. Looked for in this order: bm3dcuda, bm3dhip, bm3dmetal, bm3dvk, bm3dcpu, then core.bm3d. backend
+    ('bm3dcuda', 'bm3dhip', 'bm3dmetal', 'bm3dvk', 'bm3dcpu' or 'bm3d') moves that implementation to the front, a GPU one
+    followed by bm3dcpu (bm3dvk, the Vulkan port without device_id, by bm3d); it matters where every plugin is autoloaded (Linux, macOS), with explicit loading only
     the chosen one is there anyway. A GPU plugin that cannot create its filter (no usable card, e.g. an AMD iGPU the bundled ROCm runtime does not support) is skipped with
     a warning, so a GPU choice should be loaded together with bm3dcpu. With the BM3DCUDA plugins, planes with
     sigma 0 are undefined unless chroma=True. tools['bm3d'] (when backend is not given) moves that implementation to
@@ -875,9 +875,11 @@ def BM3D(clip: vs.VideoNode, sigma: Sequence[float], radius: int = 0, block_step
             return core.bm3d.VAggregate(basic, radius=radius, sample=1)
         kwargs = dict(sigma=list(sigma), radius=radius, block_step=block_step, bm_range=bm_range, ps_num=ps_num,
                       ps_range=ps_range, chroma=chroma)
-        if name != 'bm3dcpu' and device_id is not None and device_id >= 0:
+        if name not in ('bm3dcpu', 'bm3dvk') and device_id is not None and device_id >= 0:
             kwargs['device_id'] = device_id
-        return getattr(core, name).BM3Dv2(clip, **kwargs)
+        out = getattr(core, name).BM3Dv2(clip, **kwargs)
+        # bm3dvk takes CPU clips but returns GPU-resident frames (VapourSynth R80+); callers mix the result with CPU clips.
+        return core.std.GPUDownload(out) if name == 'bm3dvk' else out
 
     return _bm3d_first(_bm3d_order(backend, tools), create)[1]
 
@@ -896,6 +898,8 @@ def _bm3d_order(backend: Optional[str], tools: Optional[Mapping[str, str]]) -> T
             warnings.warn(f'BM3D: {backend} is not loaded, trying the next implementation')
         # A GPU choice falls back to bm3dcpu first, as where only the chosen port and bm3dcpu are loaded.
         first_names = (backend, 'bm3dcpu') if backend in ('bm3dcuda', 'bm3dhip', 'bm3dmetal') else (backend,)
+        if backend == 'bm3dvk':
+            first_names = (backend, 'bm3d')
         order = first_names + tuple(name for name in order if name not in first_names)
     return order
 
