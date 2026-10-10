@@ -34,7 +34,7 @@ TOOLS: Dict[str, Dict[str, tuple]] = {
     'nlmeans':        {'nlm_ispc': ('nlm_ispc', None), 'nlm_cuda': ('nlm_cuda', None), 'vszipcu': ('vszipcu', 'NLMeans'),
                        'vszipcl': ('vszipcl', 'NLMeans'), 'knlmvk': ('knlmvk', None), 'knlm': ('knlm', None)},
     'bm3d':           {'bm3dcuda': ('bm3dcuda', None), 'bm3dhip': ('bm3dhip', None), 'bm3dmetal': ('bm3dmetal', None),
-                       'bm3dvk': ('bm3dvk', None), 'bm3dcpu': ('bm3dcpu', None), 'bm3d': ('bm3d', None)},
+                       'bm3dvk': ('bm3dvk', None), 'bm3dvk2': ('bm3dvk2', None), 'bm3dcpu': ('bm3dcpu', None), 'bm3d': ('bm3d', None)},
     'bilateral':      {'bilateralgpu_rtc': ('bilateralgpu_rtc', None), 'bilateralgpu': ('bilateralgpu', None),
                        'vszipcl': ('vszipcl', 'Bilateral'), 'vszipcu': ('vszipcu', 'Bilateral'),
                        'vsfeel': ('vsfeel', 'Bilateral'), 'vszip': ('vszip', 'Bilateral'), 'bilateral': ('bilateral', None)},
@@ -874,7 +874,8 @@ def DFTTest(clip: vs.VideoNode, cuda: Optional[bool] = None, tools: Optional[Map
 
 
 # The BM3D implementations with the BM3DCUDA interface, in the order they are preferred when more than one is loaded.
-_BM3D_IMPLEMENTATIONS = ('bm3dcuda', 'bm3dhip', 'bm3dmetal', 'bm3dvk', 'bm3dcpu')
+_BM3D_IMPLEMENTATIONS = ('bm3dcuda', 'bm3dhip', 'bm3dmetal', 'bm3dvk', 'bm3dvk2', 'bm3dcpu')
+_BM3D_VULKAN = ('bm3dvk', 'bm3dvk2')
 
 
 def BM3D(clip: vs.VideoNode, sigma: Sequence[float], radius: int = 0, block_step: int = 8, bm_range: int = 9,
@@ -883,9 +884,10 @@ def BM3D(clip: vs.VideoNode, sigma: Sequence[float], radius: int = 0, block_step
     '''Basic BM3D estimate (aggregated when radius > 0) on the BM3D plugin that is loaded.
 
     The clip must be 32-bit float, chroma=True (CBM3D, block matching on luma) needs YUV444PS; the result is
-    32-bit float. Looked for in this order: bm3dcuda, bm3dhip, bm3dmetal, bm3dvk, bm3dcpu, then core.bm3d. backend
-    ('bm3dcuda', 'bm3dhip', 'bm3dmetal', 'bm3dvk', 'bm3dcpu' or 'bm3d') moves that implementation to the front, a GPU one
-    followed by bm3dcpu (bm3dvk, the Vulkan port without device_id, by bm3d); it matters where every plugin is autoloaded (Linux, macOS), with explicit loading only
+    32-bit float. Looked for in this order: bm3dcuda, bm3dhip, bm3dmetal, bm3dvk, bm3dvk2, bm3dcpu, then core.bm3d. backend
+    ('bm3dcuda', 'bm3dhip', 'bm3dmetal', 'bm3dvk', 'bm3dvk2', 'bm3dcpu' or 'bm3d') moves that implementation to the front, a GPU one
+    followed by bm3dcpu (the Vulkan ports bm3dvk and bm3dvk2, without device_id, by bm3d); bm3dvk2 takes Gray only here, and the
+    default order skips both Vulkan ports when the core's Vulkan device is a CPU (llvmpipe); it matters where every plugin is autoloaded (Linux, macOS), with explicit loading only
     the chosen one is there anyway. A GPU plugin that cannot create its filter (no usable card, e.g. an AMD iGPU the bundled ROCm runtime does not support) is skipped with
     a warning, so a GPU choice should be loaded together with bm3dcpu. With the BM3DCUDA plugins, planes with
     sigma 0 are undefined unless chroma=True. tools['bm3d'] (when backend is not given) moves that implementation to
@@ -895,6 +897,13 @@ def BM3D(clip: vs.VideoNode, sigma: Sequence[float], radius: int = 0, block_step
         raise vs.Error('BM3D: the clip must be 32-bit float')
 
     def create(name: str) -> vs.VideoNode:
+        if name == 'bm3dvk2':
+            if clip.format.color_family != vs.GRAY:
+                raise vs.Error('bm3dvk2 takes Gray or RGB (opponent colour space) only, no CBM3D on YUV')
+            options = dict(ps_num=ps_num, ps_range=ps_range) if radius > 0 else {}
+            out = core.bm3dvk2.BM3D(clip, sigma=[sigma[0]], radius=radius, block_step=block_step, bm_range=bm_range, **options)
+            # GPU-resident result; the callers mix it with CPU clips (Expr, ShufflePlanes), which R81 does not download on its own.
+            return core.std.GPUDownload(out)
         if name == 'bm3d':
             if radius == 0:
                 return core.bm3d.Basic(clip, sigma=list(sigma), block_step=block_step, bm_range=bm_range)
@@ -915,10 +924,11 @@ def BM3D(clip: vs.VideoNode, sigma: Sequence[float], radius: int = 0, block_step
 def _bm3d_order(backend: Optional[str], tools: Optional[Mapping[str, str]]) -> Tuple[str, ...]:
     '''The BM3D implementations in the order to try them; backend, else tools['bm3d'], moves one to the front.'''
     order = _BM3D_IMPLEMENTATIONS + ('bm3d',)
-    if backend is None and tools:
-        first = pick_tool(tools, 'bm3d', order)
-        if first is not None:
-            order = (first,) + tuple(name for name in order if name != first)
+    first = pick_tool(tools, 'bm3d', order) if backend is None and tools else None
+    if first is not None:
+        order = (first,) + tuple(name for name in order if name != first)
+    elif backend is None and _vulkan_on_cpu():
+        order = tuple(name for name in order if name not in _BM3D_VULKAN)
     if backend is not None:
         if backend not in order:
             raise vs.Error(f'BM3D: unknown backend "{backend}", use one of {", ".join(order)}')
@@ -926,10 +936,19 @@ def _bm3d_order(backend: Optional[str], tools: Optional[Mapping[str, str]]) -> T
             warnings.warn(f'BM3D: {backend} is not loaded, trying the next implementation')
         # A GPU choice falls back to bm3dcpu first, as where only the chosen port and bm3dcpu are loaded.
         first_names = (backend, 'bm3dcpu') if backend in ('bm3dcuda', 'bm3dhip', 'bm3dmetal') else (backend,)
-        if backend == 'bm3dvk':
+        if backend in _BM3D_VULKAN:
             first_names = (backend, 'bm3d')
         order = first_names + tuple(name for name in order if name not in first_names)
     return order
+
+
+def _vulkan_on_cpu() -> bool:
+    '''True if the core's Vulkan device is a CPU implementation (llvmpipe), where a Vulkan port only emulates a GPU.'''
+    try:
+        uuid = core.vulkan_device_info.get('uuid')
+        return any(device.get('uuid') == uuid and device.get('type') == 'cpu' for device in core.vulkan_devices)
+    except (AttributeError, vs.Error):
+        return False
 
 
 def _bm3d_first(order: Sequence[str], create: Callable[[str], vs.VideoNode]) -> Tuple[str, vs.VideoNode]:

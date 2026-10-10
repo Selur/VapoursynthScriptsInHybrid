@@ -931,9 +931,14 @@ def _bm3d_sigma(value: Union[float, Sequence[float]], gray: bool) -> List[float]
     return [values[0], 0.0, 0.0] if gray else values
 
 
+def _cpu_resident(clip: vs.VideoNode) -> vs.VideoNode:
+    '''The clip with CPU frames; GPU-resident ones (Vulkan ports, VapourSynth R80+) are downloaded.'''
+    return core.std.GPUDownload(clip) if getattr(clip, 'gpu_resident', False) else clip
+
+
 def _bm3d_warn_ignored(name: str, given: Sequence[str]) -> None:
     '''One warning naming the given parameters the implementation `name` does not know.'''
-    unknown = _BM3D_PORTS_ONLY if name == 'bm3d' else _BM3D_PLUGIN_ONLY
+    unknown = _BM3D_PORTS_ONLY if name in ('bm3d', 'bm3dvk2') else _BM3D_PLUGIN_ONLY
     if name == 'bm3dcpu':
         unknown = unknown + ('fast', 'extractor_exp', 'device')
     elif name == 'bm3dvk':
@@ -964,10 +969,10 @@ def BM3D(clip: vs.VideoNode, sigma: Union[float, Sequence[float]] = 5.0,
     The clip must be 32-bit float (Gray, YUV or RGB). RGB is filtered in the opponent colour space (needs the bm3d
     plugin). Planes with sigma 0 stay untouched; with luma only, the luma plane is filtered alone. sigma2, radius2 and
     profile2 default to the values of the basic estimate. Implementation as in helpers.BM3D(): tools['bm3d'], else the
-    order bm3dcuda, bm3dhip, bm3dmetal, bm3dvk, bm3dcpu, bm3d; a GPU plugin that cannot create its filter is skipped with a warning.
+    order bm3dcuda, bm3dhip, bm3dmetal, bm3dvk, bm3dvk2, bm3dcpu, bm3d; a GPU plugin that cannot create its filter is skipped with a warning.
     Parameters the chosen plugin does not know are ignored with a warning. matrix, profile*, block_size*, group_size*,
-    bm_step*, ps_step*, th_mse* and hard_thr exist in bm3d only, chroma (CBM3D, YUV444PS or RGB), fast, extractor_exp and
-    device in the BM3DCUDA ports only.
+    bm_step*, ps_step*, th_mse* and hard_thr exist in bm3d and bm3dvk2 only, chroma (CBM3D, YUV444PS or RGB), fast, extractor_exp and
+    device in the BM3DCUDA ports only. bm3dvk2 (Vulkan, R81) takes Gray, luma only or RGB, not YUV with chroma.
     '''
     fmt = clip.format
     if fmt.sample_type != vs.FLOAT or fmt.bits_per_sample != 32:
@@ -1017,6 +1022,23 @@ def BM3D(clip: vs.VideoNode, sigma: Union[float, Sequence[float]] = 5.0,
     def make(name: str, ref: Optional[vs.VideoNode], stage: Dict[str, Any], is_final: bool) -> vs.VideoNode:
         sig = stage['sigma'][:planes]
         radius = stage['radius']
+        if name == 'bm3dvk2':
+            if planes == 3 and not rgb:
+                raise vs.Error('bm3dvk2 takes Gray or RGB (opponent colour space) only, no YUV with chroma')
+            options = {key: stage[key] for key in ('block_size', 'block_step', 'group_size', 'bm_range', 'bm_step', 'th_mse')
+                       if stage[key] is not None}
+            if radius > 0:
+                options.update({key: stage[key] for key in ('ps_num', 'ps_range', 'ps_step') if stage[key] is not None})
+            if stage['hard_thr'] is not None and not is_final:
+                options['hard_thr'] = stage['hard_thr']
+            if planes == 1 and matrix_arg is not None:
+                options['matrix'] = matrix_arg
+            if ref is not None:
+                options['ref'] = core.bm3d.OPP2RGB(ref, sample=1) if planes == 3 else ref
+            source = core.bm3d.OPP2RGB(plane_clip, sample=1) if planes == 3 else plane_clip
+            out = core.bm3dvk2.BM3D(source, profile=stage['profile'], sigma=sig, radius=radius, **options)
+            # bm3dvk2 converts RGB to the opponent colour space itself; back to OPP for the planes with sigma 0 and the next estimate.
+            return core.bm3d.RGB2OPP(out, sample=1) if planes == 3 else out
         if name == 'bm3d':
             options: Dict[str, Any] = {key: stage[key] for key in ('block_size', 'block_step', 'group_size', 'bm_range',
                                                                    'bm_step', 'th_mse') if stage[key] is not None}
@@ -1060,12 +1082,14 @@ def BM3D(clip: vs.VideoNode, sigma: Union[float, Sequence[float]] = 5.0,
             chosen.append(name)
             _bm3d_warn_ignored(name, given)
         if planes == 3 and not all(sig):
-            result = core.std.ShufflePlanes([result if s else plane_clip for s in sig], [0, 1, 2], vs.YUV)
+            result = core.std.ShufflePlanes([_cpu_resident(result) if s else plane_clip for s in sig], [0, 1, 2], vs.YUV)
         return result
 
     estimate = run(None, first, False)
     for _ in range(refine):
         estimate = run(estimate, final, True)
+    # A Vulkan estimate stays on the GPU across the refine passes; std calls that mix it with CPU clips need it downloaded.
+    estimate = _cpu_resident(estimate)
     if plane_clip is not work:
         estimate = core.std.ShufflePlanes([estimate, work, work], [0, 1, 2], vs.YUV)
     if rgb:
