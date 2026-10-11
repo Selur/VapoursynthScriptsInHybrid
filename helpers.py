@@ -38,12 +38,12 @@ TOOLS: Dict[str, Dict[str, tuple]] = {
     'bilateral':      {'bilateralgpu_rtc': ('bilateralgpu_rtc', None), 'bilateralgpu': ('bilateralgpu', None),
                        'vszipcl': ('vszipcl', 'Bilateral'), 'vszipcu': ('vszipcu', 'Bilateral'),
                        'vsfeel': ('vsfeel', 'Bilateral'), 'vszip': ('vszip', 'Bilateral'), 'bilateral': ('bilateral', None)},
-    'dctfilter':      {'oxidctf': ('oxidctf', None), 'zsmooth': ('zsmooth', 'DCTFilter'), 'dctf': ('dctf', None)},
+    'dctfilter':      {'neo_smo': ('neo_smo', 'DCTFilter'), 'oxidctf': ('oxidctf', None), 'zsmooth': ('zsmooth', 'DCTFilter'), 'dctf': ('dctf', None)},
     'warp':           {'warp': ('warp', None), 'awarp': ('awarp', None)},
     'edgemasks':      {'edgemasks': ('edgemasks', None), 'std': ('std', None)},
     'tcanny':         {'tcanny': ('tcanny', None), 'std': ('std', None)},
     'fft3d':          {'neo_fft': ('neo_fft', 'FFT3D'), 'neo_fft3d': ('neo_fft3d', None), 'fft3dfilter': ('fft3dfilter', None)},
-    'f3kdb':          {'vszip': ('vszip', 'Deband'), 'neo_f3kdb': ('neo_f3kdb', None), 'f3kdb': ('f3kdb', None)},
+    'f3kdb':          {'neo_smo': ('neo_smo', 'Deen'), 'vszip': ('vszip', 'Deband'), 'neo_f3kdb': ('neo_f3kdb', None), 'f3kdb': ('f3kdb', None)},
     'scd':            {'scd': ('scd', None), 'misc': ('misc', 'SCDetect'), 'std': ('std', None), 'mv': ('mv', 'SCDetection')},
     'hysteresis':     {'hysteresis': ('hysteresis', None), 'misc': ('misc', 'Hysteresis')},
     'grain':          {'noise': ('noise', None), 'grain': ('grain', None)},
@@ -53,8 +53,14 @@ TOOLS: Dict[str, Dict[str, tuple]] = {
     'motionmask':     {'motionmask': ('motionmask', None), 'std': ('std', None)},
     'msmooth':        {'msmoosh': ('msmoosh', None), 'std': ('std', None)},
     'text':           {'sub': ('sub', None), 'std': ('std', None)},
-    'cnr':            {'cnr2': ('cnr2', None), 'zsmooth': ('zsmooth', 'Cnr4')},
+    'cnr':            {'neo_smo': ('neo_smo', 'CNR4'), 'cnr2': ('cnr2', None), 'zsmooth': ('zsmooth', 'Cnr4')},
     'average':        {'artyfox': ('artyfox', None), 'average': ('average', None)},
+
+    # New families from neo-smo
+    'repair':         {'neo_smo': ('neo_smo', 'Repair')},
+    'clense':         {'neo_smo': ('neo_smo', 'Clense'), 'neo_smo_fwd': ('neo_smo', 'ForwardClense'), 'neo_smo_bwd': ('neo_smo', 'BackwardClense')},
+    'temporalrepair': {'neo_smo': ('neo_smo', 'TemporalRepair')},
+    'ccd':            {'neo_smo': ('neo_smo', 'CCD'), 'zsmooth': ('zsmooth', 'CCD')},
 }
 # dfttest2 is a Python module over several namespaces.
 _DFTTEST2_NAMESPACES = ('dfttest2_cuda', 'dfttest2_nvrtc', 'dfttest2_hip', 'dfttest2_hiprtc')
@@ -117,9 +123,14 @@ def pick_tool(tools: Optional[Mapping[str, str]], family: str, order: Sequence[s
 
 # Default order for tool_function() and the functions whose name differs between implementations.
 _FUNCTION_ORDER = {
-    'rg': ('zsmooth', 'rgvs'), 'fluxsmooth': ('zsmooth', 'flux'), 'tmedian': ('zsmooth', 'tmedian'),
-    'dctfilter': ('oxidctf', 'zsmooth', 'dctf'), 'boxblur': ('vszip', 'std'), 'limiter': ('vszip', 'std'),
+    'rg': ('neo_smo', 'zsmooth', 'rgvs'), 'fluxsmooth': ('neo_smo', 'zsmooth', 'flux'), 'tmedian': ('neo_smo', 'zsmooth', 'tmedian'),
+    'dctfilter': ('neo_smo', 'oxidctf', 'zsmooth', 'dctf'), 'boxblur': ('vszip', 'std'), 'limiter': ('vszip', 'std'),
     'hysteresis': ('hysteresis', 'misc'), 'grain': ('noise', 'grain'), 'fft3d': ('neo_fft', 'neo_fft3d', 'fft3dfilter'),
+    # New families from neo-smo
+    'repair': ('neo_smo',),
+    'clense': ('neo_smo', 'neo_smo_fwd', 'neo_smo_bwd'),
+    'temporalrepair': ('neo_smo',),
+    'ccd': ('neo_smo', 'zsmooth'),
 }
 _FUNCTION_NAMES = {
     ('flux', 'FluxSmoothT'): 'SmoothT', ('flux', 'FluxSmoothST'): 'SmoothST',
@@ -1040,3 +1051,74 @@ def KNLMeansCL(
     if clip.format.subsampling_w > 0 or clip.format.subsampling_h > 0:
         return NLMeans(NLMeans(clip, channels='Y', **args), channels='UV', **args)
     return NLMeans(clip, channels='YUV', **args)
+
+
+# neo-smo wrapper functions ----------------------------------------------------------------
+
+def Repair(clip: vs.VideoNode, mode: int = 1, modeU: Optional[int] = None, modeV: Optional[int] = None,
+           planes: Optional[Union[int, Sequence[int]]] = None,
+           tools: Optional[Mapping[str, str]] = None) -> vs.VideoNode:
+    '''Repair using neo_smo.'''
+    func = tool_function(tools, 'repair', 'Repair')
+    kwargs = {'mode': mode}
+    if modeU is not None: kwargs['modeU'] = modeU
+    if modeV is not None: kwargs['modeV'] = modeV
+    if planes is not None: kwargs['planes'] = planes
+    return func(clip, **kwargs)
+
+
+def Clense(clip: vs.VideoNode, threshold: float = 8.0, thresholdU: Optional[float] = None,
+           thresholdV: Optional[float] = None, planes: Optional[Union[int, Sequence[int]]] = None,
+           tools: Optional[Mapping[str, str]] = None) -> vs.VideoNode:
+    '''Clense (temporal clamp) using neo_smo.'''
+    func = tool_function(tools, 'clense', 'Clense')
+    kwargs = {'threshold': threshold}
+    if thresholdU is not None: kwargs['thresholdU'] = thresholdU
+    if thresholdV is not None: kwargs['thresholdV'] = thresholdV
+    if planes is not None: kwargs['planes'] = planes
+    return func(clip, **kwargs)
+
+
+def ForwardClense(clip: vs.VideoNode, threshold: float = 8.0, thresholdU: Optional[float] = None,
+                  thresholdV: Optional[float] = None, planes: Optional[Union[int, Sequence[int]]] = None,
+                  tools: Optional[Mapping[str, str]] = None) -> vs.VideoNode:
+    '''ForwardClense (forward temporal clamp) using neo_smo.'''
+    func = tool_function(tools, 'clense', 'ForwardClense')
+    kwargs = {'threshold': threshold}
+    if thresholdU is not None: kwargs['thresholdU'] = thresholdU
+    if thresholdV is not None: kwargs['thresholdV'] = thresholdV
+    if planes is not None: kwargs['planes'] = planes
+    return func(clip, **kwargs)
+
+
+def BackwardClense(clip: vs.VideoNode, threshold: float = 8.0, thresholdU: Optional[float] = None,
+                   thresholdV: Optional[float] = None, planes: Optional[Union[int, Sequence[int]]] = None,
+                   tools: Optional[Mapping[str, str]] = None) -> vs.VideoNode:
+    '''BackwardClense (backward temporal clamp) using neo_smo.'''
+    func = tool_function(tools, 'clense', 'BackwardClense')
+    kwargs = {'threshold': threshold}
+    if thresholdU is not None: kwargs['thresholdU'] = thresholdU
+    if thresholdV is not None: kwargs['thresholdV'] = thresholdV
+    if planes is not None: kwargs['planes'] = planes
+    return func(clip, **kwargs)
+
+
+def TemporalRepair(clip: vs.VideoNode, threshold: float = 8.0, thresholdU: Optional[float] = None,
+                   thresholdV: Optional[float] = None, planes: Optional[Union[int, Sequence[int]]] = None,
+                   tools: Optional[Mapping[str, str]] = None) -> vs.VideoNode:
+    '''TemporalRepair using neo_smo.'''
+    func = tool_function(tools, 'temporalrepair', 'TemporalRepair')
+    kwargs = {'threshold': threshold}
+    if thresholdU is not None: kwargs['thresholdU'] = thresholdU
+    if thresholdV is not None: kwargs['thresholdV'] = thresholdV
+    if planes is not None: kwargs['planes'] = planes
+    return func(clip, **kwargs)
+
+
+def CCD(clip: vs.VideoNode, threshold: float = 8.0, planes: Optional[Union[int, Sequence[int]]] = None,
+        tools: Optional[Mapping[str, str]] = None) -> vs.VideoNode:
+    '''CCD (color denoising) using neo_smo. Does not support GRAY.'''
+    func = tool_function(tools, 'ccd', 'CCD')
+    kwargs = {'threshold': threshold}
+    if planes is not None: kwargs['planes'] = planes
+    return func(clip, **kwargs)
