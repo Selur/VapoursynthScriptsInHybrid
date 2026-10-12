@@ -14,12 +14,12 @@ from typing import Optional, Union, Sequence, Dict, Any, Mapping, Callable, Tupl
 TOOLS: Dict[str, Dict[str, tuple]] = {
     'mv':             {'mvutensils': ('mvu', None), 'mvsf': ('mvsf', None), 'mv': ('mv', None)},
     'expr':           {'akarin': ('akarin', None), 'cranexpr': ('cranexpr', None), 'std': ('std', None)},
-    'rg':             {'zsmooth': ('zsmooth', None), 'rgsf': ('rgsf', None), 'rgvs': ('rgvs', None)},
-    'median':         {'zsmooth': ('zsmooth', 'Median'), 'ctmf': ('ctmf', None), 'std': ('std', None)},
-    'tmedian':        {'zsmooth': ('zsmooth', 'TemporalMedian'), 'tmedian': ('tmedian', None)},
-    'ttempsmooth':    {'zsmooth': ('zsmooth', 'TTempSmooth'), 'ttmpsm': ('ttmpsm', None)},
-    'fluxsmooth':     {'zsmooth': ('zsmooth', 'FluxSmoothT'), 'flux': ('flux', None)},
-    'temporalsoften': {'zsmooth': ('zsmooth', 'TemporalSoften'), 'focus2': ('focus2', None), 'focus': ('focus', None)},
+    'rg':             {'zsmooth': ('zsmooth', None), 'neo_smo': ('neo_smo', None), 'rgsf': ('rgsf', None), 'rgvs': ('rgvs', None)},
+    'median':         {'zsmooth': ('zsmooth', 'Median'), 'neo_smo': ('neo_smo', 'Median'), 'ctmf': ('ctmf', None), 'std': ('std', None)},
+    'tmedian':        {'zsmooth': ('zsmooth', 'TemporalMedian'), 'neo_smo': ('neo_smo', 'TemporalMedian'), 'tmedian': ('tmedian', None)},
+    'ttempsmooth':    {'zsmooth': ('zsmooth', 'TTempSmooth'), 'neo_smo': ('neo_smo', 'TTempSmooth'), 'ttmpsm': ('ttmpsm', None)},
+    'fluxsmooth':     {'zsmooth': ('zsmooth', 'FluxSmoothT'), 'neo_smo': ('neo_smo', 'FluxSmoothT'), 'flux': ('flux', None)},
+    'temporalsoften': {'zsmooth': ('zsmooth', 'TemporalSoften'), 'neo_smo': ('neo_smo', 'TemporalSoften'), 'focus2': ('focus2', None), 'focus': ('focus', None)},
     'boxblur':        {'vszip': ('vszip', 'BoxBlur'), 'std': ('std', 'BoxBlur')},
     'limiter':        {'vszip': ('vszip', 'Limiter'), 'std': ('std', None)},
     'planestats':     {'vszip': ('vszip', 'PlaneMinMax'), 'std': ('std', None)},
@@ -53,7 +53,7 @@ TOOLS: Dict[str, Dict[str, tuple]] = {
     'motionmask':     {'motionmask': ('motionmask', None), 'std': ('std', None)},
     'msmooth':        {'msmoosh': ('msmoosh', None), 'std': ('std', None)},
     'text':           {'sub': ('sub', None), 'std': ('std', None)},
-    'cnr':            {'neo_smo': ('neo_smo', 'CNR4'), 'cnr2': ('cnr2', None), 'zsmooth': ('zsmooth', 'Cnr4')},
+    'cnr':            {'neo_smo': ('neo_smo', 'Cnr4'), 'cnr2': ('cnr2', None), 'zsmooth': ('zsmooth', 'Cnr4')},
     'average':        {'artyfox': ('artyfox', None), 'average': ('average', None)},
 
     # New families from neo-smo
