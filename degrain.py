@@ -6,7 +6,7 @@ from vapoursynth import core
 import math
 
 from typing import Any, Callable, Dict, Mapping, Optional, Sequence, Union
-from helpers import scale_value, cround, m4, DitherLumaRebuild, KNLMeansCL, NLMeans, DFTTest, get_expr, get_rg, pick_tool, tool_function
+from helpers import scale_value, cround, m4, DitherLumaRebuild, KNLMeansCL, NLMeans, DFTTest, get_expr, get_rg, pick_tool, zsmooth_namespace, tool_function
 from misc import get_mv, MinBlur
 from color import LimitFilter
 from sharpen import ContraSharpening
@@ -84,8 +84,9 @@ def STPresso(
         bzz = RGmode
     else:
         if RGmode == 4:
-          if pick_tool(tools, 'median', ('zsmooth', 'std')) == 'zsmooth':
-            bzz = clp.zsmooth.Median(planes=planes)
+          median = zsmooth_namespace(tools, 'median', ('zsmooth', 'std'))
+          if median:
+            bzz = getattr(clp, median).Median(planes=planes)
           else:
             bzz = clp.std.Median(planes=planes)
         elif RGmode in [11, 12]:

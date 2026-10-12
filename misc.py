@@ -5,7 +5,7 @@ import vapoursynth as vs
 import warnings
 from typing import Optional, Union, Sequence, List, Mapping, Any, Callable, Dict
 
-from helpers import get_expr, pick_tool
+from helpers import get_expr, pick_tool, pick_zsmooth
 
 def Overlay(
     base: vs.VideoNode,
@@ -560,7 +560,7 @@ def median_blur(
         planes = list(range(clip.format.num_planes))
     elif isinstance(planes, int):
         planes = [planes]
-    median = pick_tool(tools, 'median', ('ctmf', 'zsmooth'), lambda name: hasattr(core, name))
+    median = pick_zsmooth(tools, 'median', ('ctmf', 'zsmooth'), lambda name: hasattr(core, name))
 
     # ------------------------------------------------------------------
     # 1. Prefer vapoursynth-ctmf (the original, now deprecated plugin)
@@ -574,10 +574,10 @@ def median_blur(
     #    - Supports radius 0–3 only.
     #    - Does NOT accept the extra kwargs that CTMF understands.
     # ------------------------------------------------------------------
-    if median == 'zsmooth':
+    if median in ('zsmooth', 'neo_smo'):
         # zsmooth.Median signature:
         #   Median(clip clip[, int[] radius, int[] planes])
-        return core.zsmooth.Median(clip, radius=radius, planes=planes)
+        return getattr(core, median).Median(clip, radius=radius, planes=planes)
 
     # ------------------------------------------------------------------
     # 3. Nothing available – bail out with a helpful message
@@ -606,11 +606,11 @@ def MinBlur(clp: vs.VideoNode, r: int = 1, planes: Optional[Union[int, Sequence[
 
     # --- Helper: median with a fallback instead of a hard ctmf call ---
     def _median(clip: vs.VideoNode, radius: int, planes: Optional[Union[int, Sequence[int]]]) -> vs.VideoNode:
-        median = pick_tool(tools, 'median', ('ctmf', 'zsmooth'), lambda name: hasattr(core, name))
+        median = pick_zsmooth(tools, 'median', ('ctmf', 'zsmooth'), lambda name: hasattr(core, name))
         if median == 'ctmf':
             return core.ctmf.CTMF(clip, radius=radius, planes=planes)
-        if median == 'zsmooth':
-            return core.zsmooth.Median(clip, radius=radius, planes=planes)
+        if median in ('zsmooth', 'neo_smo'):
+            return getattr(core, median).Median(clip, radius=radius, planes=planes)
         raise RuntimeError("MinBlur: neither ctmf nor zsmooth available")
 
     if r <= 0:
@@ -625,7 +625,7 @@ def MinBlur(clp: vs.VideoNode, r: int = 1, planes: Optional[Union[int, Sequence[
     else:
         RG11 = clp.std.Convolution(matrix=matrix1, planes=planes).std.Convolution(matrix=matrix2, planes=planes).std.Convolution(matrix=matrix2, planes=planes)
         # Note: zsmooth.Median supports radius=3 at most
-        if clp.format.bits_per_sample == 16 and pick_tool(tools, 'median', ('ctmf', 'zsmooth'), lambda name: hasattr(core, name)) == 'ctmf':
+        if clp.format.bits_per_sample == 16 and pick_zsmooth(tools, 'median', ('ctmf', 'zsmooth'), lambda name: hasattr(core, name)) == 'ctmf':
             # Keep the original LimitFilter logic only when CTMF is available
             from helpers import Depth
             from color import LimitFilter

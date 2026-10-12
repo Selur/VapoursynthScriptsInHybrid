@@ -1,5 +1,5 @@
 from __future__ import annotations
-from typing import Callable, Mapping, Optional, Tuple
+from typing import Callable, Mapping, Optional, Tuple, Union
 from vapoursynth import core
 import vapoursynth as vs
 import math
@@ -11,7 +11,7 @@ except ImportError:
 
 from misc import get_mv, SCDetect
 from color import LimitFilter
-from helpers import NLMeans, get_expr, pick_tool, tool_function
+from helpers import NLMeans, get_expr, pick_tool, tool_function, zsmooth_namespace
 
 def _boxblur_fn(tools: Optional[Mapping[str, str]] = None) -> Callable[..., vs.VideoNode]:
     """Pick the BoxBlur: tools['boxblur'], else vszip, else std."""
@@ -152,7 +152,7 @@ def Small_Deflicker(clip: vs.VideoNode, width: int=0, height: int=0, preset: int
     raise vs.Error('preset not valid (1, 2 or 3)')
 
   small = core.resize.Bicubic(clip, width,height) # can be altered, but ~25% of original resolution seems reasonable
-  zsmooth = pick_tool(tools, 'temporalsoften', ('zsmooth', 'focus2'), lambda name: name == 'focus2' or hasattr(core, 'zsmooth')) == 'zsmooth'
+  zsmooth = zsmooth_namespace(tools, 'temporalsoften', ('zsmooth', 'focus2'), lambda name: name == 'focus2' or hasattr(core, 'zsmooth'))
   if preset == 1:
     smallModified = deflickerPreset1(small, zsmooth=zsmooth, scd_thscd1=scd_thscd1, scd_thscd2=scd_thscd2, tools=tools)
   elif preset == 2:
@@ -173,7 +173,11 @@ def toMod(value: int, factor: int=16) -> int:
   return adjust
 
 # Deflicker Presets
-def deflickerPreset1(sm: vs.VideoNode, zsmooth: bool=False, scd_thscd1: float=400.0, scd_thscd2: float=130.0, tools: Optional[Mapping[str, str]] = None) -> vs.VideoNode:
+def _zsmooth_ns(zsmooth: Union[bool, str]) -> str:
+  # The presets take True or the namespace from zsmooth_namespace().
+  return zsmooth if isinstance(zsmooth, str) else 'zsmooth'
+
+def deflickerPreset1(sm: vs.VideoNode, zsmooth: Union[bool, str]=False, scd_thscd1: float=400.0, scd_thscd2: float=130.0, tools: Optional[Mapping[str, str]] = None) -> vs.VideoNode:
   if pick_tool(tools, 'msmooth', ('msmoosh', 'std')) == 'msmoosh':
     SMOOTH = core.msmoosh.MSmooth
   else:
@@ -183,7 +187,7 @@ def deflickerPreset1(sm: vs.VideoNode, zsmooth: bool=False, scd_thscd1: float=40
   
   if zsmooth:
     sm = SCDetect(sm, threshold=0.1, scd_thscd1=scd_thscd1, scd_thscd2=scd_thscd2, tools=tools)
-    smm = core.zsmooth.TemporalSoften(clip=sm,radius=1, threshold=[6,9,9],scenechange=-1,scalep=True)
+    smm = getattr(core, _zsmooth_ns(zsmooth)).TemporalSoften(clip=sm,radius=1, threshold=[6,9,9],scenechange=-1,scalep=True)
   else:
     smm = core.focus2.TemporalSoften2(clip=sm,radius=1,luma_threshold=6,chroma_threshold=9,scenechange=10,mode=2)
   smm = SMOOTH(clip=smm,threshold=0.8,strength=25.0,planes=[1,2])
@@ -191,13 +195,13 @@ def deflickerPreset1(sm: vs.VideoNode, zsmooth: bool=False, scd_thscd1: float=40
   smm = core.std.Merge(smm, sm, 0.25)
   if zsmooth:
     sm = SCDetect(sm, threshold=0.06, scd_thscd1=scd_thscd1, scd_thscd2=scd_thscd2, tools=tools)
-    smm = core.zsmooth.TemporalSoften(clip=sm,radius=2, threshold=[3,5,5],scenechange=-1,scalep=True)
+    smm = getattr(core, _zsmooth_ns(zsmooth)).TemporalSoften(clip=sm,radius=2, threshold=[3,5,5],scenechange=-1,scalep=True)
   else:
     smm = core.focus2.TemporalSoften2(clip=sm,radius=2,luma_threshold=3,chroma_threshold=5,scenechange=6,mode=2)
   smm = SMOOTH(clip=smm,threshold=2.0,strength=1.0,planes=[1,2])
   return smm
 
-def deflickerPreset2(sm: vs.VideoNode, chroma: bool, zsmooth: bool=False, scd_thscd1: float=400.0, scd_thscd2: float=130.0,
+def deflickerPreset2(sm: vs.VideoNode, chroma: bool, zsmooth: Union[bool, str]=False, scd_thscd1: float=400.0, scd_thscd2: float=130.0,
                      tools: Optional[Mapping[str, str]] = None) -> vs.VideoNode:
   if pick_tool(tools, 'msmooth', ('msmoosh', 'std')) == 'msmoosh':
     SMOOTH = core.msmoosh.MSmooth
@@ -208,7 +212,7 @@ def deflickerPreset2(sm: vs.VideoNode, chroma: bool, zsmooth: bool=False, scd_th
     
   if zsmooth:
     sm = SCDetect(sm, threshold=0.24, scd_thscd1=scd_thscd1, scd_thscd2=scd_thscd2, tools=tools)
-    smm = core.zsmooth.TemporalSoften(clip=sm,radius=1, threshold=[12,255,255],scenechange=-1,scalep=True)
+    smm = getattr(core, _zsmooth_ns(zsmooth)).TemporalSoften(clip=sm,radius=1, threshold=[12,255,255],scenechange=-1,scalep=True)
   else:
     smm = core.focus2.TemporalSoften2(clip=sm,radius=1,luma_threshold=12,chroma_threshold=255,scenechange=24,mode=2)
   smm = SMOOTH(clip=smm,threshold=0.8,strength=25.0,planes=[1,2])
@@ -216,20 +220,21 @@ def deflickerPreset2(sm: vs.VideoNode, chroma: bool, zsmooth: bool=False, scd_th
   smm = core.std.Merge(smm, sm, 0.25)
   if zsmooth:
     sm = SCDetect(sm, threshold=0.2, scd_thscd1=scd_thscd1, scd_thscd2=scd_thscd2, tools=tools)
-    smm = core.zsmooth.TemporalSoften(clip=sm,radius=2, threshold=[7,255,255],scenechange=-1,scalep=True)
+    smm = getattr(core, _zsmooth_ns(zsmooth)).TemporalSoften(clip=sm,radius=2, threshold=[7,255,255],scenechange=-1,scalep=True)
   else:
     smm = core.focus2.TemporalSoften2(clip=sm,radius=2,luma_threshold=7,chroma_threshold=255,scenechange=20,mode=2)
   smm = SMOOTH(clip=smm,threshold=2.0,strength=1.0,planes=[1,2])
 
   if chroma:
-    if pick_tool(tools, 'cnr', ('zsmooth', 'cnr2'), lambda name: name == 'cnr2' or hasattr(core, 'zsmooth')) == 'zsmooth':
+    cnr4 = zsmooth_namespace(tools, 'cnr', ('zsmooth', 'cnr2'), lambda name: name == 'cnr2' or hasattr(core, 'zsmooth'))
+    if cnr4:
       import misc
       smm = misc.SCDetect(smm,threshold=0.02, scd_thscd1=scd_thscd1, scd_thscd2=scd_thscd2, tools=tools)
-      return core.zsmooth.Cnr4(smm, mode="ooo", tmode=0, radius=2, sense=[5, 40, 40])
+      return getattr(core, cnr4).Cnr4(smm, mode="ooo", tmode=0, radius=2, sense=[5, 40, 40])
     return core.cnr2.Cnr2(smm, mode="ooo", ln=5, un=40, vn=40, scdthr=2.0)
   return smm
 
-def deflickerPreset3(sm: vs.VideoNode, chroma: bool, zsmooth: bool=False, scd_thscd1: float=400.0, scd_thscd2: float=130.0,
+def deflickerPreset3(sm: vs.VideoNode, chroma: bool, zsmooth: Union[bool, str]=False, scd_thscd1: float=400.0, scd_thscd2: float=130.0,
                      tools: Optional[Mapping[str, str]] = None) -> vs.VideoNode:
   if pick_tool(tools, 'msmooth', ('msmoosh', 'std')) == 'msmoosh':
     SMOOTH = core.msmoosh.MSmooth
@@ -240,7 +245,7 @@ def deflickerPreset3(sm: vs.VideoNode, chroma: bool, zsmooth: bool=False, scd_th
     
   if zsmooth:
     sm = SCDetect(sm, threshold=0.24, scd_thscd1=scd_thscd1, scd_thscd2=scd_thscd2, tools=tools)
-    smm = core.zsmooth.TemporalSoften(clip=sm,radius=1, threshold=[32,255,255],scenechange=-1,scalep=True)
+    smm = getattr(core, _zsmooth_ns(zsmooth)).TemporalSoften(clip=sm,radius=1, threshold=[32,255,255],scenechange=-1,scalep=True)
   else:
     smm = core.focus2.TemporalSoften2(clip=sm,radius=1,luma_threshold=32,chroma_threshold=255,scenechange=24,mode=2)
   smm = SMOOTH(clip=smm,threshold=0.8,strength=25.0,planes=[1,2])
@@ -248,16 +253,17 @@ def deflickerPreset3(sm: vs.VideoNode, chroma: bool, zsmooth: bool=False, scd_th
   smm = core.std.Merge(smm, sm, 0.25)
   if zsmooth:
     sm = SCDetect(sm, threshold=0.2, scd_thscd1=scd_thscd1, scd_thscd2=scd_thscd2, tools=tools)
-    smm = core.zsmooth.TemporalSoften(clip=sm,radius=1, threshold=[12,255,255],scenechange=-1,scalep=True)
+    smm = getattr(core, _zsmooth_ns(zsmooth)).TemporalSoften(clip=sm,radius=1, threshold=[12,255,255],scenechange=-1,scalep=True)
   else:
     smm = core.focus2.TemporalSoften2(clip=sm,radius=2,luma_threshold=12,chroma_threshold=255,scenechange=20,mode=2)
   smm = SMOOTH(clip=smm,threshold=2.0,strength=1.0,planes=[1,2])
 
   if chroma:
-    if pick_tool(tools, 'cnr', ('zsmooth', 'cnr2'), lambda name: name == 'cnr2' or hasattr(core, 'zsmooth')) == 'zsmooth':
+    cnr4 = zsmooth_namespace(tools, 'cnr', ('zsmooth', 'cnr2'), lambda name: name == 'cnr2' or hasattr(core, 'zsmooth'))
+    if cnr4:
       import misc
       smm = misc.SCDetect(smm,threshold=0.02, scd_thscd1=scd_thscd1, scd_thscd2=scd_thscd2, tools=tools)
-      return core.zsmooth.Cnr4(smm, mode="ooo", tmode=0, radius=2, sense=[10, 35, 35], str=[255,255,255])
+      return getattr(core, cnr4).Cnr4(smm, mode="ooo", tmode=0, radius=2, sense=[10, 35, 35], str=[255,255,255])
     return core.cnr2.Cnr2(smm, mode="ooo", ln=10, lm=255, un=35, vn=35, scdthr=2.0)
   return smm
 

@@ -4,7 +4,7 @@
 import re
 import math
 import vapoursynth as vs
-from helpers import pick_tool, tool_function
+from helpers import pick_tool, pick_zsmooth, tool_function
 
 core = vs.core
 
@@ -22,9 +22,9 @@ def repair(clip, repairclip, mode=[1], tools=None):
 def median(clip, radius=1, planes=None, tools=None):
     # fallback plugin because zsmooth does not support non AVX2 CPUs
     usable = {'zsmooth': hasattr(core, 'zsmooth'), 'std': radius == 1, 'ctmf': True}
-    median = pick_tool(tools, 'median', ('zsmooth', 'std', 'ctmf'), usable.get)
-    if median == 'zsmooth':
-        return core.zsmooth.Median(clip, radius=radius, planes=planes)
+    median = pick_zsmooth(tools, 'median', ('zsmooth', 'std', 'ctmf'), usable.get)
+    if median in ('zsmooth', 'neo_smo'):
+        return getattr(core, median).Median(clip, radius=radius, planes=planes)
     elif median == 'std':
         return core.std.Median(clip, planes=planes)
     else:

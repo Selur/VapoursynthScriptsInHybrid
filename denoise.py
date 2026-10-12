@@ -7,7 +7,7 @@ import warnings
 
 from typing import Any, Dict, List, Mapping, Optional, Sequence, Union
 
-from helpers import GetPlane, scale_value, scale, cround, DitherLumaRebuild, KNLMeansCL, DFTTest, BoxFilter, get_expr, get_rg, pick_tool, tool_function, tool_loaded, _bm3d_first, _bm3d_order
+from helpers import GetPlane, scale_value, scale, cround, DitherLumaRebuild, KNLMeansCL, DFTTest, BoxFilter, get_expr, get_rg, pick_tool, zsmooth_namespace, tool_function, tool_loaded, _bm3d_first, _bm3d_order
 
 from misc import get_mv, MinBlur, SCDetect, mt_expand_multi
         
@@ -454,8 +454,9 @@ def MCTemporalDenoise(i: vs.VideoNode, radius: Optional[int] = None, pfMode: int
             # SAD_m = core.std.Interleave([SAD_f6m, SAD_f5m, SAD_f4m, SAD_f3m, SAD_f2m, SAD_f1m, b, SAD_b1m, SAD_b2m, SAD_b3m, SAD_b4m, SAD_b5m, SAD_b6m])
 
         c = SCDetect(c, threshold=0.999, scd_thscd1=scd_thscd1, scd_thscd2=scd_thscd2, tools=tools)
-        if pick_tool(tools, 'ttempsmooth', ('zsmooth', 'ttmpsm'), lambda name: name == 'ttmpsm' or hasattr(core, 'zsmooth')) == 'zsmooth':
-          sm = core.zsmooth.TTempSmooth(c, maxr=radius, thresh=[255], mdiff=[1], strength=radius + 1, scthresh=-1, fp=False, planes=planes)
+        ttsm = zsmooth_namespace(tools, 'ttempsmooth', ('zsmooth', 'ttmpsm'), lambda name: name == 'ttmpsm' or hasattr(core, 'zsmooth'))
+        if ttsm:
+          sm = getattr(core, ttsm).TTempSmooth(c, maxr=radius, thresh=[255], mdiff=[1], strength=radius + 1, scthresh=-1, fp=False, planes=planes)
         else:
           sm = c.ttmpsm.TTempSmooth(maxr=radius, thresh=[255], mdiff=[1], strength=radius + 1, scthresh=99.9, fp=False, planes=planes)
         return sm.std.SelectEvery(cycle=radius * 2 + 1, offsets=[radius])
@@ -511,14 +512,15 @@ def MCTemporalDenoise(i: vs.VideoNode, radius: Optional[int] = None, pfMode: int
         # mM = core.std.Merge(GetPlane(SAD_f1m, 0), GetPlane(SAD_b1m, 0)).std.Lut(function=lambda x: min(cround(x ** 1.6), peak))
         PREWITT = core.edgemasks.ExPrewitt if pick_tool(tools, 'edgemasks', ('edgemasks', 'std')) == 'edgemasks' else core.std.Prewitt
         mE = PREWITT(GetPlane(smP, 0)).std.Lut(function=lambda x: min(cround(x ** 1.8), peak))
-        mE = mE.zsmooth.Median() if pick_tool(tools, 'median', ('zsmooth', 'std')) == 'zsmooth' else mE.std.Median()
+        mE = getattr(mE, zsmooth_namespace(tools, 'median', ('zsmooth', 'std')) or 'std').Median()
         mE = mE.std.Inflate()
         # mF = core.std.Expr([mM, mE], expr=['x y max']).std.Convolution(matrix=[1, 1, 1, 1, 1, 1, 1, 1, 1])
         mF = mE.std.Convolution(matrix=[1, 1, 1, 1, 1, 1, 1, 1, 1])
-        if pick_tool(tools, 'ttempsmooth', ('zsmooth', 'ttmpsm'), lambda name: name == 'ttmpsm' or hasattr(core, 'zsmooth')) == 'zsmooth':
+        ttsm = zsmooth_namespace(tools, 'ttempsmooth', ('zsmooth', 'ttmpsm'), lambda name: name == 'ttmpsm' or hasattr(core, 'zsmooth'))
+        if ttsm:
           import misc
           smP = SCDetect(smP, threshold=0.12, scd_thscd1=scd_thscd1, scd_thscd2=scd_thscd2, tools=tools)
-          TTc = smP.zsmooth.TTempSmooth(maxr=maxr, mdiff=[255], strength=TTstr, scthresh=-1, planes=planes)
+          TTc = getattr(smP, ttsm).TTempSmooth(maxr=maxr, mdiff=[255], strength=TTstr, scthresh=-1, planes=planes)
         else:
           TTc = smP.ttmpsm.TTempSmooth(maxr=maxr, mdiff=[255], strength=TTstr, planes=planes)
         smP = core.std.MaskedMerge(TTc, smP, mF, planes=planes)
@@ -627,8 +629,9 @@ def mClean(clip: vs.VideoNode, thSAD: int = 400, chroma: bool = True, sharp: flo
 
     # Denoise preparation
     if chroma:
-      if pick_tool(tools, 'median', ('zsmooth',)) == 'zsmooth':
-        c = core.zsmooth.Median(clip, radius=2, planes=[1,2])
+      median = zsmooth_namespace(tools, 'median', ('zsmooth',))
+      if median:
+        c = getattr(core, median).Median(clip, radius=2, planes=[1,2])
       else:
         c = core.vcm.Median(clip, plane=[0, 1, 1])
     else:

@@ -46,7 +46,7 @@ from __future__ import annotations
 
 from typing import Mapping, Optional, Sequence, Union
 import vapoursynth as vs
-from helpers import bilateral_port_args, get_expr, gpu_download, pick_tool
+from helpers import bilateral_port_args, get_expr, gpu_download, pick_tool, zsmooth_namespace
 
 core = vs.core
 
@@ -350,7 +350,7 @@ def MSharpen(clip: vs.VideoNode,
     # pixels via mirror padding, unlike the original rgvs which copies them.
     # Planes not in proc use mode 0 (copy-through).
     rg_modes = [11 if p in proc else 0 for p in range(num_planes)]
-    blurred  = core.zsmooth.RemoveGrain(clip, mode=rg_modes)
+    blurred  = getattr(core, zsmooth_namespace(tools, 'rg', ('zsmooth',)) or 'zsmooth').RemoveGrain(clip, mode=rg_modes)
 
     # ── 3. Sharpening formula (exact C++ port) via EXPR ──────────────────────
     # x = src sample,  y = blurred sample

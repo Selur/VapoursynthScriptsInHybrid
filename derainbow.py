@@ -5,7 +5,7 @@ import vapoursynth as vs
 
 core = vs.core
 
-from helpers import GetPlane, scale, bilateral_port_args, get_expr, gpu_download, pick_tool, tool_function
+from helpers import GetPlane, scale, bilateral_port_args, get_expr, gpu_download, pick_tool, pick_zsmooth, zsmooth_namespace, tool_function
 
 try:
     from color import Tweak as _color_tweak  # type: ignore
@@ -95,11 +95,12 @@ def _temporal_soften(
     tools: Optional[Mapping[str, str]] = None,
 ) -> vs.VideoNode:
     """TemporalSoften — tools['temporalsoften'], else focus2, else zsmooth."""
-    if pick_tool(tools, 'temporalsoften', ('focus2', 'zsmooth'), lambda name: name == 'zsmooth' or hasattr(core, 'focus2')) == 'focus2':
+    soften = pick_zsmooth(tools, 'temporalsoften', ('focus2', 'zsmooth'), lambda name: name == 'zsmooth' or hasattr(core, 'focus2'))
+    if soften == 'focus2':
         return core.focus2.TemporalSoften2(
             clip, radius, luma_threshold, chroma_threshold, scenechange, mode
         )
-    return core.zsmooth.TemporalSoften(
+    return getattr(core, 'neo_smo' if soften == 'neo_smo' else 'zsmooth').TemporalSoften(
         clip, radius, [luma_threshold, chroma_threshold], scenechange
     )
 
@@ -862,7 +863,8 @@ def ChubbyRain2(c: vs.VideoNode, th: int = 10, radius: int = 10, show: bool = Fa
     cc = core.std.Convolution(c, matrix=[1, 2, 1], mode="v", divisor=4, planes=[0, 1, 2])
     cc = core.bifrost.Bifrost(cc, interlaced=False)
 
-    if pick_tool(tools, 'cnr', ('zsmooth', 'cnr2'), lambda name: name == 'cnr2' or hasattr(core, 'zsmooth')) == 'zsmooth':
+    cnr4 = zsmooth_namespace(tools, 'cnr', ('zsmooth', 'cnr2'), lambda name: name == 'cnr2' or hasattr(core, 'zsmooth'))
+    if cnr4:
         # Cnr4 and the TemporalSoften below both consume _SceneChangePrev/Next; Cnr2 did
         # the detection internally via scdthr=10.0, so reproduce that ~10% threshold here.
         if pick_tool(tools, 'scd', ('scd', 'misc', 'std'), lambda name: name != 'scd' or (hasattr(core, 'scd') and not is_float),
@@ -876,15 +878,16 @@ def ChubbyRain2(c: vs.VideoNode, th: int = 10, radius: int = 10, show: bool = Fa
 
         # mode/tmode/radius/sense/str below reproduce Cnr2's defaults
         # (mode="oxx", scdthr=10.0, ln/un/vn=35/47/47, lm/um/vm=192/255/255)
-        cc = core.zsmooth.Cnr4(cc, mode="oxx", tmode=2, radius=2, sense=[35, 47, 47], str=[192, 255, 255], scenechange=True)
+        cc = getattr(core, cnr4).Cnr4(cc, mode="oxx", tmode=2, radius=2, sense=[35, 47, 47], str=[192, 255, 255], scenechange=True)
     else:
         cc = core.cnr2.Cnr2(cc)  # defaults: mode="oxx", scdthr=10.0, ln=35, lm=192, un=47, um=255, vn=47, vm=255
 
-    if pick_tool(tools, 'temporalsoften', ('zsmooth', 'focus'), lambda name: name == 'focus' or hasattr(core, 'zsmooth')) == 'zsmooth':
+    soften = zsmooth_namespace(tools, 'temporalsoften', ('zsmooth', 'focus'), lambda name: name == 'focus' or hasattr(core, 'zsmooth'))
+    if soften:
         # zsmooth takes one threshold per plane and scales it itself (scalep=True)
         # scenechange=-1 consumes the props set above; any positive value makes zsmooth
         # demand the miscfilters plugin so it can detect scene changes itself
-        cc = core.zsmooth.TemporalSoften(cc, radius=radius, threshold=[0, sft, sft], scenechange=-1, scalep=True)
+        cc = getattr(core, soften).TemporalSoften(cc, radius=radius, threshold=[0, sft, sft], scenechange=-1, scalep=True)
     else:
         # dubhater's focus.TemporalSoften; effectively 8bit-only, so no manual scaling here
         cc = core.focus.TemporalSoften(cc, radius=radius, luma_threshold=0, chroma_threshold=sft, scenechange=2, mode=2)

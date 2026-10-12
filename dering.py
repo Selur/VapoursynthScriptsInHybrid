@@ -7,7 +7,7 @@ import math
 from typing import Optional, Union, Sequence, TypeVar, Callable, Mapping, Tuple
 
 from misc import MinBlur, median_blur, mt_expand_multi, mt_inflate_multi
-from helpers import scale, DFTTest, get_expr, pick_tool, tool_function, value_error
+from helpers import scale, DFTTest, get_expr, pick_tool, zsmooth_namespace, tool_function, value_error
 from color import LimitFilter
 
 def _hysteresis_fn(tools: Optional[Mapping[str, str]] = None) -> Callable[..., vs.VideoNode]:
@@ -134,12 +134,12 @@ def HQDeringmod(
     # Post-Process: Contra-Sharpening
     matrix1 = [1, 2, 1, 2, 4, 2, 1, 2, 1]
     matrix2 = [1, 1, 1, 1, 1, 1, 1, 1, 1]
-    has_zsmooth = pick_tool(tools, 'median', ('zsmooth', 'std')) == 'zsmooth'
+    has_zsmooth = zsmooth_namespace(tools, 'median', ('zsmooth', 'std'))
     EXPR = get_expr(tools)
     if sharp <= 0:
         sclp = smoothed
     else:
-        pre = smoothed.zsmooth.Median(planes=planes) if has_zsmooth else smoothed.std.Median(planes=planes)
+        pre = getattr(smoothed, has_zsmooth).Median(planes=planes) if has_zsmooth else smoothed.std.Median(planes=planes)
         if sharp == 1:
             method = pre.std.Convolution(matrix=matrix1, planes=planes)
         elif sharp == 2:
@@ -173,7 +173,7 @@ def HQDeringmod(
         expr = f'x {scale(mthr, bits)} < 0 x ?'
         PREWITT = core.edgemasks.ExPrewitt if pick_tool(tools, 'edgemasks', ('edgemasks', 'std')) == 'edgemasks' else core.std.Prewitt
         prewittm = EXPR(PREWITT(input, planes=0), expr=expr if is_gray else [expr, ''])
-        fmask = _hysteresis_fn(tools)(prewittm.zsmooth.Median(planes=0), prewittm, planes=0) if has_zsmooth else _hysteresis_fn(tools)(prewittm.std.Median(planes=0), prewittm, planes=0)
+        fmask = _hysteresis_fn(tools)(getattr(prewittm, has_zsmooth).Median(planes=0), prewittm, planes=0) if has_zsmooth else _hysteresis_fn(tools)(prewittm.std.Median(planes=0), prewittm, planes=0)
         if mrad > 0:
             omask = mt_expand_multi(fmask, planes=0, sw=mrad, sh=mrad)
         else:

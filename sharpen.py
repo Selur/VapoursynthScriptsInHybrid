@@ -8,7 +8,7 @@ from functools import partial
 from typing import Optional, Union, Sequence, Dict, List, Mapping
 
 from misc import MinBlur, mt_clamp, AverageFrames
-from helpers import GetPlane, cround, scale, clamp, Padding, DFTTest, get_expr, get_rg, pick_tool, tool_function, tool_loaded, m4
+from helpers import GetPlane, cround, scale, clamp, Padding, DFTTest, get_expr, get_rg, pick_tool, zsmooth_namespace, tool_function, tool_loaded, m4
 from color import LimitFilter
 
 ################################################################################################
@@ -380,7 +380,7 @@ def LSFmod(input: vs.VideoNode, strength: Optional[float] = None, Smode: Optiona
     if dest_y is None:
         dest_y = oy
     if kernel == 4:
-        RemoveGrain = partial(core.zsmooth.Median) if pick_tool(tools, 'median', ('zsmooth', 'std')) == 'zsmooth' else partial(core.std.Median)
+        RemoveGrain = partial(getattr(core, zsmooth_namespace(tools, 'median', ('zsmooth', 'std')) or 'std').Median)
     elif kernel in [11, 12]:
         RemoveGrain = partial(core.std.Convolution, matrix=[1, 2, 1, 2, 4, 2, 1, 2, 1])
     elif kernel == 19:
@@ -570,7 +570,7 @@ def FineSharp(clip: vs.VideoNode, mode: int = 1, sstr: float = 2.5, cstr: Option
     mid = 0 if isFLOAT else 1 << (bd - 1)
     i = 0.00392 if isFLOAT else 1 << (bd - 8)
     xy = 'x y - {} /'.format(i) if bd != 8 else 'x y -'
-    has_zsmooth = pick_tool(tools, 'median', ('zsmooth', 'std')) == 'zsmooth'
+    has_zsmooth = zsmooth_namespace(tools, 'median', ('zsmooth', 'std'))
     R = tool_function(tools, 'rg', 'Repair', ('zsmooth', 'rgsf', 'rgvs') if isFLOAT else ('zsmooth', 'rgvs'))
     mat1 = [1, 2, 1, 2, 4, 2, 1, 2, 1]
     mat2 = [1, 1, 1, 1, 1, 1, 1, 1, 1]
@@ -597,11 +597,11 @@ def FineSharp(clip: vs.VideoNode, mode: int = 1, sstr: float = 2.5, cstr: Option
     tmp = core.std.ShufflePlanes(clip, [0], vs.GRAY) if color in [vs.YUV] else clip
     EXPR = get_expr(tools)
     if abs(mode) == 1:
-        c2 = core.std.Convolution(tmp, matrix=mat1).zsmooth.Median() if has_zsmooth else core.std.Convolution(tmp, matrix=mat1).std.Median()
+        c2 = getattr(core.std.Convolution(tmp, matrix=mat1), has_zsmooth).Median() if has_zsmooth else core.std.Convolution(tmp, matrix=mat1).std.Median()
     else:
-        c2 = core.zsmooth.Median(tmp).std.Convolution(matrix=mat1) if has_zsmooth else core.std.Median(tmp).std.Convolution(matrix=mat1)
+        c2 = getattr(core, has_zsmooth).Median(tmp).std.Convolution(matrix=mat1) if has_zsmooth else core.std.Median(tmp).std.Convolution(matrix=mat1)
     if abs(mode) == 3:
-        c2 = c2.zsmooth.Median() if has_zsmooth else c2.std.Median()
+        c2 = getattr(c2, has_zsmooth).Median() if has_zsmooth else c2.std.Median()
     
     if sstr >= 0.01:
         expr = 'x y = x dup {} dup dup dup abs {} / {} pow swap3 abs {} + / swap dup * dup {} + / * * {} * + ?'
@@ -657,7 +657,7 @@ def DetailSharpen(clip: vs.VideoNode, z: int = 4, sstr: float = 1.5, power: int 
     else:
         blur = core.std.Convolution(tmp, matrix=[1, 2, 1, 2, 4, 2, 1, 2, 1])
     if med:
-        blur = blur.zsmooth.Median() if pick_tool(tools, 'median', ('zsmooth', 'std')) == 'zsmooth' else blur.std.Median()
+        blur = getattr(blur, zsmooth_namespace(tools, 'median', ('zsmooth', 'std')) or 'std').Median()
 
     expr = 'x y = x dup {} dup dup abs {} / {} pow swap2 abs {} + / * {} * + ?'
     EXPR = get_expr(tools)

@@ -121,16 +121,41 @@ def pick_tool(tools: Optional[Mapping[str, str]], family: str, order: Sequence[s
     return None
 
 
+def _with_neo_smo(family: str, order: Sequence[str]) -> Tuple[str, ...]:
+    '''`order` with neo_smo right after zsmooth: neo_smo serves every zsmooth call, the default stays zsmooth.'''
+    order = tuple(order)
+    if 'zsmooth' in order and 'neo_smo' not in order and 'neo_smo' in TOOLS.get(family, {}):
+        i = order.index('zsmooth') + 1
+        return order[:i] + ('neo_smo',) + order[i:]
+    return order
+
+
+def pick_zsmooth(tools: Optional[Mapping[str, str]], family: str, order: Sequence[str],
+                 usable: Optional[Callable[[str], bool]] = None) -> Optional[str]:
+    '''pick_tool() for calls written for zsmooth: 'neo_smo' (same functions and arguments) when tools[family] asks for it.'''
+    if tools and tools.get(family) == 'neo_smo' and 'zsmooth' in order and tool_loaded(family, 'neo_smo'):
+        _check_tool_keys(tools)
+        return 'neo_smo'
+    return pick_tool(tools, family, order, usable)
+
+
+def zsmooth_namespace(tools: Optional[Mapping[str, str]], family: str, order: Sequence[str],
+                      usable: Optional[Callable[[str], bool]] = None) -> Optional[str]:
+    '''Namespace for a call written for zsmooth ('zsmooth' or 'neo_smo'), None when the pick is another implementation.'''
+    name = pick_zsmooth(tools, family, order, usable)
+    return name if name in ('zsmooth', 'neo_smo') else None
+
+
 # Default order for tool_function() and the functions whose name differs between implementations.
 _FUNCTION_ORDER = {
-    'rg': ('neo_smo', 'zsmooth', 'rgvs'), 'fluxsmooth': ('neo_smo', 'zsmooth', 'flux'), 'tmedian': ('neo_smo', 'zsmooth', 'tmedian'),
-    'dctfilter': ('neo_smo', 'oxidctf', 'zsmooth', 'dctf'), 'boxblur': ('vszip', 'std'), 'limiter': ('vszip', 'std'),
+    'rg': ('zsmooth', 'rgvs'), 'fluxsmooth': ('zsmooth', 'flux'), 'tmedian': ('zsmooth', 'tmedian'),
+    'dctfilter': ('oxidctf', 'zsmooth', 'dctf'), 'boxblur': ('vszip', 'std'), 'limiter': ('vszip', 'std'),
     'hysteresis': ('hysteresis', 'misc'), 'grain': ('noise', 'grain'), 'fft3d': ('neo_fft', 'neo_fft3d', 'fft3dfilter'),
     # New families from neo-smo
     'repair': ('neo_smo',),
     'clense': ('neo_smo', 'neo_smo_fwd', 'neo_smo_bwd'),
     'temporalrepair': ('neo_smo',),
-    'ccd': ('neo_smo', 'zsmooth'),
+    'ccd': ('zsmooth', 'neo_smo'),
 }
 _FUNCTION_NAMES = {
     ('flux', 'FluxSmoothT'): 'SmoothT', ('flux', 'FluxSmoothST'): 'SmoothST',
@@ -146,7 +171,7 @@ def tool_function(tools: Optional[Mapping[str, str]], family: str, function: str
     implementation in the order (flux.SmoothT for 'FluxSmoothT', fft3dfilter.FFT3DFilter for 'FFT3D'). Without anything
     usable it is the last one in the order, so the error names the plugin the caller asked for last.
     '''
-    order = tuple(order or _FUNCTION_ORDER[family])
+    order = _with_neo_smo(family, order or _FUNCTION_ORDER[family])
 
     def name_in(value: str) -> Tuple[str, str]:
         namespace = tool_namespace(family, value)
@@ -469,7 +494,7 @@ def get_expr(tools: Optional[Mapping[str, str]] = None) -> Callable[..., vs.Vide
 
 def get_rg(is_float: bool = False, tools: Optional[Mapping[str, str]] = None) -> Callable[..., vs.VideoNode]:
     '''Return the RemoveGrain implementation: tools['rg'], else zsmooth, rgsf (float only), rgvs.'''
-    name = pick_tool(tools, 'rg', ('zsmooth', 'rgsf', 'rgvs') if is_float else ('zsmooth', 'rgvs'))
+    name = pick_tool(tools, 'rg', _with_neo_smo('rg', ('zsmooth', 'rgsf', 'rgvs') if is_float else ('zsmooth', 'rgvs')))
     return getattr(core, tool_namespace('rg', name or 'rgvs')).RemoveGrain
 
 def BoxFilter(input: vs.VideoNode, radius: int = 16, radius_v: Optional[int] = None, planes: Optional[Union[int, Sequence[int]]] = None,

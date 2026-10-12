@@ -4,7 +4,7 @@ from vapoursynth import core
 import vapoursynth as vs
 
 import misc
-from helpers import pick_tool, tool_function
+from helpers import pick_tool, tool_function, zsmooth_namespace
 
 def Stab(clp: vs.VideoNode, range: int = 5, dxmax: int = 8, dymax: int = 8, mirror: int = 5, scd_thscd1: float = 400.0, scd_thscd2: float = 130.0, tools: Optional[Mapping[str, str]] = None) -> vs.VideoNode:
     if not isinstance(clp, vs.VideoNode):
@@ -12,9 +12,10 @@ def Stab(clp: vs.VideoNode, range: int = 5, dxmax: int = 8, dymax: int = 8, mirr
 
     clp = misc.SCDetect(clip=clp, threshold=0.25, scd_thscd1=scd_thscd1, scd_thscd2=scd_thscd2, tools=tools)
 
-    if pick_tool(tools, 'temporalsoften', ('zsmooth',)) == 'zsmooth':
-        temp = core.zsmooth.TemporalSoften(clp, radius=7, threshold=[255], scenechange=-1, scalep=True)
-        temp2 = core.zsmooth.TemporalSoften(clp, radius=1, threshold=[255], scenechange=-1, scalep=True)
+    soften = zsmooth_namespace(tools, 'temporalsoften', ('zsmooth',))
+    if soften:
+        temp = getattr(core, soften).TemporalSoften(clp, radius=7, threshold=[255], scenechange=-1, scalep=True)
+        temp2 = getattr(core, soften).TemporalSoften(clp, radius=1, threshold=[255], scenechange=-1, scalep=True)
     else:
         temp = misc.AverageFrames(clp, weights=[1] * 15, scd_thscd1=scd_thscd1, scd_thscd2=scd_thscd2, tools=tools)
         temp2 = misc.AverageFrames(clp, weights=[1] * 3, scd_thscd1=scd_thscd1, scd_thscd2=scd_thscd2, tools=tools)

@@ -6,7 +6,7 @@ import math
 from functools import partial
 from typing import Optional, Union, Sequence, Any, Dict, Callable, Mapping
 
-from helpers import GetPlane, BoxFilter, scale, get_expr, get_rg, pick_tool, type_error, value_error
+from helpers import GetPlane, BoxFilter, scale, get_expr, get_rg, pick_tool, zsmooth_namespace, type_error, value_error
 from misc import SCDetect
 
 # taken from adjust
@@ -256,7 +256,7 @@ def SmoothLevels(
     
     RemoveGrain = RG_MAP.get(RGmode)
     if RGmode == 4:
-        RemoveGrain = core.zsmooth.Median if pick_tool(tools, 'median', ('zsmooth', 'std')) == 'zsmooth' else core.std.Median
+        RemoveGrain = getattr(core, zsmooth_namespace(tools, 'median', ('zsmooth', 'std')) or 'std').Median
     elif RemoveGrain is None:
         RG = get_rg(tools=tools)
         RemoveGrain = partial(RG, mode=[RGmode])

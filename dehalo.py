@@ -6,7 +6,7 @@ import math
 from typing import Union, Optional, Sequence, Mapping
 
 from misc import MinBlur, median_blur, mt_expand_multi, mt_inpand_multi
-from helpers import GetPlane, m4, scale_value, cround, Padding, get_expr, get_rg, pick_tool, tool_function
+from helpers import GetPlane, m4, scale_value, cround, Padding, get_expr, get_rg, pick_tool, tool_function, zsmooth_namespace
 
 def DeHalo_alpha(
     clp: vs.VideoNode,
@@ -702,8 +702,9 @@ def BlindDeHalo3(clp: vs.VideoNode, rx: float = 3.0, ry: float = 3.0, strength: 
         elif abs(PPmode) == 2:
             postclean = core.std.MaskedMerge(base, base.std.Convolution(matrix=[1, 1, 1, 1, 0, 1, 1, 1, 1]), hull)
         elif abs(PPmode) == 3:
-            if pick_tool(tools, 'median', ('zsmooth', 'std')) == 'zsmooth':
-              postclean = core.std.MaskedMerge(base, base.zsmooth.Median(), hull)
+            median = zsmooth_namespace(tools, 'median', ('zsmooth', 'std'))
+            if median:
+              postclean = core.std.MaskedMerge(base, getattr(base, median).Median(), hull)
             else:
               postclean = core.std.MaskedMerge(base, base.std.Median(), hull)
         else:
