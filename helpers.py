@@ -475,7 +475,7 @@ def _akarin_expr(clips: Union[vs.VideoNode, Sequence[vs.VideoNode]], expr: Union
     return core.akarin.Expr(clips, expr, *args, **kwargs)
 
 # Namespaces whose functions return GPU-resident frames (VapourSynth R80+); their results are downloaded by gpu_download().
-_GPU_RESIDENT = ('vsfeel', 'bm3dvk', 'knlmvk')
+_GPU_RESIDENT = ('vsfeel', 'bm3dvk', 'bm3dvk2', 'knlmvk')
 
 
 def gpu_download(namespace: str, clip: vs.VideoNode) -> vs.VideoNode:
