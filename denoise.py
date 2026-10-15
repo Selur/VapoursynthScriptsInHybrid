@@ -972,7 +972,7 @@ def BM3D(clip: vs.VideoNode, sigma: Union[float, Sequence[float]] = 5.0,
     The clip must be 32-bit float (Gray, YUV or RGB). RGB is filtered in the opponent colour space (needs the bm3d
     plugin). Planes with sigma 0 stay untouched; with luma only, the luma plane is filtered alone. sigma2, radius2 and
     profile2 default to the values of the basic estimate. Implementation as in helpers.BM3D(): tools['bm3d'], else the
-    order bm3dcuda, bm3dhip, bm3dmetal, bm3dvk, bm3dvk2, bm3dcpu, bm3d; a GPU plugin that cannot create its filter is skipped with a warning.
+    order bm3dcuda, bm3dhip, bm3dmetal, bm3dvk2, bm3dvk, bm3dcpu, bm3d; a GPU plugin that cannot create its filter is skipped with a warning.
     Parameters the chosen plugin does not know are ignored with a warning. matrix, profile*, block_size*, group_size*,
     bm_step*, ps_step*, th_mse* and hard_thr exist in bm3d and bm3dvk2 only, chroma (CBM3D, YUV444PS or RGB), fast, extractor_exp and
     device in the BM3DCUDA ports only. bm3dvk2 (Vulkan, R81) takes Gray, luma only or RGB, not YUV with chroma.

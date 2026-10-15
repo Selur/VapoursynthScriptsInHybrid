@@ -450,8 +450,12 @@ def RGBAdjust(rgb: vs.VideoNode, r: float=1.0, g: float=1.0, b: float=1.0, a: fl
   type = rgb.format.sample_type
   size = 2**rgb.format.bits_per_sample
   #adjusting bias values rb,gb,bb for any RGB bit depth
-  prop_name = '_Range' if core.core_version.release_major >= 74 else '_ColorRange'
-  limited = rgb.get_frame(0).props[prop_name] == vs.RANGE_FULL
+  # RGB without a range property is full range; _Range: 0 = limited, _ColorRange (before R74): 1 = limited
+  props = rgb.get_frame(0).props
+  if core.core_version.release_major >= 74:
+    limited = props.get('_Range', vs.RANGE_FULL) == vs.RANGE_LIMITED
+  else:
+    limited = props.get('_ColorRange', 0) == 1
   if limited:
     if rb > 235 or rb < -235: raise ValueError(funcName + ': source is flagged as "limited" but rb is out of range [-235,235]!')  
     if gb > 235 or gb < -235: raise ValueError(funcName + ': source is flagged as "limited" but gb is out of range [-235,235]!')
