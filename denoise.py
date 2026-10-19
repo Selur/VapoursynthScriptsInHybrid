@@ -946,6 +946,8 @@ def _bm3d_warn_ignored(name: str, given: Sequence[str]) -> None:
         unknown = unknown + ('fast', 'extractor_exp', 'device')
     elif name == 'bm3dvk':
         unknown = unknown + ('fast', 'device')
+    elif name == 'vsfeel':
+        unknown = unknown + ('fast',)
     elif name != 'bm3d':
         unknown = unknown + (() if name in ('bm3dcuda', 'bm3dhip') else ('fast', 'extractor_exp'))
     ignored = [key for key in unknown if key in given]
@@ -972,10 +974,11 @@ def BM3D(clip: vs.VideoNode, sigma: Union[float, Sequence[float]] = 5.0,
     The clip must be 32-bit float (Gray, YUV or RGB). RGB is filtered in the opponent colour space (needs the bm3d
     plugin). Planes with sigma 0 stay untouched; with luma only, the luma plane is filtered alone. sigma2, radius2 and
     profile2 default to the values of the basic estimate. Implementation as in helpers.BM3D(): tools['bm3d'], else the
-    order bm3dcuda, bm3dhip, bm3dmetal, bm3dvk2, bm3dvk, bm3dcpu, bm3d; a GPU plugin that cannot create its filter is skipped with a warning.
+    order bm3dcuda, bm3dhip, bm3dmetal, bm3dvk2, bm3dvk, vsfeel, bm3dcpu, bm3d; a GPU plugin that cannot create its filter is skipped with a warning.
     Parameters the chosen plugin does not know are ignored with a warning. matrix, profile*, block_size*, group_size*,
-    bm_step*, ps_step*, th_mse* and hard_thr exist in bm3d and bm3dvk2 only, chroma (CBM3D, YUV444PS or RGB), fast, extractor_exp and
-    device in the BM3DCUDA ports only. bm3dvk2 (Vulkan, R81) takes Gray, luma only or RGB, not YUV with chroma.
+    bm_step*, ps_step*, th_mse* and hard_thr exist in bm3d and bm3dvk2 only, chroma (CBM3D, YUV444PS or RGB) in the BM3DCUDA ports,
+    bm3dvk and vsfeel, fast in bm3dcuda and bm3dhip, extractor_exp there and in bm3dvk and vsfeel, device in the GPU ports but bm3dvk.
+    bm3dvk2 (Vulkan, R81) takes Gray, luma only or RGB, not YUV with chroma.
     '''
     fmt = clip.format
     if fmt.sample_type != vs.FLOAT or fmt.bits_per_sample != 32:
@@ -1064,13 +1067,13 @@ def BM3D(clip: vs.VideoNode, sigma: Union[float, Sequence[float]] = 5.0,
             options['device_id'] = device_id
         if name in ('bm3dcuda', 'bm3dhip') and fast is not None:
             options['fast'] = int(fast)
-        if name in ('bm3dcuda', 'bm3dhip', 'bm3dvk') and extractor_exp is not None:
+        if name in ('bm3dcuda', 'bm3dhip', 'bm3dvk', 'vsfeel') and extractor_exp is not None:
             options['extractor_exp'] = extractor_exp
         if ref is not None:
             options['ref'] = ref
         out = getattr(core, name).BM3Dv2(plane_clip, sigma=sig, radius=radius, **options)
-        # bm3dvk takes CPU clips but returns GPU-resident frames (VapourSynth R80+); the planes get mixed with CPU clips below.
-        return core.std.GPUDownload(out) if name == 'bm3dvk' else out
+        # bm3dvk and vsfeel take CPU clips but return GPU-resident frames (VapourSynth R80+); the planes get mixed with CPU clips below.
+        return core.std.GPUDownload(out) if name in ('bm3dvk', 'vsfeel') else out
 
     chosen: List[str] = []
 
