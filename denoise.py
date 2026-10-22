@@ -1071,7 +1071,8 @@ def BM3D(clip: vs.VideoNode, sigma: Union[float, Sequence[float]] = 5.0,
             options['extractor_exp'] = extractor_exp
         if ref is not None:
             options['ref'] = ref
-        out = getattr(core, name).BM3Dv2(plane_clip, sigma=sig, radius=radius, **options)
+        function = getattr(core, name).BM3D if name == 'vsfeel' else getattr(core, name).BM3Dv2
+        out = function(plane_clip, sigma=sig, radius=radius, **options)
         # bm3dvk and vsfeel take CPU clips but return GPU-resident frames (VapourSynth R80+); the planes get mixed with CPU clips below.
         return core.std.GPUDownload(out) if name in ('bm3dvk', 'vsfeel') else out
 

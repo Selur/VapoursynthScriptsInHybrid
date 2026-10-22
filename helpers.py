@@ -34,7 +34,7 @@ TOOLS: Dict[str, Dict[str, tuple]] = {
     'nlmeans':        {'nlm_ispc': ('nlm_ispc', None), 'nlm_cuda': ('nlm_cuda', None), 'vszipcu': ('vszipcu', 'NLMeans'),
                        'vszipcl': ('vszipcl', 'NLMeans'), 'knlmvk': ('knlmvk', None), 'knlm': ('knlm', None)},
     'bm3d':           {'bm3dcuda': ('bm3dcuda', None), 'bm3dhip': ('bm3dhip', None), 'bm3dmetal': ('bm3dmetal', None),
-                       'bm3dvk2': ('bm3dvk2', None), 'bm3dvk': ('bm3dvk', None), 'vsfeel': ('vsfeel', 'BM3Dv2'),
+                       'bm3dvk2': ('bm3dvk2', None), 'bm3dvk': ('bm3dvk', None), 'vsfeel': ('vsfeel', 'BM3D'),
                        'bm3dcpu': ('bm3dcpu', None), 'bm3d': ('bm3d', None)},
     'bilateral':      {'bilateralgpu_rtc': ('bilateralgpu_rtc', None), 'bilateralgpu': ('bilateralgpu', None),
                        'vszipcl': ('vszipcl', 'Bilateral'), 'vszipcu': ('vszipcu', 'Bilateral'),
@@ -799,12 +799,10 @@ def _vszipcuCanRun(kwargs: Dict[str, Any]) -> bool:
     return not any(name in kwargs for name in _DFTTEST_NOT_IN_VSZIPCU)
 
 
-def _vsfeelCanRun(clip: vs.VideoNode, kwargs: Dict[str, Any]) -> bool:
-    # Vulkan port of the fixed-block kernels: 16x16 spatial window, odd temporal window; 16 bit integer or 32 bit float
-    # input, other integer depths are run at 16 bit by DFTTest().
+def _vsfeelCanRun(kwargs: Dict[str, Any]) -> bool:
+    # Vulkan port of the fixed-block kernels: 16x16 spatial window, odd temporal window; 16 bit integer, 16 or 32 bit float
+    # input (vapoursynth-feel 1.2.0+), other integer depths are run at 16 bit by DFTTest().
     if not hasattr(core, 'vsfeel') or kwargs.get('sbsize', 16) != 16 or kwargs.get('tbsize', 3) % 2 == 0:
-        return False
-    if clip.format.sample_type == vs.FLOAT and clip.format.bits_per_sample != 32:
         return False
     return not any(name in kwargs for name in _DFTTEST_NOT_IN_VSZIPCU)
 
@@ -861,7 +859,7 @@ def DFTTest(clip: vs.VideoNode, cuda: Optional[bool] = None, tools: Optional[Map
     they cannot serve use the CPU version, which then has to be loaded as well.
     '''
     can_run = {'vszipcu': _vszipcuCanRun, 'dfttest2': _dfttest2CanRun, 'dfttest2cpu': _dfttest2CpuCanRun,
-               'vsfeel': lambda kw: _vsfeelCanRun(clip, kw),
+               'vsfeel': _vsfeelCanRun,
                'neo_fft': lambda _: hasattr(core, 'neo_fft') and hasattr(core.neo_fft, 'DFTTest'),
                'dfttest': lambda _: hasattr(core, 'dfttest')}
     order = ('neo_fft', 'dfttest') if cuda is False else ('vszipcu', 'dfttest2', 'vsfeel', 'neo_fft', 'dfttest')
@@ -931,7 +929,8 @@ def BM3D(clip: vs.VideoNode, sigma: Sequence[float], radius: int = 0, block_step
                       ps_range=ps_range, chroma=chroma)
         if name not in ('bm3dcpu', 'bm3dvk') and device_id is not None and device_id >= 0:
             kwargs['device_id'] = device_id
-        out = getattr(core, name).BM3Dv2(clip, **kwargs)
+        # vsfeel registers BM3D, BM3Dv2 is only its alias
+        out = getattr(core, name).BM3D(clip, **kwargs) if name == 'vsfeel' else getattr(core, name).BM3Dv2(clip, **kwargs)
         # bm3dvk and vsfeel take CPU clips but return GPU-resident frames (VapourSynth R80+); callers mix the result with CPU clips.
         return core.std.GPUDownload(out) if name in ('bm3dvk', 'vsfeel') else out
 
