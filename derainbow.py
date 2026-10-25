@@ -471,7 +471,7 @@ Requirements
 ------------
   mv          https://github.com/Mr-Z-2697/vapoursynth-mvtools
   zsmooth     https://github.com/adworacz/zsmooth
-  warp        https://github.com/dubhater/vapoursynth-awarpsharp2
+  warp        https://github.com/Selur/vapoursynth-awarpsharp2  (API 4) or awarp https://github.com/HolyWu/VapourSynth-AWarp
   neo_fft     https://github.com/HomeOfAviSynthPlusEvolution/neo-fft
   neo_fft3d   https://github.com/HomeOfAviSynthPlusEvolution/neo_FFT3D  (API 3, fallback for neo_fft)
   fft3dfilter https://github.com/myrsloik/VapourSynth-FFT3DFilter  (API 3, fallback for neo_fft)
@@ -655,8 +655,13 @@ def SRFComb2(
         detail = core.std.MakeDiff(oY, blur)
         cle_y  = core.std.MergeDiff(cle_y, _expr([detail], "x 0.25 *", tools=tools))
     else:
-        # ABlur(blur=2) ≈ horizontal-only blur
-        cle_y = core.std.Merge(cle_y, core.warp.ABlur(oY, blur=2))
+        # ABlur(blur=2): two passes of a separable 1-4-6-4-1 blur; awarp has no ABlur, std.Convolution approximates it
+        if pick_tool(tools, 'warp', ('warp', 'awarp')) == 'warp':
+            ablur = core.warp.ABlur(oY, blur=2)
+        else:
+            ablur = core.std.Convolution(oY, [1, 4, 6, 4, 1], mode='hv')
+            ablur = core.std.Convolution(ablur, [1, 4, 6, 4, 1], mode='hv')
+        cle_y = core.std.Merge(cle_y, ablur)
 
     # ------------------------------------------------------------------
     # Luma repair chain

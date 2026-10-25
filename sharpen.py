@@ -936,7 +936,7 @@ def AWarpSharp2(
         return core.warp.AWarpSharp2(clip, thresh, blur, type, depth, chroma, planes)
 
     if not tool_loaded('warp', 'awarp'):
-        raise ValueError("AWarp plugin not found! Install via: pip install vapoursynth-awarp")
+        raise ValueError("AWarpSharp2: neither the warp (vapoursynth-awarpsharp2) nor the awarp (vapoursynth-awarp) plugin is loaded")
 
     is_gray = clip.format.color_family == vs.GRAY
     if planes is None:
