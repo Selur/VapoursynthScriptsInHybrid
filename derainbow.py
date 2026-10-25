@@ -690,10 +690,9 @@ def SRFComb2(
         oY_woven    = _weave_fields(oY)
         cle_y_woven = core.zsmooth.TemporalRepair(cle_y_woven, oY_woven, mode=3)
 
-        # Repair at field level: re-separate so dimensions match cle_y, then re-weave
-        cle_y_sep   = core.std.SeparateFields(cle_y_woven)
+        # Repair at field level: re-separate so dimensions match cle_y and the fields clip below
+        cle_y_sep   = core.std.SeparateFields(cle_y_woven, tff=field_based == 2)
         cle_y_woven = _repair(cle_y_sep, cle_y, mode=3, tools=tools)
-        cle_y_woven = _weave_fields(cle_y_woven)
 
     # Replace luma in fields clip with repaired luma, then apply luma mask
     luma_cleaned_yuv = core.std.ShufflePlanes(
