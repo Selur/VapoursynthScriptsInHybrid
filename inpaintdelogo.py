@@ -634,9 +634,12 @@ def InpaintDelogo(clp: vs.VideoNode, mask: Union[str, vs.VideoNode, None] = None
     The other parameters have the meaning and the defaults of the original; ebmp files and negative Analyze are not supported.
     '''
     opts = dict(_EDIT_DEFAULTS)
+    dyn_opts = dict(_DYN_DEFAULTS)
     for key, value in kwargs.items():
         if key in _EDIT_DEFAULTS:
             opts[key] = value
+        elif key in _DYN_DEFAULTS:
+            dyn_opts[key] = value
         elif key in _UNSUPPORTED:
             if value != _UNSUPPORTED[key]:
                 raise _error(f'"{key}" is not supported yet.')
@@ -654,7 +657,10 @@ def InpaintDelogo(clp: vs.VideoNode, mask: Union[str, vs.VideoNode, None] = None
         raise _error('You must define "Loc".')
     if Loc.replace(' ', '') == '100,100,-100,-100':
         raise _error('Use "InpaintLoc" function to get crop values for "Loc".')
-    if mask is None or mask == '':
+    dyn_opts['KillShape'] = KillShape
+    dyn = _dyn_settings(dyn_opts, mode, mask)
+    dynmask = dyn['DynMask']
+    if (mask is None or mask == '') and dynmask in (0, 1) or (mask is None or mask == '') and dynmask == 2 and mode == 'both':
         raise _error('You have to define the "mask" string')
     if isinstance(mask, str) and mask.lower().endswith('.ebmp'):
         raise _error('ebmp masks are not supported.')
@@ -691,7 +697,9 @@ def InpaintDelogo(clp: vs.VideoNode, mask: Union[str, vs.VideoNode, None] = None
     if WholeDeblend and not whole:
         raise _error('"WholeDeblend" can be used only on a whole frame.')
     if Optimize1 is None:
-        Optimize1 = 0 if Turbo > 0 else 1
+        Optimize1 = 0 if Turbo > 0 or dynmask > 0 else 1
+    if Optimize1 and dynmask:
+        raise _error('"Optimize1" can\'t be used with "DynMask".')
     if Optimize1 not in (0, 1):
         raise _error('"Optimize1" value must be between 0 and 1.')
     if Optimize1 and Turbo > 0:
@@ -736,9 +744,10 @@ def InpaintDelogo(clp: vs.VideoNode, mask: Union[str, vs.VideoNode, None] = None
             raise _error('"Automask" needs "mask" as the path of the image to create.')
         return _automask(clp, inyv12, mask, a, b, whole, analyze, AnalyzeTh, NoBorderAt, ReAnalyze, aMix, logo_id)
 
-    if isinstance(mask, vs.VideoNode):
-        if mask.num_frames != 1:
-            raise _error('dynamic masks are not supported yet.')
+    if dynmask == 1 or dynmask > 1 and not (dynmask == 2 and mode == 'both'):
+        # the original's placeholder base mask for dynamic masks is a "Dummy" caption; an empty mask here
+        imgmask = core.std.BlankClip(inyv12, format=vs.GRAY8, length=1)
+    elif isinstance(mask, vs.VideoNode):
         if (mask.width, mask.height) != (loc_w, loc_h):
             raise _error('Clip and "mask" image must have same dimensions.')
         imgmask = core.resize.Point(_plane(mask, 0) if mask.format.color_family != vs.GRAY else mask, format=vs.GRAY8)
@@ -805,13 +814,20 @@ def InpaintDelogo(clp: vs.VideoNode, mask: Union[str, vs.VideoNode, None] = None
             logo_deblend = _opacity(inpa_pre, debl_pre, interp)
         else:
             logo_deblend = debl_pre
-        delogo = logo_deblend if mode == 'deblend' else _inpaint(logo_deblend, opaque, grey, radius, sharpness, preblur, postblur)
+        if dynmask:
+            dyn_mask = _dynamic_mask(inyv12, mask, mode, dyn, clp.width > 1024, logo_deblend)
+            inpaint_mpp = _mtballoon_gr(dyn_mask, oppm)
+        delogo = logo_deblend if mode == 'deblend' else _inpaint(logo_deblend, dyn_mask if dynmask else opaque, grey, radius, sharpness, preblur, postblur)
     elif Optimize1:
         delogo = _optimize1(inyv12, imgmask, opaque, Turbo, grey)
     else:
+        target = opaque
+        if dynmask:
+            target = _dynamic_mask(inyv12, mask, mode, dyn, clp.width > 1024, None)
+            inpaint_mpp = _mtballoon_gr(target, oppm)
         src = _pp(_plane(inyv12, 0) if grey else inyv12, pre)
         kw = dict(radius=float(radius), sharpness=float(sharpness), preblur=float(preblur), postblur=float(postblur))
-        delogo = core.avsinpaint.InpaintLogo(src, opaque, **kw)
+        delogo = core.avsinpaint.InpaintLogo(src, target, **kw)
         delogo = _gray_to_yuv420(delogo) if grey else delogo
 
     delogo2 = delogo
@@ -857,3 +873,339 @@ def InpaintDelogo(clp: vs.VideoNode, mask: Union[str, vs.VideoNode, None] = None
         neutral = 1 << (fmt.bits_per_sample - 1)
         result = core.std.Expr(result, ['', str(neutral), str(neutral)])
     return result
+
+
+def _inflate(c: vs.VideoNode, n: int = 1) -> vs.VideoNode:
+    # mt_inflate(): mean of the 8 neighbours, truncated, never below the centre
+    for _ in range(n):
+        c = _expr(c, 'x[-1,-1] x[0,-1] x[1,-1] x[-1,0] x[1,0] x[-1,1] x[0,1] x[1,1] + + + + + + + 8 / floor x max')
+    return c
+
+
+def _expand_thr(c: vs.VideoNode, th: int) -> vs.VideoNode:
+    # mt_expand(thY=, mode="square"): separable, vertical pass then horizontal, each capped at centre + thY
+    c = _expr(c, f'x[0,-1] x[0,1] max x max x {th} + min')
+    return _expr(c, f'x[-1,0] x[1,0] max x max x {th} + min')
+
+
+def _mtballoon_gr(c: vs.VideoNode, mode: int) -> vs.VideoNode:
+    if mode == 0:
+        return c
+    th, n = {1: (170, 3), 2: (180, 8), 3: (190, 16)}[mode]
+    return _inflate(_expand_thr(c, th), n)
+
+
+def _hysteresis4(seed: vs.VideoNode, big: vs.VideoNode) -> vs.VideoNode:
+    # mt_hysteresis(corners=false): seed pixels grown inside big with 4-neighbour connectivity
+    def grow(n: int, f: List[vs.VideoFrame]) -> vs.VideoFrame:
+        bm = numpy.asarray(f[1][0]) > 0
+        g = (numpy.asarray(f[0][0]) > 0) & bm
+        while True:
+            h = g.copy()
+            h[1:, :] |= g[:-1, :]
+            h[:-1, :] |= g[1:, :]
+            h[:, 1:] |= g[:, :-1]
+            h[:, :-1] |= g[:, 1:]
+            h &= bm
+            if numpy.array_equal(h, g):
+                break
+            g = h
+        out = f[0].copy()
+        numpy.copyto(numpy.asarray(out[0]), numpy.where(g, 255, 0).astype(numpy.uint8))
+        return out
+    return core.std.ModifyFrame(seed, [seed, big], grow)
+
+
+def _hysteresis8(seed: vs.VideoNode, big: vs.VideoNode) -> vs.VideoNode:
+    _require('hysteresis', 'dynamic masks')
+    return core.hysteresis.Hysteresis(seed, big)
+
+
+def _removegrain2(c: vs.VideoNode) -> vs.VideoNode:
+    # RemoveGrain(2) leaves the 1-pixel frame border untouched
+    _require('zsmooth', 'dynamic masks')
+    return _expr([core.zsmooth.RemoveGrain(c, 2), c], 'X 0 = Y 0 = X width 1 - = Y height 1 - = or or or y x ?')
+
+
+def _mtballoon_px(c: vs.VideoNode, mode: int) -> vs.VideoNode:
+    if mode < -1:
+        c = _inpand(_expand(c, 1, True), 1, True)
+    if mode == 0:
+        return c
+    if mode == -1:
+        return _expand(c, 1, True)
+    if mode in (1, 2, 3, 4, 99):
+        px = _expand(c)
+        if mode >= 2:
+            px = _expand(px, 1, True)
+        if mode >= 3:
+            px = _expand(px, 1, True)
+        if mode == 4:
+            return _expand(px)
+        if mode == 99:
+            return _inpand(_inpand(px), 2, True)
+        return px
+    k = abs(mode)
+    if k == 81:
+        return _removegrain2(c)
+    if k == 82:
+        return _removegrain2(_removegrain2(c))
+    if k == 83:
+        return _hysteresis4(_inpand(c, 1, True), c)
+    kill = _removegrain2(c) if k == 84 else _removegrain2(_removegrain2(c))
+    return _hysteresis4(_inpand(kill, 1, True), kill)
+
+
+def _kill_balloon(c: vs.VideoNode, mode: int, pre: int = 0, h2: int = 0, h3: int = 0) -> vs.VideoNode:
+    # KillBalloonFX(): removes blobs smaller (negative mode) or thinner (positive mode) than the given size
+    clp = {0: c, 1: _expand(c, 1, True), 2: _expand(c), -1: _inpand(_expand(c, 1, True), 1, True), -2: _inpand(_expand(c))}[pre]
+    if mode < 0:
+        msk = _hysteresis4(_inpand(clp, -mode), clp)
+    elif mode > 0:
+        msk = _expand(_inpand(clp, mode), mode)
+    else:
+        msk = clp
+    msk = _expand(msk, h2)
+    ooo = _thr(core.std.Expr([clp, msk], 'x y - 128 +'), 128)
+    if pre == 1:
+        return _inpand(ooo, 1, True)
+    if pre == 2:
+        return _inpand(ooo)
+    return _inpand(ooo, h3)
+
+
+def _clipblend(c: vs.VideoNode, delay: int) -> vs.VideoNode:
+    # ClipBlend(delay): rounded mean of the frames max(0, n-delay)..n
+    shifted = [c] + [(c[0] * k + c)[:c.num_frames] for k in range(1, delay + 1)]
+    terms = ['src0'] + [f'src{k} N {k} >= *' for k in range(1, delay + 1)]
+    expr = ' '.join(terms) + ' +' * delay + f' 2 * N {delay} min 1 + + N {delay} min 1 + 2 * / floor'
+    return core.akarin.Expr(shifted, expr)
+
+
+def _shift(c: vs.VideoNode, k: int) -> vs.VideoNode:
+    # Trim(k, 999999) seen from the original length: the last frame repeats
+    if k == 0:
+        return c
+    return (c[k:] + c[-1] * k) if k < c.num_frames else c[-1] * c.num_frames
+
+
+def _trimergage(c: vs.VideoNode, seq: int, clpblend: int = 0, left: int = 0) -> vs.VideoNode:
+    # TrimergageFX(): ORs the mask with itself shifted forward, recursively, so a moved logo keeps its mask
+    if left == 0:
+        trimy = clpblend if seq // 2 >= clpblend else seq - clpblend
+        left = clpblend - trimy
+    else:
+        trimy = seq if seq <= left else left
+        left -= trimy
+    merged = core.std.Expr([c, _shift(c, trimy)], 'x y + 1 + 2 / 20 > 255 0 ?')
+    return _trimergage(merged, trimy * 2, 0, left) if left > 0 else merged
+
+
+def _repass(c: vs.VideoNode, seq: int, clpblend: int, killnoise: int = 0) -> vs.VideoNode:
+    re = _trimergage(_thr(_clipblend(c, clpblend), 254), seq, clpblend)
+    return _mtballoon_px(re, killnoise) if killnoise else re
+
+
+def _patch(c: vs.VideoNode, path: str) -> vs.VideoNode:
+    # PatchFuncFX(): paints the white parts of an image into the mask (mt_merge with a white clip)
+    _require('bs', 'maskPatch')
+    if not os.path.isfile(path):
+        raise _error('"maskPatch" file not found!')
+    img = core.bs.VideoSource(path, cachemode=0)[0]
+    if (img.width, img.height) != (c.width, c.height):
+        raise _error('"maskPatch" image must have the size of the dynamic mask.')
+    planes = [img] if img.format.color_family == vs.GRAY else [_plane(core.resize.Point(img, format=vs.RGB24, matrix_in_s='170m'), p) for p in range(3)]
+    planes = [_thr(core.resize.Point(p, format=vs.GRAY8), 127) for p in planes]
+    patch = planes[0] if len(planes) == 1 else _expr(planes, 'x 6966 * y 23436 * + z 2366 * + 16384 + 32768 / floor')
+    return _expr([c, patch * c.num_frames], 'y y 128 / floor + M! x 256 M@ - * 255 M@ * + 128 + 256 / floor')
+
+
+_DYN_DEFAULTS: Dict[str, Any] = {
+    'DynMask': 0, 'DynTune': 200, 'DynTuneInf': 0, 'DynColor': 0, 'DynColorTol': 10, 'DynColorInf': 1, 'DynTEdge': 0,
+    'DynTEdgeThY': 20, 'DynTEdgeInf': 2, 'DynInflate': 0, 'KillNoise': 0, 'KillBlobs': 0, 'preBlobs': 0, 'RePass': 0,
+    'maskPatch': '', 'Dyn3Seq': 12, 'ClpBlend': None, 'DynPostTune': None, 'Dyn3buffer': 0, 'DynMask3H': 0, 'ModeSH': 1,
+    'TuneH1': 0, 'TuneH2': 0, 'TuneH3': 0, 'KillNoiseH': 0, 'rePassH': 0, 'DynMask4H': 60, 'DynMaskUp': 0, 'DynLocUp': 1,
+}
+_DYN_RANGES: Dict[str, Tuple[int, int]] = {
+    'DynMask': (0, 7), 'DynTuneInf': (-1, 4), 'DynColorTol': (1, 140), 'DynColorInf': (0, 4), 'DynTEdge': (0, 1),
+    'DynTEdgeThY': (2, 100), 'DynTEdgeInf': (0, 8), 'DynInflate': (0, 10), 'KillNoise': (-5, 5), 'KillBlobs': (-8, 8),
+    'preBlobs': (-2, 2), 'RePass': (0, 2), 'Dyn3Seq': (8, 9999), 'Dyn3buffer': (0, 1), 'DynMask3H': (0, 200), 'ModeSH': (0, 1),
+    'TuneH1': (0, 7), 'TuneH2': (0, 4), 'TuneH3': (0, 3), 'KillNoiseH': (0, 2), 'rePassH': (0, 1), 'DynMask4H': (1, 200),
+    'DynMaskUp': (-1, 1), 'DynLocUp': (1, 1),
+}
+
+
+def _dyn_settings(d: Dict[str, Any], mode: str, mask: Any) -> Dict[str, Any]:
+    if isinstance(mask, vs.VideoNode) and mask.num_frames > 1:
+        d['DynMask'] = 1
+    if d['ClpBlend'] is None:
+        d['ClpBlend'] = d['Dyn3Seq'] - 2 if d['Dyn3Seq'] < 54 else 52
+    if d['DynPostTune'] is None:
+        d['DynPostTune'] = 0 if d['ClpBlend'] == 0 else 1
+    for name, (lo, hi) in _DYN_RANGES.items():
+        if d[name] < lo or d[name] > hi:
+            if name in ('DynMaskUp', 'DynLocUp'):
+                raise _error(f'"{name}" is only for the subtitle extraction, which is not supported.')
+            raise _error(f'"{name}" value must be between {lo} and {hi}.')
+    if d['DynPostTune'] < 0 or d['DynPostTune'] > 5:
+        raise _error('"DynPostTune" value must be between 0 and 5.')
+    if d['ClpBlend'] != 0 and (d['ClpBlend'] < 6 or d['ClpBlend'] >= d['Dyn3Seq'] - 1):
+        raise _error('"ClpBlend" is out of range.')
+    dyn = d['DynMask'] if mode != 'deblend' else 0
+    d['DynMask'] = dyn
+    if dyn == 1 and mode != 'inpaint':
+        raise _error('"mask" as a dynamic mask works only in "Inpaint" mode.')
+    if dyn == 1 and not (isinstance(mask, vs.VideoNode) and mask.num_frames > 1):
+        raise _error('"mask" is not a dynamic mask.')
+    if dyn == 0 and isinstance(mask, vs.VideoNode) and mask.num_frames > 1:
+        raise _error('"mask" is a dynamic mask when expected a static mask.')
+    if dyn == 3 and (d['ClpBlend'] == 0 or d['DynPostTune'] == 0):
+        raise _error('There is nothing to do with these settings, fine tune this mask in "Show=3".')
+    if d['RePass'] and dyn != 3:
+        raise _error('"RePass" parameter is only for "DynMask=3" method.')
+    if d['DynMask3H'] and dyn != 3:
+        raise _error('"DynMask3H" parameter is only for "DynMask=3" method.')
+    tune = d['DynTune']
+    if isinstance(tune, str):
+        if ' - ' not in tune:
+            raise _error('Wrong "DynTune" value!')
+        lo, hi = int(float(tune[:3])), int(float(tune[-3:]))
+        if lo >= hi or not (1 <= lo <= 254 and 1 <= hi <= 254):
+            raise _error('"DynTune" values must be between 10 and 254.')
+        d['LumaRange'] = (lo, hi)
+        d['DynTune'] = lo
+    elif not 1 <= tune <= 254:
+        raise _error('"DynTune" value must be between 10 and 254.')
+    color = d['DynColor']
+    if isinstance(color, str):
+        if '$' not in color:
+            raise _error('Wrong "DynColor" value!')
+    elif color and not 0 < color <= 0xFFFFFF:
+        raise _error('"DynColor" value must be between $000000 and $FFFFFF.')
+    if color and dyn < 2:
+        raise _error('"DynColor" can be used only with internal "DynMask" methods.')
+    if dyn == 5 and not color:
+        raise _error('Nothing to do for "DynMask=5" if "DynColor=0".')
+    if d['DynTEdge'] and dyn < 2:
+        raise _error('"DynTEdge" can be used only with internal "DynMask" methods.')
+    if dyn == 7 and not d['DynTEdge']:
+        raise _error('Nothing to do for "DynMask=7" if "DynTEdge=0".')
+    if dyn in (5, 6, 7):
+        d['DynInflate'] = 0
+    kn = d['KillNoise']
+    d['KillNoise'] = (80 + abs(kn)) * (1 if kn > 0 else -1) if kn else 0
+    d['KillNoiseH'] = 80 + d['KillNoiseH'] if d['KillNoiseH'] else 0
+    return d
+
+
+def _color_mask(inyv12: vs.VideoNode, d: Dict[str, Any], is_hd: bool) -> vs.VideoNode:
+    color = d['DynColor']
+    tol = d['DynColorTol']
+    if isinstance(color, str):
+        cols = [int(t.strip().lstrip('$'), 16) for t in color.replace('/*', ' ').split() if t.strip().startswith('$')]
+        yuv = core.resize.Bicubic(inyv12, format=vs.YUV444P8)
+        f = numpy.float32
+        kr, kb = (f(0.2126), f(0.0722)) if is_hd else (f(0.299), f(0.114))
+        conds_y, conds_u, conds_v = [], [], []
+        for col in cols:
+            r, g, b = (f((col >> sh) & 0xFF) / f(255) for sh in (16, 8, 0))
+            yy = kr * r + (f(1) - kr - kb) * g + kb * b
+            conds_y.append(f'x {16 + int(f(219) * yy + f(0.5))} - abs {tol} <')
+            conds_u.append(f'y {128 + int(f(112) * (b - yy) / (f(1) - kb) + f(0.5))} - abs {tol // 2} <')
+            conds_v.append(f'z {128 + int(f(112) * (r - yy) / (f(1) - kr) + f(0.5))} - abs {tol // 2} <')
+
+        def anyof(parts: List[str]) -> str:
+            return ' '.join(parts) + ' or' * (len(parts) - 1)
+        m = _expr([_plane(yuv, p) for p in range(3)], f'{anyof(conds_y)} {anyof(conds_u)} and {anyof(conds_v)} and 255 0 ?')
+    else:
+        rgb = core.resize.Bicubic(inyv12, format=vs.RGB24, matrix_in_s='709' if is_hd else '170m')
+        r, g, b = (color >> 16) & 0xFF, (color >> 8) & 0xFF, color & 0xFF
+        m = _expr([_plane(rgb, p) for p in range(3)], f'x {r} - abs {tol} <= y {g} - abs {tol} <= and z {b} - abs {tol} <= and 255 0 ?')
+    return _mtballoon2px(m, d['DynColorInf'])
+
+
+def _dynamic_mask(inyv12: vs.VideoNode, mask: Any, mode: str, d: Dict[str, Any], is_hd: bool,
+                  logo_deblend: Optional[vs.VideoNode]) -> vs.VideoNode:
+    # DynamicMask of the original, without the upscaling variants of the subtitle extraction
+    dyn = d['DynMask']
+    iny8 = _plane(inyv12, 0)
+    if dyn == 1:
+        m = mask if mask.format.color_family == vs.GRAY else _plane(mask, 0)
+        if (m.width, m.height) != (inyv12.width, inyv12.height):
+            raise _error('Clip and "mask" image must have same dimensions.')
+        dm = core.resize.Point(m, format=vs.GRAY8)
+    elif dyn == 2 and mode == 'both':
+        assert logo_deblend is not None
+        dm = _thr(_plane(logo_deblend, 0), d['DynTune'])
+    else:
+        lvl = col = tedge = None
+        if dyn in (2, 3, 4, 6):
+            if 'LumaRange' in d:
+                lo, hi = d['LumaRange']
+                lvl = _mtballoon_px(core.std.Expr(iny8, f'x {lo} > x {hi} < and 255 0 ?'), d['DynTuneInf'])
+            else:
+                lvl = _mtballoon_px(_thr(iny8, d['DynTune']), d['DynTuneInf'])
+        if dyn in (2, 3, 4, 5) and d['DynColor']:
+            col = _color_mask(inyv12, d, is_hd)
+        if dyn in (2, 3, 4, 7) and d['DynTEdge']:
+            t = int(round(d['DynTEdgeThY'] ** 2 * 4))
+            tedge = _expr(iny8, f'X 0 = Y 0 = X width 1 - = Y height 1 - = or or or 0 x[1,0] x[-1,0] - dup * x[0,-1] x[0,1] - dup * + {t} > 255 0 ? ?')
+            if d['DynTEdgeInf']:
+                tedge = _inpand(_expand(_mtballoon2px(tedge, d['DynTEdgeInf'])))
+        if dyn == 5:
+            assert col is not None
+            dm = col
+        elif dyn == 6:
+            assert lvl is not None
+            dm = lvl
+        elif dyn == 7:
+            assert tedge is not None
+            dm = tedge
+        elif dyn == 4:
+            white = _thr(iny8, d['DynTune'])
+            dark = _thr(iny8, d['DynMask4H'])
+            frame = numpy.full((inyv12.height, inyv12.width), 255, numpy.uint8)
+            frame[8:-8, 8:-8] = 0
+            border = _hysteresis4(_frame_clip(frame, inyv12.num_frames), dark)
+            dm = _thr(core.std.Expr([white, border], 'x y - 128 +'), 128)
+        else:
+            assert lvl is not None
+            combo = lvl
+            for extra in (col, tedge):
+                if extra is not None:
+                    combo = core.std.Expr([combo, extra], 'x y min')
+            if dyn == 2:
+                dm = combo
+            else:
+                m3 = _thr(_clipblend(combo, d['ClpBlend']), 255 - d['DynPostTune'])
+                dm = _trimergage(m3, d['Dyn3Seq'], d['ClpBlend'])
+    if d['KillBlobs']:
+        dm = _kill_balloon(dm, d['KillBlobs'], d['preBlobs'])
+    if d['KillNoise']:
+        dm = _mtballoon_px(dm, d['KillNoise'])
+    if dyn == 3:
+        for _ in range(d['RePass']):
+            dm = _repass(dm, d['Dyn3Seq'], d['ClpBlend'], d['KillNoise'])
+        if d['DynMask3H']:
+            if d['ModeSH'] == 1:
+                dark = core.std.Invert(_thr(iny8, d['DynMask3H']))
+                if d['TuneH1'] == 0:
+                    halo = dark
+                else:
+                    halo = core.std.Expr([dark, _mtballoon2px(_thr(iny8, d['DynTune']), d['TuneH1'])], 'x y min 255 = 0 255 ?')
+            else:
+                halo = _trimergage(_thr(_clipblend(_thr(iny8, d['DynMask3H']), d['ClpBlend']), 254), d['Dyn3Seq'], d['ClpBlend'])
+            if d['TuneH1']:
+                halo = _kill_balloon(halo, d['TuneH1'], 0, d['TuneH2'], d['TuneH3'])
+            if d['KillNoiseH']:
+                halo = _mtballoon_px(halo, d['KillNoiseH'])
+            if d['rePassH']:
+                halo = _repass(halo, d['Dyn3Seq'], d['ClpBlend'], d['KillNoiseH'])
+            dm = _repass(_hysteresis8(halo, dm), d['Dyn3Seq'], d['ClpBlend'])
+    if d['KillShape']:
+        dm = _mtballoon_px(dm, 99)
+    if d['DynInflate']:
+        dm = _mtballoon2px(dm, d['DynInflate'])
+    if d['maskPatch']:
+        dm = _patch(dm, d['maskPatch'])
+    return dm
