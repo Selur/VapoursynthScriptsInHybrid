@@ -1,23 +1,24 @@
 from __future__ import annotations
+import math
 import os
+import struct
+import sys
+import zlib
 from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple, Union
 
+import numpy
 import vapoursynth as vs
 from vapoursynth import core
 
 # Port of InpaintDelogo 3.7 by VoodooFX (public domain): https://github.com/Purfview/InpaintDelogo
-# Needs AvsInpaint >= 1.4 (core.avsinpaint) and akarin; BestSource for mask files, neo_fft for negative oPP, addGrain for GrainPP.
+# Needs AvsInpaint >= 1.4 (core.avsinpaint) and akarin; BestSource for mask files, neo_fft for negative oPP/dPP, addGrain for GrainPP.
 # The helpers below rebuild AviSynth+ 3.7.5 (AVX2) and MaskTools2 bit-exactly where the original relies on them.
 
 _NAME = 'InpaintDelogo'
+_VERSION = 1
 
 # Parameters of later port stages; a value other than these defaults raises an error.
-_UNSUPPORTED: Dict[str, Any] = {
-    'Analyze': None, 'AnalyzeTh': None, 'NoBorderAt': 'none', 'ReAnalyze': 0, 'Automask': 0, 'aMix': 0,
-    'Interp': None, 'IntSpd': None, 'InterpM': None, 'iTune': 0, 'iTinflate': 0, 'oTune': 0, 'oTinflate': 0,
-    'dPP': None, 'dPPm': None, 'diPP': None, 'diPPm': None, 'EdgePP': 0, 'EdgePos': 0, 'EdgeWide': 1,
-    'Optimize2': None, 'DynMask': 0, 'Show': 0, 'Extract': 0,
-}
+_UNSUPPORTED: Dict[str, Any] = {'DynMask': 0, 'Show': 0, 'Extract': 0}
 
 
 def _error(msg: str) -> vs.Error:
@@ -160,6 +161,8 @@ def _pp(c: vs.VideoNode, x: int, grey: bool = False) -> vs.VideoNode:
 def _overlay(base: vs.VideoNode, ov: vs.VideoNode, mask: vs.VideoNode) -> vs.VideoNode:
     # Overlay(base, ov, mask=Y8) on YV12: float blend; chroma mask = vertical pairs rounded, then horizontal mean truncated
     blend = 'x y x - z 0.0039215688593685627 * * + 0.5 + trunc'
+    if base.format.num_planes == 1:
+        return _expr([base, ov, mask], blend)
     w, h = mask.width // 2, mask.height // 2
     taps = [core.resize.Point(mask, w, h, src_left=dx, src_top=dy) for dx in (-0.5, 0.5) for dy in (-0.5, 0.5)]
     mc = _expr(taps, 'x y + 1 + 2 / floor z a + 1 + 2 / floor + 2 / floor')
@@ -245,32 +248,348 @@ def _from_yv12(c: vs.VideoNode, fmt: vs.VideoFormat) -> vs.VideoNode:
     return core.resize.Bicubic(c, format=fmt.id)
 
 
-def _optimize1(inyv12: vs.VideoNode, imgmask: vs.VideoNode, opaque: vs.VideoNode, turbo: int, grey: bool) -> vs.VideoNode:
-    # per-frame preset choice by the luma/chroma range on a ring around the logo
-    opt_bm = _expand(imgmask, 3)
-    opt_m = _thr(core.std.Expr([_expand(opt_bm, 6), opt_bm], 'x y - 128 +'), 128)
-    opt_mc = core.resize.Point(opt_m, inyv12.width // 2, inyv12.height // 2, src_left=-0.5, src_top=-0.5)
-    opt_cb = _blur(inyv12, 1.58)
 
-    def inpaint(src: vs.VideoNode, m: vs.VideoNode, **kw: float) -> vs.VideoNode:
-        if grey:
-            return _gray_to_yuv420(core.avsinpaint.InpaintLogo(_plane(src, 0), m, **kw))
-        return core.avsinpaint.InpaintLogo(src, m, **kw)
-    oo = [inpaint(opt_cb, opt_bm, sharpness=1.5, preblur=0.0, postblur=0.0, radius=r) for r in (2.0, 4.0, 6.0)]
-    oo += [inpaint(inyv12, opaque, sharpness=45.0, preblur=pb, postblur=po, radius=r) for pb, po, r in ((6.5, 4.0, 8.0), (4.0, 8.0, 16.0), (4.0, 12.0, 16.0))]
-    props = list(_range_props(_plane(opt_cb, 0), opt_m, 'Y'))
-    names = ['x', 'y']
-    if not grey:
-        props += list(_range_props(_plane(opt_cb, 1), opt_mc, 'U')) + list(_range_props(_plane(opt_cb, 2), opt_mc, 'V'))
-        names += ['z', 'a', 'b', 'c']
 
-    def cond(t: int) -> str:
-        parts = [f'{names[i]}.{n}hMax {names[i + 1]}.{n}lMin - {t} <' for i, n in zip(range(0, len(names), 2), 'YUV')]
+def _opacity(base: vs.VideoNode, ov: vs.VideoNode, opacity: float) -> vs.VideoNode:
+    # Overlay(base, ov, opacity=) without mask: float blend
+    f = float(numpy.float32(opacity))
+    return _expr([base, ov], f'x y x - {f!r} * + 0.5 + trunc')
+
+
+def _lut(c: vs.VideoNode, table: Sequence[int]) -> vs.VideoNode:
+    return core.std.Lut(c, lut=list(table))
+
+
+# ConvertToRGB32 of a Y8 clip: limited range (Rec601/Rec709 give the same grey) and PC.601
+_LIMITED_TO_RGB = [min(max(((v - 16) * 4777 + 2048) >> 12, 0), 255) for v in range(256)]
+_PC601_TO_RGB = [min(v + (1 if v >= 232 else 0), 255) for v in range(256)]
+
+
+def _amod(a: int, b: int) -> int:
+    # AviSynth % keeps the sign of the dividend
+    return int(math.fmod(a, b))
+
+
+def _mtballoon2px(c: vs.VideoNode, mode: int) -> vs.VideoNode:
+    return _expand(c, mode) if mode > 0 else _inpand(c, -mode)
+
+
+def _ring(bm: vs.VideoNode) -> vs.VideoNode:
+    # MTballoon2PX(6).mt_makediff(bm).mt_binarize(): ring around the mask
+    return _thr(core.std.Expr([_expand(bm, 6), bm], 'x y - 128 +'), 128)
+
+
+def _halve_point(c: vs.VideoNode) -> vs.VideoNode:
+    return core.resize.Point(c, c.width // 2, c.height // 2, src_left=-0.5, src_top=-0.5)
+
+
+class _Ring:
+    # per-frame range of a blurred clip on a ring, as props for akarin.Select (RT_YPlaneMinMaxDifference(mask=))
+
+    def __init__(self, cb: vs.VideoNode, ring: vs.VideoNode, grey: bool) -> None:
+        self.props = list(_range_props(_plane(cb, 0), ring, 'Y'))
+        self.names = ['x', 'y']
+        if not grey:
+            ringc = _halve_point(ring)
+            self.props += list(_range_props(_plane(cb, 1), ringc, 'U')) + list(_range_props(_plane(cb, 2), ringc, 'V'))
+            self.names += ['z', 'a', 'b', 'c']
+
+    def cond(self, t: int) -> str:
+        parts = [f'{self.names[i]}.{n}hMax {self.names[i + 1]}.{n}lMin - {t} <' for i, n in zip(range(0, len(self.names), 2), 'YUV')]
         return ' '.join(parts) + ' and' * (len(parts) - 1)
-    lo5 = '4' if turbo == -1 else f'{cond(45)} 4 5 ?'
-    lo4 = '3' if turbo == 0 else f'{cond(35)} 3 {lo5} ?'
-    expr = f'{cond(6)} 0 {cond(10)} 1 {cond(20)} 2 {lo4} ? ? ?'
-    return core.akarin.Select(oo, props, expr)
+
+    def select(self, clips: Sequence[vs.VideoNode], expr: str) -> vs.VideoNode:
+        return core.akarin.Select(list(clips), self.props, expr)
+
+
+def _inpaint(src: vs.VideoNode, m: vs.VideoNode, grey: bool, radius: float, sharpness: float, preblur: float, postblur: float) -> vs.VideoNode:
+    kw = dict(radius=float(radius), sharpness=float(sharpness), preblur=float(preblur), postblur=float(postblur))
+    if grey:
+        return _gray_to_yuv420(core.avsinpaint.InpaintLogo(_plane(src, 0), m, **kw))
+    return core.avsinpaint.InpaintLogo(src, m, **kw)
+
+
+def _optimize1(inyv12: vs.VideoNode, imgmask: vs.VideoNode, opaque: vs.VideoNode, turbo: int, grey: bool) -> vs.VideoNode:
+    # Inpaint: per-frame preset choice by the luma/chroma range on a ring around the logo
+    opt_bm = _expand(imgmask, 3)
+    opt_cb = _blur(inyv12, 1.58)
+    ring = _Ring(opt_cb, _ring(opt_bm), grey)
+    oo = [_inpaint(opt_cb, opt_bm, grey, r, 1.5, 0, 0) for r in (2, 4, 6)]
+    oo += [_inpaint(inyv12, opaque, grey, r, 45, pb, po) for pb, po, r in ((6.5, 4, 8), (4, 8, 16), (4, 12, 16))]
+    lo5 = '4' if turbo == -1 else f'{ring.cond(45)} 4 5 ?'
+    lo4 = '3' if turbo == 0 else f'{ring.cond(35)} 3 {lo5} ?'
+    return ring.select(oo, f'{ring.cond(6)} 0 {ring.cond(10)} 1 {ring.cond(20)} 2 {lo4} ? ? ?')
+
+
+def _frame_clip(arr: numpy.ndarray, length: int = 1) -> vs.VideoNode:
+    blank = core.std.BlankClip(format=vs.GRAY8, width=arr.shape[1], height=arr.shape[0], length=1)
+
+    def put(n: int, f: vs.VideoFrame) -> vs.VideoFrame:
+        out = f.copy()
+        numpy.copyto(numpy.asarray(out[0]), arr)
+        return out
+    return core.std.ModifyFrame(blank, blank, put) * length
+
+
+def _to_array(c: vs.VideoNode, n: int = 0) -> numpy.ndarray:
+    return numpy.asarray(c.get_frame(n)[0]).copy()
+
+
+def _write_image(path: str, arr: numpy.ndarray) -> None:
+    # grey image as 24-bit bmp or 8-bit png, chosen by the extension
+    h, w = arr.shape
+    if path.lower().endswith('.png'):
+        raw = b''.join(b'\x00' + arr[y].tobytes() for y in range(h))
+
+        def chunk(tag: bytes, data: bytes) -> bytes:
+            return struct.pack('>I', len(data)) + tag + data + struct.pack('>I', zlib.crc32(tag + data) & 0xFFFFFFFF)
+        data = b'\x89PNG\r\n\x1a\n' + chunk(b'IHDR', struct.pack('>IIBBBBB', w, h, 8, 0, 0, 0, 0)) + chunk(b'IDAT', zlib.compress(raw, 9)) + chunk(b'IEND', b'')
+    else:
+        stride = (w * 3 + 3) & ~3
+        rows = numpy.zeros((h, stride), numpy.uint8)
+        rows[:, :w * 3] = numpy.repeat(arr, 3, axis=1)
+        pixels = rows[::-1].tobytes()
+        data = b'BM' + struct.pack('<IHHI', 54 + len(pixels), 0, 0, 54) + struct.pack('<IiiHHIIiiII', 40, w, h, 1, 24, 0, len(pixels), 2835, 2835, 0, 0) + pixels
+    with open(path, 'wb') as fh:
+        fh.write(data)
+
+
+def _progress(what: str, done: int, total: int, last: List[int]) -> None:
+    pct = done * 100 // max(total, 1)
+    if pct != last[0]:
+        last[0] = pct
+        sys.stderr.write(f'{_NAME}: {what} {pct}%\n')
+        sys.stderr.flush()
+
+
+def _region(w: int, h: int, rects: Sequence[Tuple[int, int, int, int]]) -> numpy.ndarray:
+    m = numpy.zeros((h, w), numpy.uint8)
+    for x, y, rw, rh in rects:
+        m[y:y + rh, x:x + rw] = 255
+    return m
+
+
+def _scan_clip(inyv12: vs.VideoNode, analyze: int, basemask_p: vs.VideoNode, noborder: str) -> vs.VideoNode:
+    # AnalyzeMethods() 2: the border strips as a region mask; 1: the clip whose range decides about a frame
+    vw, vh = inyv12.width, inyv12.height
+    if analyze == 2:
+        strips = {'top': (4, 4, vw - 8, 2), 'bottom': (4, vh - 6, vw - 8, 2), 'left': (4, 4, 2, vh - 8), 'right': (vw - 6, 4, 2, vh - 8)}
+        swap = {'top': 'bottom', 'bottom': 'top', 'left': 'right', 'right': 'left'}
+        if noborder in swap:
+            strips[noborder] = strips[swap[noborder]]
+        return _frame_clip(_region(vw, vh, list(strips.values())), inyv12.num_frames)
+    m = _expand(basemask_p, 2)
+    arr = _to_array(m)
+    ys, xs = numpy.nonzero(arr == 255)
+    if not len(xs):
+        raise _error('Mask image is invalid.')
+    mx, my, mw, mh = int(xs.min()), int(ys.min()), int(xs.max() - xs.min() + 1), int(ys.max() - ys.min() + 1)
+    ml, mt, mr, mb = mx, my, -vw + mw + mx, -vh + my + mh
+    if ml < 8 and -mr < 8 or mt < 8 and -mb < 8:
+        raise _error('Mask image or Loc is invalid.')
+    ml, mt, mr, mb = ml + _amod(ml, 2), mt + _amod(mt, 2), mr - _amod(mr, 2), mb - _amod(mb, 2)
+    mid = int((vw - ml + mr) / 2) + ml
+    mid += _amod(mid, 2)
+    top = mt - 2 if mt >= -mb else vh + mb
+    block = core.resize.Point(core.std.CropAbs(inyv12, 2, 2, mid - 2, top), vw, vh)
+    ring = core.std.Expr([_expand(m, 2), m], 'x y = 0 255 ?')
+    return _overlay(block, inyv12, ring)
+
+
+def _select_frames(inyv12: vs.VideoNode, analyze: int, basemask_p: vs.VideoNode, th: int, noborder: str, grey: bool) -> List[int]:
+    scan = _scan_clip(inyv12, analyze, basemask_p, noborder)
+    stats = core.std.BlankClip(inyv12, format=vs.GRAY8, width=8, height=8)
+    keys: List[Tuple[str, str]] = []
+    if analyze == 2:
+        planes = [(_plane(inyv12, 0), scan)]
+        if not grey:
+            planes += [(_plane(inyv12, 1), _halve_point(scan)), (_plane(inyv12, 2), _halve_point(scan))]
+        for i, (pl, region) in enumerate(planes):
+            n = 'YUV'[i]
+            hi, lo = _range_props(pl, region, n)
+            stats = core.std.CopyFrameProps(core.std.CopyFrameProps(stats, hi, props=[f'{n}hMax']), lo, props=[f'{n}lMin'])
+            keys.append((f'{n}hMax', f'{n}lMin'))
+    else:
+        for i in range(1 if grey else 3):
+            n = 'YUV'[i]
+            stats = core.std.CopyFrameProps(stats, core.std.PlaneStats(scan, plane=i, prop=n), props=[f'{n}Max', f'{n}Min'])
+            keys.append((f'{n}Max', f'{n}Min'))
+    limits = [th, th // 2, th // 2]
+    total = stats.num_frames
+    selected: List[int] = []
+    last = [-1]
+    for frame_no, f in enumerate(stats.frames(close=True)):
+        p = f.props
+        if all(p[hi] - p[lo] <= limits[i] for i, (hi, lo) in enumerate(keys)):
+            selected.append(frame_no)
+        _progress('scan', frame_no + 1, total, last)
+    return selected
+
+
+def _write_frames(path: str, frames: List[int]) -> None:
+    runs: List[List[int]] = []
+    for n in frames:
+        if runs and runs[-1][0] + runs[-1][1] == n:
+            runs[-1][1] += 1
+        else:
+            runs.append([n, 1])
+    with open(path, 'w', encoding='ascii', newline='\n') as fh:
+        fh.write(f'# Total frames to analyze: {len(frames)}\n')
+        fh.writelines(f'{s},{-c}\n' for s, c in runs)
+
+
+def _read_frames(path: str, total: int) -> List[int]:
+    frames: List[int] = []
+    with open(path, encoding='ascii') as fh:
+        for line in fh:
+            line = line.split('#')[0].strip()
+            if not line:
+                continue
+            s, e = (int(v) for v in line.split(','))
+            end = s - e - 1 if e < 0 else (total - 1 if e == 0 else e)
+            frames.extend(range(s, end + 1))
+    return frames
+
+
+def _loop_count(n: int) -> int:
+    for limit, k in ((10, 200), (20, 40), (40, 20), (80, 10), (160, 5), (320, 2)):
+        if n < limit:
+            return k
+    return 1
+
+
+def _pick(c: vs.VideoNode, frames: List[int]) -> vs.VideoNode:
+    blank = core.std.BlankClip(c, length=len(frames))
+    return core.std.FrameEval(blank, lambda n: c[frames[n]])
+
+
+def _analysis_frames(inyv12: vs.VideoNode, analyze: int, basemask_p: vs.VideoNode, th: int, noborder: str, grey: bool,
+                     logo_id: str, reanalyze: int) -> List[int]:
+    if analyze == 3:
+        return list(range(inyv12.num_frames)) * _loop_count(inyv12.num_frames)
+    txt = logo_id + '.txt'
+    if os.path.isfile(txt) and not reanalyze:
+        frames = _read_frames(txt, inyv12.num_frames)
+    else:
+        frames = _select_frames(inyv12, analyze, basemask_p, th, noborder, grey)
+        if len(frames) < 2:
+            raise _error('No frames found to analyze, increase "AnalyzeTh".')
+        _write_frames(txt, frames)
+    return frames * _loop_count(len(frames))
+
+
+_LOGO_KEYS = ('cy', 'ay', 'cu', 'au', 'cv', 'av', 'base')
+
+
+def _analyze(inyv12: vs.VideoNode, imgmask: vs.VideoNode, analyze: int, th: int, noborder: str, grey: bool,
+             logo_id: str, reanalyze: int) -> Dict[str, numpy.ndarray]:
+    # positive Analyze: frame selection, AnalyzeLogo of Y and of YUV; results cached in <logo_id>.npz
+    npz = logo_id + '.npz'
+    w, h = inyv12.width, inyv12.height
+    if os.path.isfile(npz) and not reanalyze:
+        with numpy.load(npz) as data:
+            if int(data['version']) == _VERSION and tuple(int(v) for v in data['size']) == (w, h):
+                return {k: data[k].copy() for k in _LOGO_KEYS}
+    frames = _analysis_frames(inyv12, analyze, imgmask, th, noborder, grey, logo_id, reanalyze)
+    sel = _pick(inyv12, frames)
+    sys.stderr.write(f'{_NAME}: analyzing the logo on {len(frames)} frames\n')
+    basemask_y = _expand(imgmask[0], 2)
+    ym = _to_array(core.avsinpaint.AnalyzeLogo(_plane(sel, 0), basemask_y))
+    res = {'cy': ym[:h], 'ay': ym[h:], 'base': _to_array(imgmask)}
+    if grey:
+        res.update(cu=numpy.full((h // 2, w // 2), 128, numpy.uint8), cv=numpy.full((h // 2, w // 2), 128, numpy.uint8))
+        res.update(au=numpy.zeros((h // 2, w // 2), numpy.uint8), av=numpy.zeros((h // 2, w // 2), numpy.uint8))
+    else:
+        full = core.avsinpaint.AnalyzeLogo(sel, basemask_y)[0]
+        color = core.std.CropAbs(full, w, h, 0, 0)
+        uva = _to_array(core.resize.Spline36(_plane(core.std.CropAbs(full, w, h, 0, h), 0), w // 2, h // 2))
+        res.update(cu=_to_array(_plane(color, 1)), cv=_to_array(_plane(color, 2)), au=uva, av=uva.copy())
+    arrays: Dict[str, Any] = dict(res, version=_VERSION, size=numpy.array([w, h]))
+    numpy.savez(npz, **arrays)
+    return res
+
+
+def _automask(clp: vs.VideoNode, inyv12: vs.VideoNode, mask_path: str, a: int, b: int, whole: bool, analyze: int, th: int,
+              noborder: str, reanalyze: int, amix: int, logo_id: str) -> vs.VideoNode:
+    # Automask=1: estimate the logo alpha and write the base mask to "mask"; the output shows mask and alpha
+    if analyze not in (2, 3):
+        raise _error('"Automask" needs "Analyze" 2 or 3.')
+    folder = os.path.dirname(mask_path)
+    if folder and not os.path.isdir(folder):
+        raise _error(folder + ' folder not found!')
+    w, h = inyv12.width, inyv12.height
+    frame = numpy.zeros((clp.height, clp.width), numpy.uint8)
+    if whole:
+        frame[b + 1:b + h - 1, a + 1:a + w - 1] = 255
+    else:
+        frame[b:b + h, a:a + w] = 255
+    amerge = core.std.CropAbs(_inpand(_frame_clip(frame), 6 if whole else 7), w, h, a, b)
+    base, ext = os.path.splitext(mask_path)
+    auto_id = f'{base}_AutomaskTemp_A{analyze}{ext}'
+    if os.path.isfile(auto_id) and not reanalyze:
+        img = core.bs.VideoSource(auto_id, cachemode=0)[0]
+        alpha = _to_array(core.resize.Point(_plane(img, 0), format=vs.GRAY8))
+    else:
+        if analyze == 2:
+            frames = _analysis_frames(inyv12, 2, amerge, th, noborder, True, logo_id, reanalyze)
+            sel = _pick(_plane(inyv12, 0), frames)
+        else:
+            sel = _plane(inyv12, 0)
+        found = core.avsinpaint.AnalyzeLogo(sel, amerge)[0]
+        alpha = _to_array(_lut(core.std.CropAbs(found, w, h, 0, h), _LIMITED_TO_RGB))
+        _write_image(auto_id, alpha)
+    full = numpy.zeros((clp.height, clp.width), numpy.uint8)
+    full[b:b + h, a:a + w] = alpha
+    binary = numpy.where(full > int(-amix * 3 + 19), 255, 0).astype(numpy.uint8)
+    _write_image(mask_path, binary)
+    return _gray_to_yuv420(core.std.StackVertical([_frame_clip(binary[b:b + h, a:a + w]), _frame_clip(alpha)]))
+
+
+def _edit_masks(logo: Dict[str, numpy.ndarray], imgmask: vs.VideoNode, opts: Dict[str, Any]) -> Dict[str, vs.VideoNode]:
+    # ebmp mask editing of the original (expert parameters), on one-frame GRAY clips
+    clips = {k: _frame_clip(v) for k, v in logo.items()}
+    w, h = logo['cy'].shape[1], logo['cy'].shape[0]
+    ext = opts['YAlphaExternal']
+    if isinstance(ext, vs.VideoNode):
+        if (ext.width, ext.height) != (w, h):
+            raise _error('Wrong "YAlphaExternal" resolution.')
+        clips['ay'] = core.resize.Point(_plane(ext[0], 0) if ext.format.color_family != vs.GRAY else ext[0], format=vs.GRAY8)
+    if opts['UVAlphaFromY']:
+        clips['au'] = clips['av'] = core.resize.Spline64(clips['ay'], w // 2, h // 2)
+    for key, name in (('ay', 'YAlphaTweak'), ('au', 'UAlphaTweak'), ('av', 'VAlphaTweak')):
+        if opts[name]:
+            clips[key] = core.std.Expr(clips[key], f'x {opts[name]} +')
+    for key, name in (('cy', 'YColorSolid'), ('cu', 'UColorSolid'), ('cv', 'VColorSolid')):
+        if opts[name] > -1:
+            clips[key] = core.std.BlankClip(clips[key], color=opts[name])
+    solid = [f'{p}{k}Solid{io}' for p in 'YUV' for k in ('Alpha', 'Color') for io in ('Outs', 'Ins')]
+    if any(opts[s] > -1 for s in solid):
+        y = imgmask[0]
+        masks = {'Y': (_mtballoon2px(y, opts['YOffsetOuts']), _mtballoon2px(y, opts['YOffsetIns'])),
+                 'UV': (_halve_point(_mtballoon2px(y, opts['UVOffsetOuts'])), _halve_point(_mtballoon2px(y, opts['UVOffsetIns'])))}
+        for p in 'YUV':
+            mo, mi = masks['Y' if p == 'Y' else 'UV']
+            for k, key in (('Color', 'c' + p.lower()), ('Alpha', 'a' + p.lower())):
+                outs, ins = opts[f'{p}{k}SolidOuts'], opts[f'{p}{k}SolidIns']
+                cur = clips[key]
+                if outs > -1:
+                    cur = _overlay(core.std.BlankClip(cur, color=outs), cur, mo)
+                if ins > -1:
+                    cur = _overlay(cur, core.std.BlankClip(cur, color=ins), mi)
+                clips[key] = cur
+    if opts['ShiftMasksVe'] or opts['ShiftMasksHo']:
+        ho, ve = opts['ShiftMasksHo'], opts['ShiftMasksVe']
+        for key in ('cy', 'ay'):
+            clips[key] = core.resize.Spline64(clips[key], w, h, src_left=ho, src_top=ve, src_width=w, src_height=h)
+        for key in ('cu', 'au', 'cv', 'av'):
+            clips[key] = core.resize.Spline64(clips[key], w // 2, h // 2, src_left=ho / 2.0, src_top=ve / 2.0, src_width=w // 2, src_height=h // 2)
+    return clips
+
+
+def _edge_mask(source: vs.VideoNode, wide: int) -> vs.VideoNode:
+    # EdgePP: ring between balloonPX(+k) and balloonPX(-k) of the source mask
+    k = wide + 1
+    return core.std.Expr([_balloon_px(source, k), _balloon_px(source, -k)], 'y 255 = 0 x ?')
 
 
 def InpaintLoc(clp: vs.VideoNode, Loc: str = '0,0,0,0') -> vs.VideoNode:
@@ -284,42 +603,93 @@ def InpaintLoc(clp: vs.VideoNode, Loc: str = '0,0,0,0') -> vs.VideoNode:
     return _paste(clp, area, a, b)
 
 
+_EDIT_DEFAULTS: Dict[str, Any] = {
+    'YAlphaExternal': None, 'UVAlphaFromY': 0, 'YAlphaTweak': 0, 'UAlphaTweak': 0, 'VAlphaTweak': 0,
+    'YColorSolid': -1, 'UColorSolid': -1, 'VColorSolid': -1, 'YColorSolidOuts': -1, 'UColorSolidOuts': -1, 'VColorSolidOuts': -1,
+    'YColorSolidIns': -1, 'UColorSolidIns': -1, 'VColorSolidIns': -1, 'YAlphaSolidOuts': -1, 'UAlphaSolidOuts': -1, 'VAlphaSolidOuts': -1,
+    'YAlphaSolidIns': -1, 'UAlphaSolidIns': -1, 'VAlphaSolidIns': -1, 'YOffsetIns': -1, 'YOffsetOuts': 1, 'UVOffsetIns': -2,
+    'UVOffsetOuts': 2, 'ShiftMasksVe': 0, 'ShiftMasksHo': 0,
+}
+_EDIT_RANGES: Dict[str, Tuple[int, int]] = {
+    'UVAlphaFromY': (0, 1), 'YAlphaTweak': (-10, 10), 'UAlphaTweak': (-10, 10), 'VAlphaTweak': (-10, 10), 'YOffsetIns': (-4, 0),
+    'YOffsetOuts': (0, 4), 'UVOffsetIns': (-4, 0), 'UVOffsetOuts': (0, 4), 'ShiftMasksVe': (-1, 1), 'ShiftMasksHo': (-1, 1),
+}
+
+
 def InpaintDelogo(clp: vs.VideoNode, mask: Union[str, vs.VideoNode, None] = None, Loc: str = '', Mode: str = 'Inpaint',
-                  Inflate: int = 1, KillShape: int = 0, Turbo: int = 0, Radius: float = 8.0, Sharpness: float = 45.0,
-                  PreBlur: float = 6.5, PostBlur: float = 4.0, prePP: int = 0, oPP: int = -5, oPPm: int = 3, GrainPP: int = 0,
-                  mShow: int = 0, Optimize1: Optional[int] = None, Greyscale: int = 0, **kwargs: Any) -> vs.VideoNode:
+                  Analyze: Optional[int] = None, AnalyzeTh: Optional[int] = None, NoBorderAt: str = 'none', ReAnalyze: int = 0,
+                  Automask: int = 0, aMix: int = 0, Inflate: int = 1, KillShape: int = 0, Turbo: int = 0, Radius: float = 8.0,
+                  Sharpness: float = 45.0, PreBlur: float = 6.5, PostBlur: float = 4.0, prePP: int = 0,
+                  Interp: int = 2, IntSpd: int = 1, InterpM: int = 0, iTune: int = 0, iTinflate: int = 0, oTune: int = 0, oTinflate: int = 0,
+                  dPP: int = -3, dPPm: int = 3, diPP: int = -5, diPPm: int = 3, oPP: int = -5, oPPm: int = 3,
+                  EdgePP: int = 0, EdgePos: int = 0, EdgeWide: int = 1, GrainPP: int = 0, mShow: int = 0,
+                  Optimize1: Optional[int] = None, Optimize2: int = 3, Greyscale: int = 0, WholeDeblend: int = 0,
+                  TriggerDynamic: int = 0, DumpMasks: int = 0, LogoPath: str = '', **kwargs: Any) -> vs.VideoNode:
     '''
-    Logo removal by inpainting (InpaintDelogo 3.7, Inpaint mode with a static mask).
+    Logo removal by inpainting and deblending (InpaintDelogo 3.7).
     clp: YUV 8..16 bit; only the "Loc" area is processed in YUV420P8, pixels the delogo does not change keep the source values.
     mask: path to a bmp/png mask of the whole frame (logo 255, rest < 255) or a one-frame GRAY clip of the "Loc" size.
     Loc: "Left,Top,-Right,-Bottom" or "Left,Top,Width,Height", even numbers, 10-20 px border around the logo.
-    The other parameters have the meaning and the defaults of the original script.
+    LogoPath: base path of the analysis files (.txt frame list, .npz masks); default: the original's name next to the mask.
+    The other parameters have the meaning and the defaults of the original; ebmp files and negative Analyze are not supported.
     '''
+    opts = dict(_EDIT_DEFAULTS)
     for key, value in kwargs.items():
-        if key not in _UNSUPPORTED:
+        if key in _EDIT_DEFAULTS:
+            opts[key] = value
+        elif key in _UNSUPPORTED:
+            if value != _UNSUPPORTED[key]:
+                raise _error(f'"{key}" is not supported yet.')
+        else:
             raise _error(f'unknown parameter "{key}".')
-        if value != _UNSUPPORTED[key]:
-            raise _error(f'"{key}" is not supported yet.')
     _require('avsinpaint', 'inpainting')
     _require('akarin', 'the mask helpers')
     fmt = clp.format
     if fmt is None or fmt.color_family != vs.YUV or fmt.sample_type != vs.INTEGER or fmt.bits_per_sample > 16:
         raise _error('only constant-format YUV 8..16 bit integer clips are supported.')
-    if Mode.lower() != 'inpaint':
-        raise _error(f'Mode "{Mode}" is not supported yet.')
+    mode = Mode.lower()
+    if mode not in ('inpaint', 'deblend', 'both'):
+        raise _error('This mode doesn\'t exist. Change "Mode" value.')
     if not Loc:
         raise _error('You must define "Loc".')
     if Loc.replace(' ', '') == '100,100,-100,-100':
         raise _error('Use "InpaintLoc" function to get crop values for "Loc".')
     if mask is None or mask == '':
         raise _error('You have to define the "mask" string')
-    checks = [('Inflate', Inflate, 0, 2), ('KillShape', KillShape, 0, 1), ('Turbo', Turbo, -2, 3), ('prePP', prePP, 0, 1),
-              ('oPP', oPP, -8, 8), ('oPPm', oPPm, 0, 3), ('GrainPP', GrainPP, 0, 3), ('mShow', mShow, 0, 9), ('Greyscale', Greyscale, 0, 2)]
+    if isinstance(mask, str) and mask.lower().endswith('.ebmp'):
+        raise _error('ebmp masks are not supported.')
+    if Analyze is None:
+        Analyze = 2
+    if AnalyzeTh is None:
+        AnalyzeTh = 30 if clp.num_frames < 45000 else 16
+    checks = [('Analyze', Analyze, 1, 3), ('AnalyzeTh', AnalyzeTh, 1, 255), ('ReAnalyze', ReAnalyze, 0, 1), ('Automask', Automask, 0, 1),
+              ('aMix', aMix, -50, 6), ('Inflate', Inflate, 0, 2), ('KillShape', KillShape, 0, 1), ('Turbo', Turbo, -2, 3),
+              ('prePP', prePP, 0, 1), ('Interp', Interp, 0, 4), ('IntSpd', IntSpd, 1, 4), ('InterpM', InterpM, -1, 2),
+              ('iTune', iTune, -10, 10), ('iTinflate', iTinflate, 0, 3), ('oTune', oTune, -10, 10), ('oTinflate', oTinflate, 0, 3),
+              ('dPP', dPP, -8, 8), ('dPPm', dPPm, 1, 3), ('diPP', diPP, -8, 8), ('diPPm', diPPm, 0, 3), ('oPP', oPP, -8, 8),
+              ('oPPm', oPPm, 0, 3), ('EdgePP', EdgePP, 0, 3), ('EdgePos', EdgePos, -1, 1), ('EdgeWide', EdgeWide, 0, 3),
+              ('GrainPP', GrainPP, 0, 3), ('mShow', mShow, 0, 9), ('Optimize2', Optimize2, 0, 3), ('Greyscale', Greyscale, 0, 2),
+              ('WholeDeblend', WholeDeblend, 0, 1), ('TriggerDynamic', TriggerDynamic, 0, 1), ('DumpMasks', DumpMasks, 0, 2)]
+    checks += [(k, opts[k], lo, hi) for k, (lo, hi) in _EDIT_RANGES.items()]
+    checks += [(k, opts[k], -1, 255) for k in _EDIT_DEFAULTS if 'Solid' in k]
     for name, value, lo, hi in checks:
         if value < lo or value > hi:
             raise _error(f'"{name}" value must be between {lo} and {hi}.')
-    if 4 < mShow < 9:
+    if NoBorderAt not in ('top', 'bottom', 'left', 'right', 'none'):
+        raise _error('"NoBorderAt" string must be \'top\', \'bottom\', \'left\', \'right\' or \'none\'.')
+    if mode == 'inpaint' and 4 < mShow < 9:
         raise _error('Calculating the meaning of life and everything. Meanwhile RTM.')
+    if mode != 'inpaint' and KillShape:
+        raise _error('"KillShape" parameter is only for "Inpaint" mode.')
+    if mode == 'inpaint' and EdgePP:
+        raise _error('"EdgePP" parameter is not for "Inpaint" mode.')
+    if mShow == 8 and EdgePP == 0:
+        raise _error('Incompatible "EdgePP" and "mShow" parameters.')
+    if Automask and Analyze == 1:
+        raise _error('"Analyze" 1 & -1 can\'t be used with "Automask=1".')
+    whole = Loc.replace(' ', '') in ('0,0,0,0', '0,0,-0,-0')
+    if WholeDeblend and not whole:
+        raise _error('"WholeDeblend" can be used only on a whole frame.')
     if Optimize1 is None:
         Optimize1 = 0 if Turbo > 0 else 1
     if Optimize1 not in (0, 1):
@@ -329,10 +699,22 @@ def InpaintDelogo(clp: vs.VideoNode, mask: Union[str, vs.VideoNode, None] = None
     if Optimize1 and (Sharpness != 45 or PreBlur != 6.5 or PostBlur != 4 or Radius != 8):
         raise _error('"Optimize1" can\'t be used with custom inpainting settings.')
     grey = Greyscale == 1
+    if DumpMasks == 2:
+        opts.update(YColorSolidOuts=0, UColorSolidOuts=128, VColorSolidOuts=128, YAlphaSolidOuts=0, UAlphaSolidOuts=0, VAlphaSolidOuts=0)
 
+    analyze = 0 if mode == 'inpaint' and not Automask else Analyze
+    interp = 0.0 if mode == 'inpaint' else {1: 0.84, 2: 0.73, 3: 0.59, 4: 0.40}.get(Interp, 0.0)
+    interpm = 0 if mode == 'inpaint' or mode == 'both' and InterpM == -1 else InterpM
+    interpm_infl = 0 if interpm == -1 else interpm
+    dppm = 0 if dPP == 0 and interp < 1 else dPPm
+    dippm = 0 if diPP == 0 else diPPm
     oppm = 0 if oPP == 0 else oPPm
     pre = 3 if prePP else 0
-    opp = {1: 6, 2: 7, 3: 7}.get(Turbo, oPP)
+    tunelow, itunelow = int(-oTune * 10 + 140), int(-iTune * 10 + 140)
+    if mode == 'inpaint':
+        opp = {1: 6, 2: 7, 3: 7}.get(Turbo, oPP)
+    else:
+        opp = 6 if Turbo > 0 and mode == 'both' else oPP
     radius = {1: 6.0, 2: 4.0, 3: 2.0, -1: 16.0, -2: 16.0}.get(Turbo, Radius)
     sharpness = 0.0 if Turbo > 0 else Sharpness
     preblur = 4.0 if Turbo < 0 else 0.0 if Turbo > 0 else PreBlur
@@ -343,6 +725,16 @@ def InpaintDelogo(clp: vs.VideoNode, mask: Union[str, vs.VideoNode, None] = None
         raise _error('"Loc" does not fit the chroma subsampling.')
     loc_src = core.std.CropAbs(clp, loc_w, loc_h, a, b)
     inyv12 = _to_yv12(loc_src)
+
+    mask_name = mask if isinstance(mask, str) else 'Clip'
+    coords = f'{a}-{b}-{clp.width - a - loc_w}-{clp.height - b - loc_h}'
+    suffix = f'_A{analyze}' if analyze == 3 else f'_A{analyze}-{AnalyzeTh}'
+    logo_id = LogoPath or f'{mask_name}_InpaintDelogo3_{coords}{suffix}'
+
+    if Automask:
+        if not isinstance(mask, str):
+            raise _error('"Automask" needs "mask" as the path of the image to create.')
+        return _automask(clp, inyv12, mask, a, b, whole, analyze, AnalyzeTh, NoBorderAt, ReAnalyze, aMix, logo_id)
 
     if isinstance(mask, vs.VideoNode):
         if mask.num_frames != 1:
@@ -356,10 +748,65 @@ def InpaintDelogo(clp: vs.VideoNode, mask: Union[str, vs.VideoNode, None] = None
 
     basemask_p = _balloon_px(imgmask, 99) if KillShape else imgmask
     basemask = _balloon_px(basemask_p, Inflate)
-    opaque = basemask
-    inpaint_mpp = _balloon_gr(opaque, oppm)
+    interp_mask = _balloon_px(basemask, interpm_infl)
 
-    if Optimize1:
+    planes: Dict[str, vs.VideoNode] = {}
+    if analyze:
+        logo = _analyze(inyv12, imgmask, analyze, AnalyzeTh, NoBorderAt, grey, logo_id, ReAnalyze)
+        planes = _edit_masks(logo, imgmask, opts)
+        if DumpMasks:
+            top = numpy.hstack([_to_array(planes['cy']), numpy.vstack([_to_array(planes['cu']), _to_array(planes['au'])])])
+            mid = numpy.hstack([_to_array(planes['ay']), numpy.vstack([_to_array(planes['cv']), _to_array(planes['av'])])])
+            bot = numpy.hstack([logo['base'], numpy.zeros((loc_h, loc_w // 2), numpy.uint8)])
+            _write_image(logo_id + '_dump.png', numpy.vstack([top, mid, bot]))
+        if TriggerDynamic:
+            planes = {k: v * 2 for k, v in planes.items()}
+        logo_alpha = _lut(planes['ay'][0], _PC601_TO_RGB) * clp.num_frames
+    else:
+        logo_alpha = imgmask
+    opaque_tune = _balloon_px(_thr(logo_alpha, tunelow), oTinflate)
+    interp_tune_p = _thr(logo_alpha, itunelow)
+    interp_tune = _balloon_px(interp_tune_p, iTinflate)
+    if interpm == -1:
+        interp_mask = interp_tune
+    opaque = basemask if mode == 'inpaint' else opaque_tune
+    deblend_mpp = _balloon_gr(basemask, dppm)
+    inpaint_mpp = _balloon_gr(opaque, oppm)
+    itune_pp = _balloon_gr(interp_tune, dippm)
+    edge_mask = None
+    if EdgePP and mode != 'inpaint':
+        edge_mask = _edge_mask(_balloon_px(interp_tune_p if interpm < 0 else basemask_p, EdgePos), EdgeWide)
+
+    if mode != 'inpaint':
+        outs = [core.avsinpaint.DeblendLogo(_plane(inyv12, 0), planes['cy'], planes['ay'])]
+        for p, c, al in ((1, 'cu', 'au'), (2, 'cv', 'av')):
+            outs.append(_plane(inyv12, p) if grey else core.avsinpaint.DeblendLogo(_plane(inyv12, p), planes[c], planes[al]))
+        debl_pre = core.std.ShufflePlanes(outs, [0, 0, 0], vs.YUV)
+        inpa_pre: Optional[vs.VideoNode] = None
+        if interp > 0 and IntSpd > 2 and Optimize1:
+            opt2_v = debl_pre if WholeDeblend or interpm == -1 else inyv12
+            opt2_bm = _expand(interp_mask, 2)
+            opt2_cb = _blur(opt2_v, 1.58)
+            ring2 = _Ring(opt2_cb, _ring(opt2_bm), grey)
+            ooo = [_inpaint(opt2_cb, opt2_bm, grey, r, 1.5, 0, 0) for r in (2, 6)]
+            ooo += [_inpaint(inyv12, interp_mask, grey, r, 45, pb, po) for pb, po, r in ((6.5, 4, 8), (4, 8, 16))]
+            lo3 = '2' if IntSpd == 3 else f'{ring2.cond(60)} 2 3 ?'
+            inpa_pre = ring2.select(ooo, f'{ring2.cond(15)} 0 {ring2.cond(40)} 1 {lo3} ? ?')
+        elif interp > 0:
+            inin1 = debl_pre if WholeDeblend or interpm == -1 else inyv12
+            r, sh, pb, po = {1: (2, 1.5, 0, 0), 2: (6, 1.5, 0, 0), 3: (8, 45, 6.5, 4), 4: (16, 45, 4, 8)}[IntSpd]
+            inpa_pre = _inpaint(inin1, interp_mask, grey, r, sh, pb, po)
+        if Optimize2 and interp and inpa_pre is not None:
+            ring3 = _Ring(_blur(inyv12, 1.58), _ring(_expand(imgmask, 3)), grey)
+            oooo = [_opacity(inpa_pre, debl_pre, 0.40), _opacity(inpa_pre, debl_pre, interp), debl_pre]
+            lo1 = '1' if Optimize2 == 2 else f'{ring3.cond(30)} 1 2 ?'
+            logo_deblend = ring3.select(oooo, lo1 if Optimize2 == 1 else f'{ring3.cond(15)} 0 {lo1} ?')
+        elif interp and inpa_pre is not None:
+            logo_deblend = _opacity(inpa_pre, debl_pre, interp)
+        else:
+            logo_deblend = debl_pre
+        delogo = logo_deblend if mode == 'deblend' else _inpaint(logo_deblend, opaque, grey, radius, sharpness, preblur, postblur)
+    elif Optimize1:
         delogo = _optimize1(inyv12, imgmask, opaque, Turbo, grey)
     else:
         src = _pp(_plane(inyv12, 0) if grey else inyv12, pre)
@@ -367,7 +814,24 @@ def InpaintDelogo(clp: vs.VideoNode, mask: Union[str, vs.VideoNode, None] = None
         delogo = core.avsinpaint.InpaintLogo(src, opaque, **kw)
         delogo = _gray_to_yuv420(delogo) if grey else delogo
 
-    out = _overlay(inyv12, _pp(delogo, opp, grey), inpaint_mpp)
+    delogo2 = delogo
+    if edge_mask is not None:
+        r, sh, pb, po = {1: (2, 1.5, 0, 0), 2: (6, 1.5, 0, 0), 3: (8, 45, 6.5, 4)}[EdgePP]
+        delogo2 = _inpaint(delogo, edge_mask, grey, r, sh, pb, po)
+
+    if mode == 'inpaint':
+        out = _overlay(inyv12, _pp(delogo, opp, grey), inpaint_mpp)
+    elif not WholeDeblend:
+        if dPP:
+            out = _overlay(inyv12, _pp(delogo2, dPP, grey), deblend_mpp)
+        else:
+            out = _overlay(inyv12, delogo2, deblend_mpp if dppm else basemask)
+    else:
+        out = _overlay(delogo2, _pp(delogo2, dPP, grey), deblend_mpp) if dPP else delogo2
+    if mode == 'deblend' and InterpM == -1 and diPP:
+        out = _overlay(out, _pp(out, diPP, grey), itune_pp)
+    if mode == 'both' and oPP:
+        out = _overlay(out, _pp(out, opp, grey), inpaint_mpp)
 
     if GrainPP:
         from addGrain import GrainFactory3
@@ -377,10 +841,14 @@ def InpaintDelogo(clp: vs.VideoNode, mask: Union[str, vs.VideoNode, None] = None
 
     if mShow:
         red = core.resize.Point(core.std.BlankClip(out, format=vs.RGB24, color=[255, 0, 0]), format=vs.YUV420P8, matrix_s='170m')
-        show_mask = {1: opaque, 2: inpaint_mpp, 3: basemask, 4: basemask, 9: inpaint_mpp}[mShow]
-        out = _overlay(inyv12 if mShow in (4, 9) else out, red, show_mask)
+        masks = {1: opaque, 2: inpaint_mpp, 3: basemask, 4: basemask, 5: deblend_mpp, 6: opaque_tune, 7: interp_mask, 8: edge_mask, 9: inpaint_mpp}
+        show_mask = masks[mShow]
+        assert show_mask is not None
+        out = _overlay(inyv12 if mShow in (4, 5, 6, 9) else out, red, show_mask)
 
-    if fmt.id == vs.YUV420P8:
+    if whole:
+        result = out if fmt.id == vs.YUV420P8 else _expr([_from_yv12(out, fmt), _from_yv12(inyv12, fmt), clp], 'x y = z x ?')
+    elif fmt.id == vs.YUV420P8:
         result = _paste(clp, out, a, b)
     else:
         changed = _expr([_from_yv12(out, fmt), _from_yv12(inyv12, fmt), loc_src], 'x y = z x ?')
