@@ -4,14 +4,16 @@ import os
 import struct
 import sys
 import zlib
-from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple, Union
+from typing import Any, Callable, Dict, List, Mapping, Optional, Sequence, Tuple, Union
 
 import numpy
 import vapoursynth as vs
 from vapoursynth import core
 
+from helpers import pick_tool, tool_function, tool_namespace
+
 # Port of InpaintDelogo 3.7 by VoodooFX (public domain): https://github.com/Purfview/InpaintDelogo
-# Needs AvsInpaint >= 1.4 (core.avsinpaint) and akarin; BestSource for mask files, neo_fft for negative oPP/dPP, addGrain for GrainPP.
+# Needs AvsInpaint >= 1.4 (core.avsinpaint) and akarin; BestSource for mask files, an FFT3D plugin for negative oPP/dPP, addGrain for GrainPP.
 # The helpers below rebuild AviSynth+ 3.7.5 (AVX2) and MaskTools2 bit-exactly where the original relies on them.
 
 _NAME = 'InpaintDelogo'
@@ -19,6 +21,12 @@ _VERSION = 1
 
 # Parameters of later port stages; a value other than these defaults raises an error.
 _UNSUPPORTED: Dict[str, Any] = {'DynMask': 0, 'Extract': 0}
+
+# tools argument of the running InpaintDelogo() call; every node is built inside that call.
+_tools: Optional[Mapping[str, str]] = None
+# Implementations the script can use per tools family, in the default order; std.Expr lacks floor, X/Y, x[] and variables.
+_TOOL_ORDER: Dict[str, Tuple[str, ...]] = {'expr': ('akarin', 'cranexpr'), 'rg': ('zsmooth', 'neo_smo', 'rgvs'),
+                                           'hysteresis': ('hysteresis', 'misc'), 'fft3d': ('neo_fft', 'neo_fft3d', 'fft3dfilter')}
 
 
 def _error(msg: str) -> vs.Error:
@@ -30,10 +38,17 @@ def _require(namespace: str, purpose: str) -> None:
         raise _error(f'the {namespace} plugin is required for {purpose}.')
 
 
+def _require_tool(family: str, purpose: str) -> None:
+    if pick_tool(_tools, family, _TOOL_ORDER[family]) is None:
+        raise _error(f'one of {", ".join(_TOOL_ORDER[family])} is required for {purpose}.')
+
+
 def _expr(clips: Union[vs.VideoNode, Sequence[vs.VideoNode]], expr: Union[str, Sequence[str]], fmt: Optional[int] = None) -> vs.VideoNode:
+    name = pick_tool(_tools, 'expr', _TOOL_ORDER['expr']) or 'akarin'
+    func = getattr(core, tool_namespace('expr', name)).Expr
     if fmt is None:
-        return core.akarin.Expr(clips, expr)
-    return core.akarin.Expr(clips, expr, format=fmt)
+        return func(clips, expr)
+    return func(clips, expr, format=fmt)
 
 
 def _plane(c: vs.VideoNode, p: int) -> vs.VideoNode:
@@ -146,15 +161,17 @@ def _mirror_pad(c: vs.VideoNode, pad: int) -> vs.VideoNode:
 
 def _fft3d(c: vs.VideoNode, sigma: float) -> vs.VideoNode:
     # Neo_FFT3D(sigma, y=3, u=3, v=3) plane by plane; only a plane FFT3D rejects is mirror-padded
+    _require_tool('fft3d', 'negative oPP/dPP')
+    fft3d = tool_function(_tools, 'fft3d', 'FFT3D', _TOOL_ORDER['fft3d'])
     planes = [c] if c.format.num_planes == 1 else [_plane(c, p) for p in range(3)]
     out = []
     for pl in planes:
         try:
-            out.append(core.neo_fft.FFT3D(pl, sigma=sigma))
+            out.append(fft3d(pl, sigma=sigma))
         except vs.Error:
             padded = _mirror_pad(pl, _FFT_PAD)
             p = (padded.width - pl.width) // 2
-            out.append(core.std.CropAbs(core.neo_fft.FFT3D(padded, sigma=sigma), pl.width, pl.height, p, p))
+            out.append(core.std.CropAbs(fft3d(padded, sigma=sigma), pl.width, pl.height, p, p))
     return out[0] if len(out) == 1 else core.std.ShufflePlanes(out, [0, 0, 0], vs.YUV)
 
 
@@ -169,7 +186,6 @@ def _pp(c: vs.VideoNode, x: int, grey: bool = False) -> vs.VideoNode:
     for amount in chain:
         c = _blur(c, amount)
     if x < 0:
-        _require('neo_fft', 'negative oPP')
         c = _fft3d(c, 8.0 if x < -4 else 4.0)
     return _gray_to_yuv420(c) if grey else c
 
@@ -1115,7 +1131,7 @@ def InpaintDelogo(clp: vs.VideoNode, mask: Union[str, vs.VideoNode, None] = None
                   EdgePP: int = 0, EdgePos: int = 0, EdgeWide: int = 1, GrainPP: int = 0, mShow: int = 0,
                   Optimize1: Optional[int] = None, Optimize2: int = 3, Greyscale: int = 0, WholeDeblend: int = 0,
                   TriggerDynamic: int = 0, DumpMasks: int = 0, LogoPath: str = '', Temporal: int = 0, Show: int = 0, Track: int = 0,
-                  TrackTh: float = 0.35,
+                  TrackTh: float = 0.35, tools: Optional[Mapping[str, str]] = None,
                   **kwargs: Any) -> vs.VideoNode:
     '''
     Logo removal by inpainting and deblending (InpaintDelogo 3.7).
@@ -1129,8 +1145,13 @@ def InpaintDelogo(clp: vs.VideoNode, mask: Union[str, vs.VideoNode, None] = None
     Show: 1 or 2, the original's grids of masks and delogo steps (Loc area, RGB24, another size than the input); 3..12 are not ported.
     Temporal: 0..100 neighbour frames on each side that may show the hidden pixels (motion around Loc, block-wise); only the rest
       is inpainted. Inpaint mode with a static mask only; an extension of this port.
+    tools: implementation per family (helpers.pick_tool()): expr (akarin, cranexpr), rg (zsmooth, neo_smo, rgvs),
+      hysteresis (hysteresis, misc), fft3d (neo_fft, neo_fft3d, fft3dfilter), grain (passed to GrainFactory3).
+      akarin stays required for akarin.Select.
     The other parameters have the meaning and the defaults of the original; ebmp files and negative Analyze are not supported.
     '''
+    global _tools
+    _tools = tools
     opts = dict(_EDIT_DEFAULTS)
     dyn_opts = dict(_DYN_DEFAULTS)
     for key, value in kwargs.items():
@@ -1278,7 +1299,7 @@ def InpaintDelogo(clp: vs.VideoNode, mask: Union[str, vs.VideoNode, None] = None
         # the rest mask is already grown by Inflate; it is a per-frame mask clip, so the second pass runs with DynMask=1
         return InpaintDelogo(pre, mask=rest, Loc=Loc, Inflate=0, KillShape=KillShape, Turbo=Turbo, Radius=Radius, Sharpness=Sharpness,
                              PreBlur=PreBlur, PostBlur=PostBlur, prePP=prePP, oPP=oPP, oPPm=oPPm, GrainPP=GrainPP, Optimize1=0,
-                             Greyscale=Greyscale)
+                             Greyscale=Greyscale, tools=tools)
     interp_mask = _balloon_px(basemask, interpm_infl)
 
     planes: Dict[str, vs.VideoNode] = {}
@@ -1374,7 +1395,7 @@ def InpaintDelogo(clp: vs.VideoNode, mask: Union[str, vs.VideoNode, None] = None
     if GrainPP:
         from addGrain import GrainFactory3
         strength = {1: (1, 0, 0), 2: (2, 1, 1), 3: (2, 2, 2)}[GrainPP]
-        grained = GrainFactory3(out, g1str=strength[0], g2str=strength[1], g3str=strength[2], temp_avg=60)
+        grained = GrainFactory3(out, g1str=strength[0], g2str=strength[1], g3str=strength[2], temp_avg=60, tools=_tools)
         out = _overlay(out, grained, _balloon_gr(basemask, 3))
 
     delogo_pp = out
@@ -1480,14 +1501,14 @@ def _hysteresis4(seed: vs.VideoNode, big: vs.VideoNode) -> vs.VideoNode:
 
 
 def _hysteresis8(seed: vs.VideoNode, big: vs.VideoNode) -> vs.VideoNode:
-    _require('hysteresis', 'dynamic masks')
-    return core.hysteresis.Hysteresis(seed, big)
+    _require_tool('hysteresis', 'dynamic masks')
+    return tool_function(_tools, 'hysteresis', 'Hysteresis', _TOOL_ORDER['hysteresis'])(seed, big)
 
 
 def _removegrain2(c: vs.VideoNode) -> vs.VideoNode:
     # RemoveGrain(2) leaves the 1-pixel frame border untouched
-    _require('zsmooth', 'dynamic masks')
-    return _expr([core.zsmooth.RemoveGrain(c, 2), c], 'X 0 = Y 0 = X width 1 - = Y height 1 - = or or or y x ?')
+    _require_tool('rg', 'dynamic masks')
+    return _expr([tool_function(_tools, 'rg', 'RemoveGrain', _TOOL_ORDER['rg'])(c, 2), c], 'X 0 = Y 0 = X width 1 - = Y height 1 - = or or or y x ?')
 
 
 def _mtballoon_px(c: vs.VideoNode, mode: int) -> vs.VideoNode:
