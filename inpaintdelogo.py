@@ -209,7 +209,11 @@ def _read_mask(path: str, w: int, h: int, left: int, top: int, loc_w: int, loc_h
         if img.format.id != vs.RGB24:
             img = core.resize.Point(img, format=vs.RGB24, matrix_in_s='170m')
         g = _expr([_plane(img, p) for p in range(3)], 'x 9798 * y 19234 * + z 3736 * + 16384 + 32768 / floor')
-    return _thr(core.std.CropAbs(g, loc_w, loc_h, left, top), 254)
+    area = core.std.CropAbs(g, loc_w, loc_h, left, top)
+    peak = int(_to_array(area).max())
+    if peak < 255:
+        raise _error(f'"mask" has no pure white (255) pixel inside "Loc" (brightest value: {peak}); the logo must be 255, the rest darker.')
+    return _thr(area, 254)
 
 
 def _parse_loc(loc: str, w: int, h: int) -> Tuple[int, int, int, int]:
