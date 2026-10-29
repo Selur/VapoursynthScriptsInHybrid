@@ -193,8 +193,18 @@ def _range_props(plane: vs.VideoNode, mask: vs.VideoNode, name: str) -> Tuple[vs
     return hi, lo
 
 
-def _read_mask(path: str, w: int, h: int, left: int, top: int, loc_w: int, loc_h: int) -> vs.VideoNode:
-    # ImageSource(mask).Greyscale.ConvertToRGB32.Crop(Loc).Levels(254,1,255,0,255)
+def _limited_range(c: vs.VideoNode) -> bool:
+    # _Range (R74+): RANGE_LIMITED; _ColorRange (older): 1 = limited; no property: YUV counts as limited
+    props = c.get_frame(0).props
+    if '_Range' in props:
+        return int(props['_Range']) == int(getattr(vs, 'RANGE_LIMITED', 0))
+    if '_ColorRange' in props:
+        return int(props['_ColorRange']) == 1
+    return c.format is not None and c.format.color_family == vs.YUV
+
+
+def _read_mask(path: str, w: int, h: int, left: int, top: int, loc_w: int, loc_h: int, white: int = 255) -> vs.VideoNode:
+    # ImageSource(mask).Greyscale.ConvertToRGB32.Crop(Loc).Levels(254,1,255,0,255); white=235 for TV-range clips
     _require('bs', 'mask files')
     if not os.path.isfile(path):
         raise _error('"mask" file not found!')
@@ -211,9 +221,9 @@ def _read_mask(path: str, w: int, h: int, left: int, top: int, loc_w: int, loc_h
         g = _expr([_plane(img, p) for p in range(3)], 'x 9798 * y 19234 * + z 3736 * + 16384 + 32768 / floor')
     area = core.std.CropAbs(g, loc_w, loc_h, left, top)
     peak = int(_to_array(area).max())
-    if peak < 255:
-        raise _error(f'"mask" has no pure white (255) pixel inside "Loc" (brightest value: {peak}); the logo must be 255, the rest darker.')
-    return _thr(area, 254)
+    if peak < white:
+        raise _error(f'"mask" has no white ({white}+) pixel inside "Loc" (brightest value: {peak}); the logo must be white, the rest darker.')
+    return _thr(area, white - 1)
 
 
 def _parse_loc(loc: str, w: int, h: int) -> Tuple[int, int, int, int]:
@@ -756,7 +766,7 @@ def InpaintDelogo(clp: vs.VideoNode, mask: Union[str, vs.VideoNode, None] = None
             raise _error('Clip and "mask" image must have same dimensions.')
         imgmask = core.resize.Point(_plane(mask, 0) if mask.format.color_family != vs.GRAY else mask, format=vs.GRAY8)
     else:
-        imgmask = _read_mask(str(mask), clp.width, clp.height, a, b, loc_w, loc_h)
+        imgmask = _read_mask(str(mask), clp.width, clp.height, a, b, loc_w, loc_h, 235 if _limited_range(clp) else 255)
     imgmask = imgmask * clp.num_frames
 
     basemask_p = _balloon_px(imgmask, 99) if KillShape else imgmask
