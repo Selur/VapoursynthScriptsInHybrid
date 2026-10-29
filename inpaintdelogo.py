@@ -18,7 +18,7 @@ _NAME = 'InpaintDelogo'
 _VERSION = 1
 
 # Parameters of later port stages; a value other than these defaults raises an error.
-_UNSUPPORTED: Dict[str, Any] = {'DynMask': 0, 'Show': 0, 'Extract': 0}
+_UNSUPPORTED: Dict[str, Any] = {'DynMask': 0, 'Extract': 0}
 
 
 def _error(msg: str) -> vs.Error:
@@ -87,6 +87,19 @@ def _dist(c: vs.VideoNode, scale: float) -> vs.VideoNode:
     return core.avsinpaint.DistanceFunction(c, scale=float(scale))
 
 
+def _check_inflate_border(before: vs.VideoNode, after: vs.VideoNode, left: int, top: int, right: int, bottom: int) -> None:
+    # InpaintLogo fills the mask from the pixels around it; a mask grown by Inflate onto a "Loc" side inside the frame has none there
+    old, new = _to_array(before[0]) > 127, _to_array(after[0]) > 127
+    sides = {'top': (top, 0), 'bottom': (bottom, -1), 'left': (left, None), 'right': (right, None)}
+    for side, (gap, row) in sides.items():
+        if gap == 0:
+            continue
+        edge_old = old[row] if row is not None else old[:, 0 if side == 'left' else -1]
+        edge_new = new[row] if row is not None else new[:, 0 if side == 'left' else -1]
+        if edge_new.any() and not edge_old.any():
+            raise _error(f'the mask grown by "Inflate" reaches the {side} "Loc" border; enlarge "Loc" or lower "Inflate".')
+
+
 def _balloon_px(m: vs.VideoNode, mode: int) -> vs.VideoNode:
     # balloonPX(); masks are GRAY8, the alpha channel of the original RGB32 masks
     if mode == 0:
@@ -94,6 +107,9 @@ def _balloon_px(m: vs.VideoNode, mode: int) -> vs.VideoNode:
     if mode in (1, 2, 3, 4):
         scale, t = {1: (128, 30), 2: (64, 70), 3: (48, 70), 4: (38, 70)}[mode]
         return _thr(_dist(m, scale), t)
+    if 5 <= mode <= 8:
+        # Inflate beyond the original's 2: DistanceFunction falls by scale per pixel, so 128 / (n + 1) keeps exactly n pixels above 127
+        return _thr(_dist(m, 128.0 / (mode + 1)), 127)
     if mode in (-1, -2, -3, -4):
         for _ in range(-mode):
             m = _thr(_dist(m, -96), 150)
@@ -487,7 +503,8 @@ def _analysis_frames(inyv12: vs.VideoNode, analyze: int, basemask_p: vs.VideoNod
     else:
         frames = _select_frames(inyv12, analyze, basemask_p, th, noborder, grey)
         if len(frames) < 2:
-            raise _error('No frames found to analyze, increase "AnalyzeTh".')
+            where = 'with a flat "Loc" border' if analyze == 2 else 'with a flat area next to the logo'
+            raise _error(f'No frames {where} found to analyze; increase "AnalyzeTh", use a smaller "Loc" or Analyze=3.')
         _write_frames(txt, frames)
     return frames * _loop_count(len(frames))
 
@@ -519,7 +536,10 @@ def _analyze(inyv12: vs.VideoNode, imgmask: vs.VideoNode, analyze: int, th: int,
         uva = _to_array(core.resize.Spline36(_plane(core.std.CropAbs(full, w, h, 0, h), 0), w // 2, h // 2))
         res.update(cu=_to_array(_plane(color, 1)), cv=_to_array(_plane(color, 2)), au=uva, av=uva.copy())
     arrays: Dict[str, Any] = dict(res, version=_VERSION, size=numpy.array([w, h]))
-    numpy.savez(npz, **arrays)
+    # written next to the target and renamed, so a job waiting for the file never reads it half-written
+    tmp = npz[:-4] + '.tmp.npz'
+    numpy.savez(tmp, **arrays)
+    os.replace(tmp, npz)
     return res
 
 
@@ -606,6 +626,439 @@ def _edge_mask(source: vs.VideoNode, wide: int) -> vs.VideoNode:
     return core.std.Expr([_balloon_px(source, k), _balloon_px(source, -k)], 'y 255 = 0 x ?')
 
 
+# --- Temporal: hidden pixels from neighbour frames before the spatial inpainting (extension of this port, not in the original)
+
+def _dilate_np(m: numpy.ndarray, r: int) -> numpy.ndarray:
+    # round dilation by r pixels of a boolean array
+    out = m.copy()
+    h, w = m.shape
+    for dy in range(-r, r + 1):
+        for dx in range(-r, r + 1):
+            if dy * dy + dx * dx > r * r or (dy == 0 and dx == 0):
+                continue
+            out[max(0, dy):h - max(0, -dy), max(0, dx):w - max(0, -dx)] |= m[max(0, -dy):h - max(0, dy), max(0, -dx):w - max(0, dx)]
+    return out
+
+
+def _phase_prep(a: numpy.ndarray, hidden: numpy.ndarray) -> numpy.ndarray:
+    a = a.astype(numpy.float32)
+    vis = ~hidden
+    mean = float(a[vis].mean()) if vis.any() else float(a.mean())
+    a[hidden] = mean
+    a -= mean
+    win = numpy.outer(numpy.hanning(a.shape[0]), numpy.hanning(a.shape[1])).astype(numpy.float32)
+    return numpy.fft.rfft2(a * win)
+
+
+def _phase_offset(fa: numpy.ndarray, fb: numpy.ndarray) -> Tuple[float, float, float]:
+    # where the content of a is found in b (subpixel by a parabola fit) and the correlation peak
+    cross = fa * numpy.conj(fb)
+    cross /= numpy.abs(cross) + 1e-9
+    corr = numpy.fft.irfft2(cross)
+    h, w = corr.shape
+    y, x = numpy.unravel_index(int(numpy.argmax(corr)), corr.shape)
+
+    def sub(c: numpy.ndarray, i: int, n: int) -> float:
+        m, p = c[(i - 1) % n], c[(i + 1) % n]
+        return float((m - p) / (2 * (m - 2 * c[i] + p) + 1e-12))
+    dy = y + sub(corr[:, x], y, h)
+    dx = x + sub(corr[y, :], x, w)
+    dy = dy - h if dy > h / 2 else dy
+    dx = dx - w if dx > w / 2 else dx
+    return -dx, -dy, float(corr[y, x])
+
+
+def _bilinear(plane: numpy.ndarray, ys: numpy.ndarray, xs: numpy.ndarray) -> numpy.ndarray:
+    x0 = numpy.floor(xs).astype(int)
+    y0 = numpy.floor(ys).astype(int)
+    fx, fy = xs - x0, ys - y0
+    x1 = numpy.minimum(x0 + 1, plane.shape[1] - 1)
+    y1 = numpy.minimum(y0 + 1, plane.shape[0] - 1)
+    p = plane
+    return p[y0, x0] * (1 - fx) * (1 - fy) + p[y0, x1] * fx * (1 - fy) + p[y1, x0] * (1 - fx) * fy + p[y1, x1] * fx * fy
+
+
+class _TemporalFill:
+    # window = Loc plus a margin (YUV420P8); every tile of the hole takes the nearest neighbour frame whose shifted
+    # content matches on a ring around the logo; the shift is the window's or the tile's own, whichever fits the ring better
+    TILE, TILE_MARGIN, RING, MAX_DIFF, MIN_PEAK, TILE_FALLBACK, DIRECT, HALF = 48, 48, 8, 8.0, 0.12, 8, True, True
+
+    def __init__(self, win: vs.VideoNode, hole: numpy.ndarray, logo: numpy.ndarray, loc_box: Tuple[int, int, int, int], radius: int) -> None:
+        import threading
+        self.win, self.hole, self.logo, self.radius = win, hole, logo, radius
+        h, w = hole.shape
+        ringm = _dilate_np(logo, self.RING) & ~logo
+        self.ring = numpy.nonzero(ringm)
+        ring_id = numpy.full(hole.shape, -1, numpy.int64)
+        ring_id[self.ring] = numpy.arange(len(self.ring[0]))
+        self.tiles = []
+        l, t, r, b = loc_box
+        for ty in range(t, b, self.TILE):
+            for tx in range(l, r, self.TILE):
+                box = (tx, ty, min(tx + self.TILE, r), min(ty + self.TILE, b))
+                if not hole[box[1]:box[3], box[0]:box[2]].any():
+                    continue
+                m = self.TILE_MARGIN
+                tw = (max(0, tx - m), max(0, ty - m), min(w, box[2] + m), min(h, box[3] + m))
+                ring = ringm[tw[1]:tw[3], tw[0]:tw[2]]
+                if ring.sum() < 50:
+                    ring = ~logo[tw[1]:tw[3], tw[0]:tw[2]]
+                ry, rx = numpy.nonzero(ring)
+                ry, rx = ry + tw[1], rx + tw[0]
+                ids = ring_id[ry, rx]
+                # a tile whose ring lies in the whole ring reads its error from there; otherwise it measures its own
+                self.tiles.append((box, tw, (ry, rx), ids if (ids >= 0).all() else None))
+        self.lock = threading.Lock()
+        self.steps: Dict[int, Tuple[float, float]] = {}
+        self.direct: Dict[Tuple[int, int], Tuple[float, float]] = {}
+        self.busy: Dict[int, Any] = {}
+        self.planes: Dict[int, List[numpy.ndarray]] = {}
+        self.ffts: Dict[Tuple[int, int], numpy.ndarray] = {}
+        self.results: Dict[int, Tuple[List[numpy.ndarray], numpy.ndarray]] = {}
+
+    def _get(self, n: int) -> List[numpy.ndarray]:
+        n = min(max(n, 0), self.win.num_frames - 1)
+        with self.lock:
+            if n in self.planes:
+                return self.planes[n]
+        f = self.win.get_frame(n)
+        planes = [numpy.asarray(f[p]).astype(numpy.float32) for p in range(3)]
+        with self.lock:
+            self.planes[n] = planes
+            while len(self.planes) > 2 * self.radius + 16:
+                self.planes.pop(next(iter(self.planes)))
+        return planes
+
+    def _fft(self, n: int, i: int) -> numpy.ndarray:
+        key = (n, i)
+        with self.lock:
+            if key in self.ffts:
+                return self.ffts[key]
+        y = self._get(n)[0]
+        if i < 0 and self.HALF:
+            # the window at half size: 2x2 means, a 2x2 block counts as hidden if any pixel is
+            hh, ww = y.shape[0] // 2 * 2, y.shape[1] // 2 * 2
+            small = y[:hh, :ww].reshape(hh // 2, 2, ww // 2, 2).mean(axis=(1, 3))
+            hidden = self.logo[:hh, :ww].reshape(hh // 2, 2, ww // 2, 2).any(axis=(1, 3))
+            value = _phase_prep(small, hidden)
+        elif i < 0:
+            value = _phase_prep(y, self.logo)
+        else:
+            l, t, r, b = self.tiles[i][1]
+            value = _phase_prep(y[t:b, l:r], self.logo[t:b, l:r])
+        with self.lock:
+            self.ffts[key] = value
+            while len(self.ffts) > (2 * self.radius + 16) * (len(self.tiles) + 1):
+                self.ffts.pop(next(iter(self.ffts)))
+        return value
+
+    def _step(self, n: int) -> Tuple[float, float]:
+        # window shift from frame n to n + 1, measured once
+        with self.lock:
+            if n in self.steps:
+                return self.steps[n]
+        dx, dy, _ = _phase_offset(self._fft(n, -1), self._fft(n + 1, -1))
+        if self.HALF:
+            dx, dy = 2 * dx, 2 * dy
+        with self.lock:
+            self.steps[n] = (dx, dy)
+        return dx, dy
+
+    def _offset(self, n: int, m: int, chain: Dict[int, Tuple[float, float]]) -> Tuple[float, float]:
+        # where the content of frame n is in frame m: the chained window steps say whether it moved, a direct measurement says how far
+        lo, hi = min(n, m), max(n, m)
+        if self.DIRECT:
+            cx, cy = chain[m][0] - chain[n][0], chain[m][1] - chain[n][1]
+            if abs(cx) < 0.5 and abs(cy) < 0.5:
+                return 0.0, 0.0
+            key = (lo, hi)
+            with self.lock:
+                known = self.direct.get(key)
+            if known is None:
+                known = _phase_offset(self._fft(lo, -1), self._fft(hi, -1))[:2]
+                if self.HALF:
+                    known = (2 * known[0], 2 * known[1])
+                with self.lock:
+                    self.direct[key] = known
+                    while len(self.direct) > (2 * self.radius + 16) ** 2:
+                        self.direct.pop(next(iter(self.direct)))
+            return known if m > n else (-known[0], -known[1])
+        return chain[m][0] - chain[n][0], chain[m][1] - chain[n][1]
+
+    def _ring_error(self, cur: List[numpy.ndarray], nb: List[numpy.ndarray], ry: numpy.ndarray, rx: numpy.ndarray,
+                    dx: float, dy: float) -> Optional[float]:
+        h, w = cur[0].shape
+        sy, sx = ry + dy, rx + dx
+        inside = (sy >= 0) & (sy <= h - 2) & (sx >= 0) & (sx <= w - 2)
+        if inside.sum() < 0.8 * len(ry):
+            return None
+        return float(numpy.abs(_bilinear(nb[0], sy[inside], sx[inside]) - cur[0][ry[inside], rx[inside]]).mean())
+
+    def fill(self, n: int) -> Tuple[List[numpy.ndarray], numpy.ndarray]:
+        import threading
+        with self.lock:
+            if n in self.results:
+                return self.results[n]
+            busy = self.busy.setdefault(n, threading.Lock())
+        # the picture and the mask clip ask for the same frame, often from two threads: one computes, the other waits
+        with busy:
+            with self.lock:
+                if n in self.results:
+                    return self.results[n]
+            res = self._fill(n)
+            with self.lock:
+                self.results[n] = res
+                while len(self.results) > 16:
+                    self.results.pop(next(iter(self.results)))
+                self.busy.pop(n, None)
+        return res
+
+    def _fill(self, n: int) -> Tuple[List[numpy.ndarray], numpy.ndarray]:
+        cur = self._get(n)
+        h, w = cur[0].shape
+        todo = self.hole.copy()
+        out = [c.copy() for c in cur]
+        order = sorted((k for k in range(-self.radius, self.radius + 1) if k and 0 <= n + k < self.win.num_frames), key=abs)
+        # chained window positions of the neighbours relative to frame n
+        lo, hi = max(0, n - self.radius), min(self.win.num_frames - 1, n + self.radius)
+        chain: Dict[int, Tuple[float, float]] = {n: (0.0, 0.0)}
+        for i in range(n, hi):
+            sx, sy = self._step(i)
+            chain[i + 1] = (chain[i][0] + sx, chain[i][1] + sy)
+        for i in range(n - 1, lo - 1, -1):
+            sx, sy = self._step(i)
+            chain[i] = (chain[i + 1][0] - sx, chain[i + 1][1] - sy)
+        ring_diff: Dict[int, numpy.ndarray] = {}
+        for i, ((cl, ct, cr, cb), _, (ry, rx), ids) in enumerate(self.tiles):
+            for k in order:
+                tile_todo = todo[ct:cb, cl:cr]
+                if not tile_todo.any():
+                    break
+                m = n + k
+                dx, dy = self._offset(n, m, chain)
+                if abs(dx) < 0.5 and abs(dy) < 0.5:
+                    continue  # the background did not move: nothing new to see
+                nb = self._get(m)
+                if ids is not None:
+                    if m not in ring_diff:
+                        # per-pixel ring error of the window shift, once per neighbour; NaN where the shifted ring leaves the window
+                        sy, sx = self.ring[0] + dy, self.ring[1] + dx
+                        inside = (sy >= 0) & (sy <= h - 2) & (sx >= 0) & (sx <= w - 2)
+                        diff = numpy.full(len(sy), numpy.nan, numpy.float32)
+                        diff[inside] = numpy.abs(_bilinear(nb[0], sy[inside], sx[inside]) - cur[0][self.ring[0][inside], self.ring[1][inside]])
+                        ring_diff[m] = diff
+                    part = ring_diff[m][ids]
+                    valid = ~numpy.isnan(part)
+                    err = float(part[valid].mean()) if valid.sum() >= 0.8 * len(part) else None
+                else:
+                    err = self._ring_error(cur, nb, ry, rx, dx, dy)
+                if (err is None or err > self.MAX_DIFF) and abs(k) <= self.TILE_FALLBACK:
+                    # the window shift does not fit this tile (parallax): its own shift, if the correlation is clear
+                    tdx, tdy, peak = _phase_offset(self._fft(n, i), self._fft(m, i))
+                    if peak < self.MIN_PEAK or (abs(tdx) < 0.5 and abs(tdy) < 0.5):
+                        continue
+                    err = self._ring_error(cur, nb, ry, rx, tdx, tdy)
+                    if err is None or err > self.MAX_DIFF:
+                        continue
+                    dx, dy = tdx, tdy
+                elif err is None or err > self.MAX_DIFF:
+                    continue
+                ty, tx = numpy.nonzero(tile_todo)
+                ty, tx = ty + ct, tx + cl
+                sy, sx = ty + dy, tx + dx
+                ok = (sy >= 0) & (sy <= h - 2) & (sx >= 0) & (sx <= w - 2)
+                ok &= ~self.logo[numpy.clip(numpy.rint(sy).astype(int), 0, h - 1), numpy.clip(numpy.rint(sx).astype(int), 0, w - 1)]
+                if not ok.any():
+                    continue
+                ty, tx, sy, sx = ty[ok], tx[ok], sy[ok], sx[ok]
+                out[0][ty, tx] = _bilinear(nb[0], sy, sx)
+                cy, cx = ty // 2, tx // 2
+                for p in (1, 2):
+                    out[p][cy, cx] = _bilinear(nb[p], numpy.clip(cy + dy / 2, 0, nb[p].shape[0] - 2), numpy.clip(cx + dx / 2, 0, nb[p].shape[1] - 2))
+                todo[ty, tx] = False
+        return [numpy.clip(numpy.rint(o), 0, 255).astype(numpy.uint8) for o in out], todo
+
+
+def _temporal_fill(clp: vs.VideoNode, fmt: vs.VideoFormat, loc_src: vs.VideoNode, inyv12: vs.VideoNode, basemask: vs.VideoNode,
+                   a: int, b: int, loc_w: int, loc_h: int, radius: int) -> Tuple[vs.VideoNode, vs.VideoNode]:
+    # the clip with the hidden pixels other frames show, and the Loc-sized mask of the pixels still to inpaint
+    margin = 160
+    wl, wt = max(0, a - margin) & ~1, max(0, b - margin) & ~1
+    wr, wb = min(clp.width, a + loc_w + margin) & ~1, min(clp.height, b + loc_h + margin) & ~1
+    win = _to_yv12(core.std.CropAbs(clp, wr - wl, wb - wt, wl, wt))
+    hole = numpy.zeros((wb - wt, wr - wl), bool)
+    hole[b - wt:b - wt + loc_h, a - wl:a - wl + loc_w] = _to_array(basemask[0]) > 127
+    tf = _TemporalFill(win, hole, _dilate_np(hole, 2), (a - wl, b - wt, a - wl + loc_w, b - wt + loc_h), radius)
+    ox, oy = a - wl, b - wt
+
+    def put_planes(n: int, f: vs.VideoFrame) -> vs.VideoFrame:
+        o = f.copy()
+        planes, _ = tf.fill(n)
+        numpy.copyto(numpy.asarray(o[0]), planes[0][oy:oy + loc_h, ox:ox + loc_w])
+        for p in (1, 2):
+            numpy.copyto(numpy.asarray(o[p]), planes[p][oy // 2:(oy + loc_h) // 2, ox // 2:(ox + loc_w) // 2])
+        return o
+
+    def put_rest(n: int, f: vs.VideoFrame) -> vs.VideoFrame:
+        o = f.copy()
+        _, todo = tf.fill(n)
+        numpy.copyto(numpy.asarray(o[0]), (todo[oy:oy + loc_h, ox:ox + loc_w] * 255).astype(numpy.uint8))
+        return o
+    filled = core.std.ModifyFrame(inyv12, inyv12, put_planes)
+    rest = core.std.ModifyFrame(core.std.BlankClip(inyv12, format=vs.GRAY8), core.std.BlankClip(inyv12, format=vs.GRAY8), put_rest)
+    if fmt.id == vs.YUV420P8:
+        changed = filled
+    else:
+        changed = _expr([_from_yv12(filled, fmt), _from_yv12(inyv12, fmt), loc_src], 'x y = z x ?')
+    return _paste(clp, changed, a, b), rest
+
+
+def _tile(c: vs.VideoNode, label: str) -> vs.VideoNode:
+    # one labelled tile of the Show grids, RGB24: GRAY masks as grey, YUV through BT.601 TV range
+    if c.format.color_family == vs.GRAY:
+        rgb = core.std.ShufflePlanes([c, c, c], [0, 0, 0], vs.RGB)
+    else:
+        rgb = core.resize.Point(c, format=vs.RGB24, matrix_in_s='170m', range_in_s='limited')
+    # text.Text needs at least 40x48 pixels; the half-size chroma tiles of a small Loc stay unlabelled
+    return core.text.Text(rgb, label, alignment=7) if label and rgb.width >= 40 and rgb.height >= 48 else rgb
+
+
+def _show_grid(rows: List[List[Tuple[vs.VideoNode, str]]], frames: int, border: int = 0) -> vs.VideoNode:
+    def fit(c: vs.VideoNode) -> vs.VideoNode:
+        c = c * frames if c.num_frames == 1 else c
+        return core.std.AddBorders(c, right=border, bottom=border, color=[0xb7, 0xb7, 0x15]) if border else c
+    return core.std.StackVertical([core.std.StackHorizontal([fit(_tile(c, label)) for c, label in row]) for row in rows])
+
+
+# --- Track: a logo that moves, found per frame by its shape (extension of this port, not in the original)
+
+def _box_mean(a: numpy.ndarray, r: int) -> numpy.ndarray:
+    p = numpy.pad(a, r, mode='edge')
+    c = numpy.pad(numpy.cumsum(numpy.cumsum(p, 0, dtype=numpy.float64), 1), ((1, 0), (1, 0)))
+    k = 2 * r + 1
+    return ((c[k:, k:] - c[:-k, k:] - c[k:, :-k] + c[:-k, :-k]) / (k * k)).astype(numpy.float32)
+
+
+def _highpass(a: numpy.ndarray, r: int = 3) -> numpy.ndarray:
+    return a - _box_mean(a, r)
+
+
+def _half(a: numpy.ndarray) -> numpy.ndarray:
+    h, w = a.shape[0] // 2 * 2, a.shape[1] // 2 * 2
+    return a[:h, :w].reshape(h // 2, 2, w // 2, 2).mean(axis=(1, 3)).astype(numpy.float32)
+
+
+class _LogoTracker:
+    # normalized cross-correlation of high-pass luma with the high-passed logo shape: a semi-transparent logo adds edges, its brightness
+    # depends on the background; coarse search at half size over the area (FFT), then +-3 pixels at full size
+    MARGIN, REFINE = 4, 3
+
+    def __init__(self, shape: numpy.ndarray, area: Tuple[int, int]) -> None:
+        ys, xs = numpy.nonzero(shape)
+        m = self.MARGIN
+        t, l = max(0, int(ys.min()) - m), max(0, int(xs.min()) - m)
+        self.shape = shape[t:int(ys.max()) + 1 + m, l:int(xs.max()) + 1 + m]
+        h, w = area
+        if self.shape.shape[0] + 2 * self.REFINE >= h or self.shape.shape[1] + 2 * self.REFINE >= w:
+            raise _error('the logo of "mask" does not fit into "Loc" for "Track".')
+        coarse = _highpass(_half(self.shape.astype(numpy.float32) * 255))
+        coarse -= coarse.mean()
+        self.cn = float(numpy.sqrt((coarse.astype(numpy.float64) ** 2).sum()))
+        self.ch, self.cw = coarse.shape
+        self.H, self.W = h // 2, w // 2
+        pad = numpy.zeros((self.H, self.W), numpy.float32)
+        pad[:self.ch, :self.cw] = coarse
+        self.f_t = numpy.conj(numpy.fft.rfft2(pad))
+        fine = _highpass(self.shape.astype(numpy.float32) * 255)
+        self.fine = fine - fine.mean()
+        self.fn = float(numpy.sqrt((self.fine.astype(numpy.float64) ** 2).sum()))
+
+    def find(self, y: numpy.ndarray) -> Tuple[int, int, float]:
+        hp = _highpass(_half(y.astype(numpy.float32)))
+        corr = numpy.fft.irfft2(numpy.fft.rfft2(hp) * self.f_t, s=hp.shape)
+        e = numpy.pad(numpy.cumsum(numpy.cumsum(numpy.pad(hp.astype(numpy.float64) ** 2, ((0, self.ch), (0, self.cw))), 0), 1), ((1, 0), (1, 0)))
+        ch, cw, H, W = self.ch, self.cw, self.H, self.W
+        energy = e[ch:ch + H, cw:cw + W] - e[:H, cw:cw + W] - e[ch:ch + H, :W] + e[:H, :W]
+        ncc = corr / (self.cn * numpy.sqrt(numpy.maximum(energy, 1e-6)))
+        ncc[H - ch:, :] = -1
+        ncc[:, W - cw:] = -1
+        iy, ix = numpy.unravel_index(int(numpy.argmax(ncc)), ncc.shape)
+        return self._refine(y, 2 * int(ix), 2 * int(iy))
+
+    def _refine(self, y: numpy.ndarray, x0: int, y0: int) -> Tuple[int, int, float]:
+        h, w = self.fine.shape
+        r = self.REFINE
+        best = (x0, y0, -1.0)
+        for dy in range(-r, r + 1):
+            for dx in range(-r, r + 1):
+                px, py = x0 + dx, y0 + dy
+                if px < 0 or py < 0 or py + h > y.shape[0] or px + w > y.shape[1]:
+                    continue
+                l, t = max(0, px - 4), max(0, py - 4)
+                patch = _highpass(y[t:py + h + 4, l:px + w + 4].astype(numpy.float32))
+                win = patch[py - t:py - t + h, px - l:px - l + w]
+                v = float((win * self.fine).sum() / (self.fn * numpy.sqrt((win.astype(numpy.float64) ** 2).sum()) + 1e-6))
+                if v > best[2]:
+                    best = (px, py, v)
+        return best
+
+
+def TrackLogo(clp: vs.VideoNode, mask: str, Loc: str = '0,0,0,0', Grow: int = 3, TrackTh: float = 0.35) -> vs.VideoNode:
+    """
+    Mask clip (GRAY8, "Loc" size, 255 = logo) of a logo that moves: "mask" is a whole-frame image with the logo in white at any
+    place, it is searched in every frame inside "Loc"; frames whose best match is below TrackTh (0..1) stay empty.
+    Grow: pixels the found shape is grown by (shadows, edges). InpaintDelogo(..., Track=1) uses it with Grow=Inflate.
+    """
+    a, b, loc_w, loc_h = _parse_loc(Loc, clp.width, clp.height)
+    template = _to_array(_read_mask(str(mask), clp.width, clp.height, 0, 0, clp.width, clp.height, 235 if _limited_range(clp) else 255)) > 127
+    tracker = _LogoTracker(template, (loc_h, loc_w))
+    shape = _dilate_np(numpy.pad(tracker.shape, Grow), Grow) if Grow > 0 else tracker.shape
+    luma = core.resize.Point(_plane(core.std.CropAbs(clp, loc_w, loc_h, a, b), 0), format=vs.GRAY8)
+    blank = core.std.BlankClip(luma, format=vs.GRAY8, color=0)
+
+    def put(n: int, f: List[vs.VideoFrame]) -> vs.VideoFrame:
+        out = f[1].copy()
+        dst = numpy.asarray(out[0])
+        dst[:] = 0
+        x, y, peak = tracker.find(numpy.asarray(f[0][0]))
+        if peak >= TrackTh:
+            x, y = x - Grow, y - Grow
+            sh, sw = shape.shape
+            t0, l0 = max(0, -y), max(0, -x)
+            t1, l1 = min(sh, loc_h - y), min(sw, loc_w - x)
+            dst[y + t0:y + t1, x + l0:x + l1][shape[t0:t1, l0:l1]] = 255
+        out.props['InpaintDelogoTrackPeak'] = peak
+        return out
+    return core.std.ModifyFrame(blank, [luma, blank], put)
+
+
+def _fit_view(view: vs.VideoNode, clp: vs.VideoNode) -> vs.VideoNode:
+    # a view of another size and format, fitted top left on black into a clip of the input's size, format, length and rate
+    scale = min(clp.width / view.width, clp.height / view.height)
+    if scale >= 1:
+        view = core.resize.Point(view, view.width * int(scale), view.height * int(scale))
+    else:
+        view = core.resize.Bilinear(view, max(2, int(view.width * scale) & ~1), max(2, int(view.height * scale) & ~1))
+    rgb = view.format.color_family == vs.RGB
+    view = core.std.AddBorders(view, right=clp.width - view.width, bottom=clp.height - view.height, color=[0, 0, 0] if rgb else [16, 128, 128])
+    if clp.format.color_family == vs.GRAY:
+        view = core.std.ShufflePlanes(view, 0, vs.GRAY) if not rgb else core.resize.Point(view, format=vs.GRAY8, matrix_s='709')
+    view = core.resize.Point(view, format=clp.format.id, matrix_s='709') if rgb and clp.format.color_family != vs.RGB else core.resize.Point(view, format=clp.format.id)
+    view = view * clp.num_frames if view.num_frames == 1 else view
+    return core.std.CopyFrameProps(core.std.AssumeFPS(view, src=clp), clp)
+
+
+def PreviewView(clp: vs.VideoNode, **kwargs: Any) -> vs.VideoNode:
+    '''InpaintDelogo whose output is a view (Show, Automask) of another size, fitted top left into a clip of the input's size and format.'''
+    return _fit_view(InpaintDelogo(clp, **kwargs), clp)
+
+
+def AutomaskView(clp: vs.VideoNode, **kwargs: Any) -> vs.VideoNode:
+    '''InpaintDelogo with Automask=1; the view (mask above alpha) fitted into the input's size and format.'''
+    kwargs.pop('Automask', None)
+    return PreviewView(clp, Automask=1, **kwargs)
+
+
 def InpaintLoc(clp: vs.VideoNode, Loc: str = '0,0,0,0') -> vs.VideoNode:
     '''Highlight the "Loc" area (Left,Top,-Right,-Bottom or Left,Top,Width,Height) to find the crop values.'''
     if clp.format is None or clp.format.color_family != vs.YUV:
@@ -638,13 +1091,21 @@ def InpaintDelogo(clp: vs.VideoNode, mask: Union[str, vs.VideoNode, None] = None
                   dPP: int = -3, dPPm: int = 3, diPP: int = -5, diPPm: int = 3, oPP: int = -5, oPPm: int = 3,
                   EdgePP: int = 0, EdgePos: int = 0, EdgeWide: int = 1, GrainPP: int = 0, mShow: int = 0,
                   Optimize1: Optional[int] = None, Optimize2: int = 3, Greyscale: int = 0, WholeDeblend: int = 0,
-                  TriggerDynamic: int = 0, DumpMasks: int = 0, LogoPath: str = '', **kwargs: Any) -> vs.VideoNode:
+                  TriggerDynamic: int = 0, DumpMasks: int = 0, LogoPath: str = '', Temporal: int = 0, Show: int = 0, Track: int = 0,
+                  TrackTh: float = 0.35,
+                  **kwargs: Any) -> vs.VideoNode:
     '''
     Logo removal by inpainting and deblending (InpaintDelogo 3.7).
     clp: YUV 8..16 bit; only the "Loc" area is processed in YUV420P8, pixels the delogo does not change keep the source values.
     mask: path to a bmp/png mask of the whole frame (logo 255, rest < 255) or a one-frame GRAY clip of the "Loc" size.
     Loc: "Left,Top,-Right,-Bottom" or "Left,Top,Width,Height", even numbers, 10-20 px border around the logo.
     LogoPath: base path of the analysis files (.txt frame list, .npz masks); default: the original's name next to the mask.
+    Inflate: 0..8 pixels; the original allows 0..2, values above 2 are an extension of this port.
+    Track: 1 = the logo moves: "mask" is searched in every frame inside "Loc" (TrackLogo(), Inflate grows the found shape, TrackTh is the
+      lowest match that counts, 0..1); Inpaint mode only, an extension of this port.
+    Show: 1 or 2, the original's grids of masks and delogo steps (Loc area, RGB24, another size than the input); 3..12 are not ported.
+    Temporal: 0..100 neighbour frames on each side that may show the hidden pixels (motion around Loc, block-wise); only the rest
+      is inpainted. Inpaint mode with a static mask only; an extension of this port.
     The other parameters have the meaning and the defaults of the original; ebmp files and negative Analyze are not supported.
     '''
     opts = dict(_EDIT_DEFAULTS)
@@ -668,9 +1129,18 @@ def InpaintDelogo(clp: vs.VideoNode, mask: Union[str, vs.VideoNode, None] = None
     if mode not in ('inpaint', 'deblend', 'both'):
         raise _error('This mode doesn\'t exist. Change "Mode" value.')
     if not Loc:
-        raise _error('You must define "Loc".')
+        if not Automask:
+            raise _error('You must define "Loc".')
+        Loc = '0,0,0,0'  # Automask on the whole frame
     if Loc.replace(' ', '') == '100,100,-100,-100':
         raise _error('Use "InpaintLoc" function to get crop values for "Loc".')
+    if Track:
+        # the mask image is the template; the per-frame mask clip of the found logo runs as a dynamic mask (DynMask=1)
+        if mode != 'inpaint' or Automask or not isinstance(mask, str):
+            raise _error('"Track" needs "Inpaint" mode and "mask" as the path of a mask image (the logo to search for).')
+        if Temporal:
+            raise _error('"Track" can\'t be used with "Temporal".')
+        mask = TrackLogo(clp, mask, Loc=Loc, Grow=Inflate, TrackTh=TrackTh)
     dyn_opts['KillShape'] = KillShape
     dyn = _dyn_settings(dyn_opts, mode, mask)
     dynmask = dyn['DynMask']
@@ -683,13 +1153,14 @@ def InpaintDelogo(clp: vs.VideoNode, mask: Union[str, vs.VideoNode, None] = None
     if AnalyzeTh is None:
         AnalyzeTh = 30 if clp.num_frames < 45000 else 16
     checks = [('Analyze', Analyze, 1, 3), ('AnalyzeTh', AnalyzeTh, 1, 255), ('ReAnalyze', ReAnalyze, 0, 1), ('Automask', Automask, 0, 1),
-              ('aMix', aMix, -50, 6), ('Inflate', Inflate, 0, 2), ('KillShape', KillShape, 0, 1), ('Turbo', Turbo, -2, 3),
+              ('aMix', aMix, -50, 6), ('Inflate', Inflate, 0, 8), ('KillShape', KillShape, 0, 1), ('Turbo', Turbo, -2, 3),
               ('prePP', prePP, 0, 1), ('Interp', Interp, 0, 4), ('IntSpd', IntSpd, 1, 4), ('InterpM', InterpM, -1, 2),
               ('iTune', iTune, -10, 10), ('iTinflate', iTinflate, 0, 3), ('oTune', oTune, -10, 10), ('oTinflate', oTinflate, 0, 3),
               ('dPP', dPP, -8, 8), ('dPPm', dPPm, 1, 3), ('diPP', diPP, -8, 8), ('diPPm', diPPm, 0, 3), ('oPP', oPP, -8, 8),
               ('oPPm', oPPm, 0, 3), ('EdgePP', EdgePP, 0, 3), ('EdgePos', EdgePos, -1, 1), ('EdgeWide', EdgeWide, 0, 3),
               ('GrainPP', GrainPP, 0, 3), ('mShow', mShow, 0, 9), ('Optimize2', Optimize2, 0, 3), ('Greyscale', Greyscale, 0, 2),
-              ('WholeDeblend', WholeDeblend, 0, 1), ('TriggerDynamic', TriggerDynamic, 0, 1), ('DumpMasks', DumpMasks, 0, 2)]
+              ('WholeDeblend', WholeDeblend, 0, 1), ('TriggerDynamic', TriggerDynamic, 0, 1), ('DumpMasks', DumpMasks, 0, 2),
+              ('Temporal', Temporal, 0, 100), ('Show', Show, 0, 12), ('Track', Track, 0, 1), ('TrackTh', TrackTh, 0, 1)]
     checks += [(k, opts[k], lo, hi) for k, (lo, hi) in _EDIT_RANGES.items()]
     checks += [(k, opts[k], -1, 255) for k in _EDIT_DEFAULTS if 'Solid' in k]
     for name, value, lo, hi in checks:
@@ -699,6 +1170,10 @@ def InpaintDelogo(clp: vs.VideoNode, mask: Union[str, vs.VideoNode, None] = None
         raise _error('"NoBorderAt" string must be \'top\', \'bottom\', \'left\', \'right\' or \'none\'.')
     if mode == 'inpaint' and 4 < mShow < 9:
         raise _error('Calculating the meaning of life and everything. Meanwhile RTM.')
+    if Show > 2:
+        raise _error(f'"Show={Show}" is not supported yet (only 1 and 2).')
+    if Show and Temporal:
+        raise _error('"Show" can\'t be used with "Temporal".')
     if mode != 'inpaint' and KillShape:
         raise _error('"KillShape" parameter is only for "Inpaint" mode.')
     if mode == 'inpaint' and EdgePP:
@@ -771,6 +1246,16 @@ def InpaintDelogo(clp: vs.VideoNode, mask: Union[str, vs.VideoNode, None] = None
 
     basemask_p = _balloon_px(imgmask, 99) if KillShape else imgmask
     basemask = _balloon_px(basemask_p, Inflate)
+    if Inflate > 2 and not (isinstance(mask, vs.VideoNode) and mask.num_frames > 1):
+        _check_inflate_border(basemask_p, basemask, a, b, clp.width - a - loc_w, clp.height - b - loc_h)
+    if Temporal:
+        if mode != 'inpaint' or dynmask or (isinstance(mask, vs.VideoNode) and mask.num_frames > 1):
+            raise _error('"Temporal" works only in "Inpaint" mode with a static mask.')
+        pre, rest = _temporal_fill(clp, fmt, loc_src, inyv12, basemask, a, b, loc_w, loc_h, Temporal)
+        # the rest mask is already grown by Inflate; it is a per-frame mask clip, so the second pass runs with DynMask=1
+        return InpaintDelogo(pre, mask=rest, Loc=Loc, Inflate=0, KillShape=KillShape, Turbo=Turbo, Radius=Radius, Sharpness=Sharpness,
+                             PreBlur=PreBlur, PostBlur=PostBlur, prePP=prePP, oPP=oPP, oPPm=oPPm, GrainPP=GrainPP, Optimize1=0,
+                             Greyscale=Greyscale)
     interp_mask = _balloon_px(basemask, interpm_infl)
 
     planes: Dict[str, vs.VideoNode] = {}
@@ -869,12 +1354,53 @@ def InpaintDelogo(clp: vs.VideoNode, mask: Union[str, vs.VideoNode, None] = None
         grained = GrainFactory3(out, g1str=strength[0], g2str=strength[1], g3str=strength[2], temp_avg=60)
         out = _overlay(out, grained, _balloon_gr(basemask, 3))
 
+    delogo_pp = out
     if mShow:
         red = core.resize.Point(core.std.BlankClip(out, format=vs.RGB24, color=[255, 0, 0]), format=vs.YUV420P8, matrix_s='170m')
         masks = {1: opaque, 2: inpaint_mpp, 3: basemask, 4: basemask, 5: deblend_mpp, 6: opaque_tune, 7: interp_mask, 8: edge_mask, 9: inpaint_mpp}
         show_mask = masks[mShow]
         assert show_mask is not None
         out = _overlay(inyv12 if mShow in (4, 5, 6, 9) else out, red, show_mask)
+
+    if Show in (1, 2):
+        # the original's Show 1/2 grids of the Loc area (RGB24, other size than the input: PreviewView fits it into the clip)
+        n = clp.num_frames
+        blank = core.std.BlankClip(imgmask, format=vs.GRAY8, color=0)
+        dyn_view = dyn_mask if dynmask and mode != 'inpaint' else (target if dynmask and mode == 'inpaint' and not Optimize1 else None)
+        if Show == 1:
+            logo_color = None
+            if planes:
+                logo_color = core.std.ShufflePlanes([planes['cy'], planes['cu'], planes['cv']], [0, 0, 0], vs.YUV)
+            mask1 = (imgmask, 'base mask') if mode == 'inpaint' else (logo_alpha, 'logo alpha')
+            mask2 = (inpaint_mpp, 'opaque pp') if mode == 'inpaint' else (deblend_mpp, 'deblend pp')
+            if mode == 'deblend':
+                mask3 = (interp_mask, 'interp')
+            elif mode == 'inpaint':
+                mask3 = (dyn_view, 'dynamic mask') if dyn_view is not None else (opaque, 'opaque mask')
+            else:
+                mask3 = (inpaint_mpp, 'opaque pp')
+            if mode == 'both':
+                mask6 = (dyn_view, 'dynamic mask') if dyn_view is not None else (opaque, 'otune mask')
+            else:
+                mask6 = (edge_mask, 'edge pp') if edge_mask is not None else (blank, 'disabled')
+            rows = [[(inyv12, 'source'), (delogo, 'delogo'), (delogo_pp, 'delogo pp')], [mask1, mask2, mask3]]
+            if mode != 'inpaint':
+                rows.append([(logo_color if logo_color is not None else blank, 'logo color'), (basemask, 'base mask'), mask6])
+            if mode == 'both':
+                rows.append([(blank, 'disabled'), (interp_mask, 'interp on') if interp else (blank, 'interp off'), (blank, 'disabled')])
+            return _show_grid(rows, n)
+        if analyze and planes:
+            chroma = [[(planes['cu'], 'U c'), (planes['cv'], 'V c')], [(planes['au'], 'U a'), (planes['av'], 'V a')]]
+            chroma_tile = core.resize.Point(_show_grid(chroma, n), format=vs.YUV420P8, matrix_s='170m')
+            rows = [[(inyv12, '0: source'), (debl_pre, '1: deblend'), (inpa_pre, f'2: IntSpd={IntSpd}') if interp and inpa_pre is not None else (blank, '2: Interp Off')],
+                    [(out, '4: final'), (delogo, '3: pre-PP'),
+                     (core.std.ShufflePlanes([planes['cy'], planes['cu'], planes['cv']], [0, 0, 0], vs.YUV), 'logo demo')],
+                    [(planes['ay'], 'Y alpha'), (planes['cy'], 'Y color'), (chroma_tile, '')],
+                    [(imgmask, 'basemask'), (interp_mask, 'interp mask'), (opaque, 'oTune mask') if mode == 'both' else (blank, 'disabled')]]
+            return _show_grid(rows, n, border=2)
+        if dyn_view is not None:
+            return _show_grid([[(delogo, 'delogo'), (dyn_view, 'dynamic mask')], [(out, 'final'), (inpaint_mpp, 'dynamic pp mask')]], n)
+        return _show_grid([[(delogo, 'delogo')], [(out, 'final')]], n)
 
     if whole:
         result = out if fmt.id == vs.YUV420P8 else _expr([_from_yv12(out, fmt), _from_yv12(inyv12, fmt), clp], 'x y = z x ?')
@@ -1104,7 +1630,8 @@ def _dyn_settings(d: Dict[str, Any], mode: str, mask: Any) -> Dict[str, Any]:
         raise _error('"DynTEdge" can be used only with internal "DynMask" methods.')
     if dyn == 7 and not d['DynTEdge']:
         raise _error('Nothing to do for "DynMask=7" if "DynTEdge=0".')
-    if dyn in (5, 6, 7):
+    # the original sets DynInflate to 0 for 5/6/7; this port lets it grow the colour mask (5), e.g. over the dark edge of a coloured title
+    if dyn in (6, 7):
         d['DynInflate'] = 0
     kn = d['KillNoise']
     d['KillNoise'] = (80 + abs(kn)) * (1 if kn > 0 else -1) if kn else 0
