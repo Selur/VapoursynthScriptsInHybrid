@@ -380,6 +380,11 @@ def _write_image(path: str, arr: numpy.ndarray) -> None:
         rows[:, :w * 3] = numpy.repeat(arr, 3, axis=1)
         pixels = rows[::-1].tobytes()
         data = b'BM' + struct.pack('<IHHI', 54 + len(pixels), 0, 0, 54) + struct.pack('<IiiHHIIiiII', 40, w, h, 1, 24, 0, len(pixels), 2835, 2835, 0, 0) + pixels
+    # an unchanged image keeps its file and time stamp
+    if os.path.isfile(path) and os.path.getsize(path) == len(data):
+        with open(path, 'rb') as fh:
+            if fh.read() == data:
+                return
     with open(path, 'wb') as fh:
         fh.write(data)
 
@@ -545,7 +550,7 @@ def _analyze(inyv12: vs.VideoNode, imgmask: vs.VideoNode, analyze: int, th: int,
 
 
 def _automask(clp: vs.VideoNode, inyv12: vs.VideoNode, mask_path: str, a: int, b: int, whole: bool, analyze: int, th: int,
-              noborder: str, reanalyze: int, amix: int, logo_id: str) -> vs.VideoNode:
+              noborder: str, reanalyze: int, amix: int, logo_id: str, temp_base: str = '') -> vs.VideoNode:
     # Automask=1: estimate the logo alpha and write the base mask to "mask"; the output shows mask and alpha
     if analyze not in (2, 3):
         raise _error('"Automask" needs "Analyze" 2 or 3.')
@@ -560,9 +565,10 @@ def _automask(clp: vs.VideoNode, inyv12: vs.VideoNode, mask_path: str, a: int, b
         frame[b:b + h, a:a + w] = 255
     amerge = core.std.CropAbs(_inpand(_frame_clip(frame), 6 if whole else 7), w, h, a, b)
     base, ext = os.path.splitext(mask_path)
-    # the original names it by mask and Analyze only; the key keeps an alpha of another Loc or analysis from being placed at this Loc
+    # the original names it by mask and Analyze only, next to the mask; with LogoPath it goes beside the analysis files,
+    # the key keeps an alpha of another Loc or analysis from being placed at this Loc
     key = f'{a},{b},{w},{h},{th},{noborder},{inyv12.num_frames},{logo_id}'
-    auto_id = f'{base}_AutomaskTemp_A{analyze}_{zlib.crc32(key.encode("utf-8")):08x}{ext}'
+    auto_id = f'{temp_base or base}_AutomaskTemp_A{analyze}_{zlib.crc32(key.encode("utf-8")):08x}{ext}'
     if os.path.isfile(auto_id) and not reanalyze:
         img = core.bs.VideoSource(auto_id, cachemode=0)[0]
         alpha = _to_array(core.resize.Point(_plane(img, 0), format=vs.GRAY8))
@@ -1056,10 +1062,24 @@ def PreviewView(clp: vs.VideoNode, **kwargs: Any) -> vs.VideoNode:
     return _fit_view(InpaintDelogo(clp, **kwargs), clp)
 
 
-def AutomaskView(clp: vs.VideoNode, **kwargs: Any) -> vs.VideoNode:
-    '''InpaintDelogo with Automask=1; the view (mask above alpha) fitted into the input's size and format.'''
+def WriteAutomask(clp: vs.VideoNode, **kwargs: Any) -> None:
+    '''Runs the Automask analysis and writes the mask image to "mask", for a following InpaintDelogo call that uses it.'''
     kwargs.pop('Automask', None)
-    return PreviewView(clp, Automask=1, **kwargs)
+    InpaintDelogo(clp, Automask=1, **kwargs)
+
+
+def AutomaskView(clp: vs.VideoNode, **kwargs: Any) -> vs.VideoNode:
+    '''InpaintDelogo with Automask=1; the view (mask above alpha) labelled and fitted into the input's size and format.'''
+    kwargs.pop('Automask', None)
+    view = InpaintDelogo(clp, Automask=1, **kwargs)
+    w, h = view.width, view.height // 2
+    scale = max(1, int(min(clp.width / w, clp.height / (2 * h))))
+    tiles = []
+    for top, label in ((0, 'mask (written to the mask file)'), (h, 'logo alpha (aMix sets the threshold)')):
+        rgb = _tile(core.resize.Point(core.std.CropAbs(view, w, h, 0, top), w * scale, h * scale), '')
+        tiles.append(core.text.Text(rgb, label, alignment=7, scale=2 if rgb.width >= 640 and rgb.height >= 96 else 1)
+                     if rgb.width >= 40 and rgb.height >= 48 else rgb)
+    return _fit_view(core.std.StackVertical(tiles), clp)
 
 
 def InpaintLoc(clp: vs.VideoNode, Loc: str = '0,0,0,0') -> vs.VideoNode:
@@ -1234,7 +1254,7 @@ def InpaintDelogo(clp: vs.VideoNode, mask: Union[str, vs.VideoNode, None] = None
     if Automask:
         if not isinstance(mask, str):
             raise _error('"Automask" needs "mask" as the path of the image to create.')
-        return _automask(clp, inyv12, mask, a, b, whole, analyze, AnalyzeTh, NoBorderAt, ReAnalyze, aMix, logo_id)
+        return _automask(clp, inyv12, mask, a, b, whole, analyze, AnalyzeTh, NoBorderAt, ReAnalyze, aMix, logo_id, LogoPath)
 
     if dynmask == 1 or dynmask > 1 and not (dynmask == 2 and mode == 'both'):
         # the original's placeholder base mask for dynamic masks is a "Dummy" caption; an empty mask here
