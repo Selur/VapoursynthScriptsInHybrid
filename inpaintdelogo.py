@@ -504,7 +504,8 @@ def _analysis_frames(inyv12: vs.VideoNode, analyze: int, basemask_p: vs.VideoNod
         frames = _select_frames(inyv12, analyze, basemask_p, th, noborder, grey)
         if len(frames) < 2:
             where = 'with a flat "Loc" border' if analyze == 2 else 'with a flat area next to the logo'
-            raise _error(f'No frames {where} found to analyze; increase "AnalyzeTh", use a smaller "Loc" or Analyze=3.')
+            hint = ' Keep about 16 px between the logo (incl. its shadow) and every "Loc" edge.' if analyze == 2 else ''
+            raise _error(f'No frames {where} found to analyze; increase "AnalyzeTh", use a smaller "Loc" or Analyze=3.{hint}')
         _write_frames(txt, frames)
     return frames * _loop_count(len(frames))
 
@@ -559,7 +560,9 @@ def _automask(clp: vs.VideoNode, inyv12: vs.VideoNode, mask_path: str, a: int, b
         frame[b:b + h, a:a + w] = 255
     amerge = core.std.CropAbs(_inpand(_frame_clip(frame), 6 if whole else 7), w, h, a, b)
     base, ext = os.path.splitext(mask_path)
-    auto_id = f'{base}_AutomaskTemp_A{analyze}{ext}'
+    # the original names it by mask and Analyze only; the key keeps an alpha of another Loc or analysis from being placed at this Loc
+    key = f'{a},{b},{w},{h},{th},{noborder},{inyv12.num_frames},{logo_id}'
+    auto_id = f'{base}_AutomaskTemp_A{analyze}_{zlib.crc32(key.encode("utf-8")):08x}{ext}'
     if os.path.isfile(auto_id) and not reanalyze:
         img = core.bs.VideoSource(auto_id, cachemode=0)[0]
         alpha = _to_array(core.resize.Point(_plane(img, 0), format=vs.GRAY8))
