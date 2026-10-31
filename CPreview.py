@@ -1,13 +1,14 @@
 from __future__ import annotations
 # ===============================================================================
 # ===============================================================================
-#            CPreview 2025-03-25
+#            CPreview 2026-10-31
 # ===============================================================================
 # ===============================================================================
 
 from typing import Mapping, Optional, Tuple, Union
 import math as m
 from functools import partial
+import fractions as fr
 import vapoursynth as vs
 from helpers import pick_tool
 core = vs.core
@@ -54,8 +55,21 @@ def CPreview(Source: vs.VideoNode, CL: int, CR: int, CT: int, CB: int, Frame: bo
     PropRange = PropRange if (-1 <= PropRange <= 1) else -1
     PropChroma = None if not IsChromaSS else Source.get_frame(0).props.get("_ChromaLocation", None)
 
+    PropSAR = float(PropNum) / float(PropDen) if (PropNum > 0 < PropDen) else 0.0
+
+    ChromaLoc = None if (PropChroma == -1) else "left" if (PropChroma == 0) else \
+      "center" if (PropChroma == 1) else "top_left" if (PropChroma == 2) else \
+      "top" if (PropChroma == 3) else "bottom_left" if (PropChroma == 4) else \
+      "bottom" if (PropChroma == 5) else "dv" if (PropChroma == 6) else None
+
     Cropped_Width = Source_Width - CL - CR
     Cropped_Height = Source_Height - CT - CB
+
+    Source_StorageAR = Source_Width / Source_Height
+    Source_DAR = Source_Width * PropSAR / Source_Height if (PropSAR > 0) and (PropSAR != 1) else Source_StorageAR
+    Cropped_StorageAR = Cropped_Width / Cropped_Height
+    Cropped_DAR = Cropped_Width * PropSAR / Cropped_Height if (PropSAR > 0) else Cropped_StorageAR
+
     CLineL = min(CL, CropLine)
     CLineR = min(CR, CropLine)
     CLineT = min(CT, CropLine)
@@ -73,14 +87,22 @@ def CPreview(Source: vs.VideoNode, CL: int, CR: int, CT: int, CB: int, Frame: bo
 
 # -------------------------------------------------------------------------------
 
-    DLB = ('\n \n' if IsSubPlugin else '\n\n')
-    LB = ('' if not (Frame or Time) or not IsSubPlugin else ' \n' * 5 if Frame and Time else ' \n' * 3)
+    LB = '' if not IsSubPlugin else \
+      ('\n' if Frame or Time else '') + (' \n' * 2 if Frame and Time else ' \n' if Frame or Time else '')
 
-    SubText = '' if not (1 <= Type <= 3) else f'{LB}Source Resolution\n{Source_Width} x {Source_Height}' + \
-      CR_PicMod(Source_Width, Source_Height) + f'{DLB}Crop ({CL},  {CR},  {CT},  {CB})' + \
-      f'{DLB}Cropped Resolution\n{Cropped444.width} x {Cropped444.height}' + \
-      CR_PicMod(Cropped_Width, Cropped_Height) + \
-      f'{DLB}Frame Properties SAR   ' + (f'{PropNum}:{PropDen}' if (PropNum > 0 < PropDen) else 'None')
+    SubText = '' if not (1 <= Type <= 3) else \
+      f'{LB}Frame Properties SAR   ' + \
+      (f'{CP_FS(PropSAR, 5, True)}  ({PropNum}:{PropDen})' if (PropSAR > 0) else 'None') + \
+      f'\n\nSource Resolution   {Source_Width} x {Source_Height}{CP_PicMod(Source_Width, Source_Height)}' + \
+      (f'\nStorage Aspect Ratio   {CP_FS(Source_StorageAR, 5, True)}{CP_FTF(Source_StorageAR)}' \
+      if (PropSAR > 0) and (PropSAR != 1) else '') + \
+      f'\nDisplay Aspect Ratio   {CP_FS(Source_DAR, 5, True)}{CP_FTF(Source_DAR)}' + \
+      f'\n\nCrop ({CL},  {CR},  {CT},  {CB})' + \
+      f'\n\nCropped Resolution   {Cropped_Width} x {Cropped_Height}{CP_PicMod(Cropped_Width, Cropped_Height)}' + \
+      (f'\nStorage Aspect Ratio   {CP_FS(Cropped_StorageAR, 5, True)}{CP_FTF(Cropped_StorageAR)}' \
+      if (PropSAR > 0) and (PropSAR != 1) else '') + \
+      f'\nDisplay Aspect Ratio   {CP_FS(Cropped_DAR, 5, True)}{CP_FTF(Cropped_DAR)}' + \
+      '\n\nChroma Location   ' + (f'{ChromaLoc}  ({PropChroma})' if ChromaLoc is not None else 'None')
 
     if IsSubPlugin:
 
@@ -90,8 +112,10 @@ def CPreview(Source: vs.VideoNode, CL: int, CR: int, CT: int, CB: int, Frame: bo
           0.0335 if (Source_Height < 1100) else 0.033 if (Source_Height < 1600) else \
           0.032 if (Source_Height < 1800) else 0.031 if (Source_Height < 2180) else 0.03))
 
-        Style = "" if not (1 <= Type <= 3) else "Arial," + str(Size) + \
-          ",&H00E0FFFF" + ",&H00E0FFFF" + ",&H00000000,&H00000000,1,0,0,0,100,100,0,0,0,1,0,5,0,0,0,1"
+        LSP = 1 if (Source_Height < 400) else 2 if (Source_Height < 600) else 3
+
+        Style = "" if not (1 <= Type <= 3) else "Arial," + str(Size) + ",&H00E0FFFF" + \
+          ",&H00E0FFFF" + ",&H00000000,&H00000000,1,0,0,0,100,100,0,0,0,1,0,5,0,0,1"
 
 # -------------------------------------------------------------------------------
 
@@ -130,12 +154,12 @@ def CPreview(Source: vs.VideoNode, CL: int, CR: int, CT: int, CB: int, Frame: bo
 # -------------------------------------------------------------------------------
 
     CPreviewVideo = (CPreviewVideo if not (1 <= Type <= 3) else \
-      core.sub.Subtitle(CPreviewVideo, SubText, style=Style, linespacing=3)) if IsSubPlugin else \
+      core.sub.Subtitle(CPreviewVideo, SubText, style=Style, linespacing=LSP)) if IsSubPlugin else \
       CPreviewVideo if (Frame or Time) or not (1 <= Type <= 3) else \
       core.text.Text(CPreviewVideo, SubText, alignment=5)
 
     CPreviewVideo = CPreviewVideo if not (Frame or Time) else \
-      CP_Position(CPreviewVideo, Frame, Time, Type, SubText, tools=tools)
+      CP_Position(CPreviewVideo, Frame, Time, Type, PropSAR, SubText, tools=tools)
 
     return (CPreviewVideo if not IsHalfFloat else core.resize.Bicubic(CPreviewVideo, format=vs.YUV444PH)) \
       if (Type == 1) or (Type == 4) or not IsChromaSS else \
@@ -227,6 +251,7 @@ def RGBColor(clip: vs.VideoNode, color: Optional[str] = None, matrix: Optional[U
 
     CPE = "\nCPreview (RGBColor):\n"
     if not isinstance(clip, vs.VideoNode): raise vs.Error(f'{CPE}clip must be a video')
+
     PropMatrix = clip.get_frame(0).props.get("_Matrix", -1)
     prop_name = '_Range' if core.core_version.release_major >= 74 else '_ColorRange'
     PropRange = clip.get_frame(0).props.get(prop_name, -1)
@@ -498,12 +523,36 @@ def RGBColor(clip: vs.VideoNode, color: Optional[str] = None, matrix: Optional[U
 # ===============================================================================
 # ===============================================================================
 
-def CR_PicMod(W: int, H: int) -> str:
+def CP_PicMod(W: int, H: int) -> str:
 
-    WMod = 16 if (W % 16 == 0) else 8 if (W % 8 == 0) else 4 if (W % 4 == 0) else 2 if (W % 2 == 0) else 1
-    HMod = 16 if (H % 16 == 0) else 8 if (H % 8 == 0) else 4 if (H % 4 == 0) else 2 if (H % 2 == 0) else 1
+    WMod = 16 if ((W % 16) == 0) else 8 if ((W % 8) == 0) else \
+      4 if ((W % 4) == 0) else 2 if ((W % 2) == 0) else 1
+    HMod = 16 if ((H % 16) == 0) else 8 if ((H % 8) == 0) else \
+      4 if ((H % 4) == 0) else 2 if ((H % 2) == 0) else 1
 
     return f'  (Mod {WMod}x{HMod})'
+
+# ===============================================================================
+# ===============================================================================
+#            Format String
+# ===============================================================================
+# ===============================================================================
+
+def CP_FS(Num: float, Limit: int = 3, Keep: bool = False) -> str:
+    S = ("{:z02." + str(Limit) + "f}").format(Num)
+    if (Limit > 0): S = S.rstrip("0")
+    if S.endswith("."): S = S.removesuffix(".") if not Keep else S + "0"
+    return S
+
+# ===============================================================================
+# ===============================================================================
+#            Float To Fraction
+# ===============================================================================
+# ===============================================================================
+
+def CP_FTF(Num: float) -> str:
+    Frac = "  (" + str(fr.Fraction(Num).limit_denominator(max_denominator=10000)) + ")"
+    return Frac.replace(")", ":1)") if (Frac.find("/") == -1) else Frac.replace("/", ":")
 
 # ===============================================================================
 # ===============================================================================
@@ -511,7 +560,7 @@ def CR_PicMod(W: int, H: int) -> str:
 # ===============================================================================
 # ===============================================================================
 
-def CP_Position(Source: vs.VideoNode, Frame: bool, Time: bool, Type: int = 4, SubText: str = "", tools: Optional[Mapping[str, str]] = None) -> vs.VideoNode:
+def CP_Position(Source: vs.VideoNode, Frame: bool, Time: bool, Type: int = 4, PropSAR: float = 0, SubText: str = "", tools: Optional[Mapping[str, str]] = None) -> vs.VideoNode:
 
     Source_Width = Source.width
     Source_Height = Source.height
@@ -531,29 +580,32 @@ def CP_Position(Source: vs.VideoNode, Frame: bool, Time: bool, Type: int = 4, Su
 
     Source = Source if not IsHalfFloat else core.resize.Bicubic(Source, format=Float32)
 
+    LB = '' if not (1 <= Type <= 3) else '\n' + ('\n' if not IsSubPlugin else ' \n' * 10) + \
+      (' \n' * 2 if (PropSAR > 0) and (PropSAR != 1) and IsSubPlugin else '')
+
     Size = 0 if not IsSubPlugin else min(Source_Width * 0.0215, Source_Height * \
       (0.0345 if (Source_Height < 300) else 0.036 if (Source_Height < 400) else \
       0.0335 if (Source_Height < 500) else 0.0342 if (Source_Height < 600) else \
       0.0335 if (Source_Height < 1100) else 0.033 if (Source_Height < 1600) else \
       0.032 if (Source_Height < 1800) else 0.031 if (Source_Height < 2180) else 0.03))
 
-    Size = Size if (1 <= Type <= 3) and IsSubPlugin else max(14, Size)
+    Size = Size if (1 <= Type <= 3) and IsSubPlugin else max(16, Size)
+    LSP = 1 if (Source_Height < 400) else 2 if (Source_Height < 600) else 3
 
-    Style = "" if not IsSubPlugin else "Arial," + str(Size) + \
-      ",&H00FFFFF0" + ",&H00FFFFF0" + ",&H00000000,&H00000000,1,0,0,0,100,100,0,0,0,1,0,5,0,0,0,1"
-
-    SubText = SubText if IsSubPlugin or not (1 <= Type <= 3) else \
-      ('\n' * (2 if Source_Height < 300 else 3)) + SubText
+    Style = "" if not IsSubPlugin else "Arial," + str(Size) + ",&H00FFFFF0" + \
+      ",&H00FFFFF0" + ",&H00000000,&H00000000,1,0,0,0,100,100,0,0,0,1,0,5,0,0,1"
 
     Position = core.std.FrameEval(Source, partial(CP_Pos, Source=Source, \
       FRateNum=FRateNum, FRateDen=FRateDen, Frame=Frame, Time=Time, Type=Type, \
-      SubText=SubText, Style=Style, IsSubPlugin=IsSubPlugin))
+      PropSAR=PropSAR, LB=LB, SubText=SubText, Style=Style, LSP=LSP, IsSubPlugin=IsSubPlugin))
 
     return Position if not IsHalfFloat else core.resize.Bicubic(Position, format=Source_ID)
 
 # -------------------------------------------------------------------------------
 
-def CP_Pos(n: int, Source: vs.VideoNode, FRateNum: int, FRateDen: int, Frame: bool, Time: bool, Type: int, SubText: str, Style: str, IsSubPlugin: bool) -> vs.VideoNode:
+def CP_Pos(n: int, Source: vs.VideoNode, FRateNum: int, FRateDen: int, Frame: bool, Time: bool, Type: int, PropSAR: float, LB: str, SubText: str, Style: str, LSP: int, IsSubPlugin: bool) -> vs.VideoNode:
+
+    Time = Time and (FRateNum > 0 < FRateDen)
 
     if Time:
 
@@ -564,11 +616,11 @@ def CP_Pos(n: int, Source: vs.VideoNode, FRateNum: int, FRateDen: int, Frame: bo
         MS = m.floor((F_Position - m.floor(F_Position)) * 1000)
         Pos = '{:02.0f}:{:02.0f}:{:02.0f}.{:03.0f}'.format(HH, MM, SS, MS)
 
-    PosText = (str(n) + '\n' + (' \n' if IsSubPlugin else '\n') + Pos if Frame and Time else \
-      str(n) if Frame else Pos) + \
-      ('\n' + (' \n' * 11) if (1 <= Type <= 3) and IsSubPlugin else '')
+    else: Pos = ''
 
-    return core.sub.Subtitle(Source, PosText, style=Style, linespacing=3) \
+    PosText = (str(n) if Frame else '') + ('\n' if Frame and Time else '') + Pos + LB
+
+    return core.sub.Subtitle(Source, PosText, style=Style, linespacing=LSP) \
       if IsSubPlugin else core.text.Text(Source, PosText + SubText, alignment=5)
 
 # ===============================================================================
