@@ -942,7 +942,7 @@ def _cpu_resident(clip: vs.VideoNode) -> vs.VideoNode:
 def _bm3d_warn_ignored(name: str, given: Sequence[str]) -> None:
     '''One warning naming the given parameters the implementation `name` does not know.'''
     unknown = _BM3D_PORTS_ONLY if name in ('bm3d', 'bm3dvk2') else _BM3D_PLUGIN_ONLY
-    if name == 'bm3dcpu':
+    if name in ('bm3dcpu', 'vszip'):
         unknown = unknown + ('fast', 'extractor_exp', 'device')
     elif name == 'bm3dvk':
         unknown = unknown + ('fast', 'device')
@@ -974,10 +974,11 @@ def BM3D(clip: vs.VideoNode, sigma: Union[float, Sequence[float]] = 5.0,
     The clip must be 32-bit float (Gray, YUV or RGB). RGB is filtered in the opponent colour space (needs the bm3d
     plugin). Planes with sigma 0 stay untouched; with luma only, the luma plane is filtered alone. sigma2, radius2 and
     profile2 default to the values of the basic estimate. Implementation as in helpers.BM3D(): tools['bm3d'], else the
-    order bm3dcuda, bm3dhip, bm3dmetal, bm3dvk2, bm3dvk, vsfeel, bm3dcpu, bm3d; a GPU plugin that cannot create its filter is skipped with a warning.
+    order bm3dcuda, bm3dhip, bm3dmetal, bm3dvk2, bm3dvk, vsfeel, bm3dcpu, bm3d, vszip; a GPU plugin that cannot create its filter is skipped with a warning.
     Parameters the chosen plugin does not know are ignored with a warning. matrix, profile*, block_size*, group_size*,
     bm_step*, ps_step*, th_mse* and hard_thr exist in bm3d and bm3dvk2 only, chroma (CBM3D, YUV444PS or RGB) in the BM3DCUDA ports,
-    bm3dvk and vsfeel, fast in bm3dcuda and bm3dhip, extractor_exp there and in bm3dvk and vsfeel, device in the GPU ports but bm3dvk.
+    bm3dvk, vsfeel and vszip (CPU, vszip 24+; RGB always with chroma), fast in bm3dcuda and bm3dhip, extractor_exp there and in bm3dvk and vsfeel,
+    device in the GPU ports but bm3dvk.
     bm3dvk2 (Vulkan, R81) takes Gray, luma only or RGB, not YUV with chroma.
     '''
     fmt = clip.format
@@ -1061,6 +1062,15 @@ def BM3D(clip: vs.VideoNode, sigma: Union[float, Sequence[float]] = 5.0,
                 out = (core.bm3d.VBasic if radius > 0 else core.bm3d.Basic)(plane_clip, profile=stage['profile'], sigma=sig, **options)
             return core.bm3d.VAggregate(out, radius=radius, sample=1) if radius > 0 else out
         options = {key: stage[key] for key in ('block_step', 'bm_range', 'ps_num', 'ps_range') if stage[key] is not None}
+        if name == 'vszip':
+            if not hasattr(core.vszip, 'BM3D'):
+                raise vs.Error('vszip has no BM3D, it needs vszip 24 or newer')
+            # core.bm3d matches the opponent colour planes on luma, chroma=1 comes closest to it
+            if use_chroma or (rgb and planes == 3):
+                options['chroma'] = 1
+            if ref is not None:
+                options['ref'] = ref
+            return core.vszip.BM3D(plane_clip, sigma=sig, radius=radius, **options)
         if use_chroma:
             options['chroma'] = True
         if name not in ('bm3dcpu', 'bm3dvk') and device_id is not None:

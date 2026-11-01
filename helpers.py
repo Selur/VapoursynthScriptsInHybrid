@@ -31,11 +31,12 @@ TOOLS: Dict[str, Dict[str, tuple]] = {
     'eedi2':          {'eedi2': ('eedi2', None), 'eedi2cuda': ('eedi2cuda', None)},
     'dfttest':        {'vszipcu': ('vszipcu', 'DFTTest'), 'dfttest2': ('dfttest2', None), 'dfttest2cpu': ('dfttest2_cpu', None),
                        'vsfeel': ('vsfeel', 'DFTTest'), 'neo_fft': ('neo_fft', 'DFTTest'), 'dfttest': ('dfttest', None)},
-    'nlmeans':        {'nlm_ispc': ('nlm_ispc', None), 'nlm_cuda': ('nlm_cuda', None), 'vszipcu': ('vszipcu', 'NLMeans'),
-                       'vszipcl': ('vszipcl', 'NLMeans'), 'knlmvk': ('knlmvk', None), 'knlm': ('knlm', None)},
+    'nlmeans':        {'vszip': ('vszip', 'NLMeans'), 'nlm_ispc': ('nlm_ispc', None), 'nlm_cuda': ('nlm_cuda', None),
+                       'vszipcu': ('vszipcu', 'NLMeans'), 'vszipcl': ('vszipcl', 'NLMeans'), 'knlmvk': ('knlmvk', None),
+                       'knlm': ('knlm', None)},
     'bm3d':           {'bm3dcuda': ('bm3dcuda', None), 'bm3dhip': ('bm3dhip', None), 'bm3dmetal': ('bm3dmetal', None),
                        'bm3dvk2': ('bm3dvk2', None), 'bm3dvk': ('bm3dvk', None), 'vsfeel': ('vsfeel', 'BM3D'),
-                       'bm3dcpu': ('bm3dcpu', None), 'bm3d': ('bm3d', None)},
+                       'bm3dcpu': ('bm3dcpu', None), 'bm3d': ('bm3d', None), 'vszip': ('vszip', 'BM3D')},
     'bilateral':      {'bilateralgpu_rtc': ('bilateralgpu_rtc', None), 'bilateralgpu': ('bilateralgpu', None),
                        'vszipcl': ('vszipcl', 'Bilateral'), 'vszipcu': ('vszipcu', 'Bilateral'),
                        'vsfeel': ('vsfeel', 'Bilateral'), 'vszip': ('vszip', 'Bilateral'), 'bilateral': ('bilateral', None)},
@@ -899,8 +900,9 @@ def BM3D(clip: vs.VideoNode, sigma: Sequence[float], radius: int = 0, block_step
     '''Basic BM3D estimate (aggregated when radius > 0) on the BM3D plugin that is loaded.
 
     The clip must be 32-bit float, chroma=True (CBM3D, block matching on luma) needs YUV444PS; the result is
-    32-bit float. Looked for in this order: bm3dcuda, bm3dhip, bm3dmetal, bm3dvk2, bm3dvk, vsfeel, bm3dcpu, then core.bm3d. backend
-    ('bm3dcuda', 'bm3dhip', 'bm3dmetal', 'bm3dvk2', 'bm3dvk', 'vsfeel', 'bm3dcpu' or 'bm3d') moves that implementation to the front, a GPU one
+    32-bit float. Looked for in this order: bm3dcuda, bm3dhip, bm3dmetal, bm3dvk2, bm3dvk, vsfeel, bm3dcpu, core.bm3d, then vszip
+    (CPU, needs vszip 24 or newer). backend
+    ('bm3dcuda', 'bm3dhip', 'bm3dmetal', 'bm3dvk2', 'bm3dvk', 'vsfeel', 'bm3dcpu', 'bm3d' or 'vszip') moves that implementation to the front, a GPU one
     followed by bm3dcpu (the Vulkan ports bm3dvk, bm3dvk2 and vsfeel by bm3d); bm3dvk2 takes Gray only here, and the
     default order skips the Vulkan ports when the core's Vulkan device is a CPU (llvmpipe); it matters where every plugin is autoloaded (Linux, macOS), with explicit loading only
     the chosen one is there anyway. A GPU plugin that cannot create its filter (no usable card, e.g. an AMD iGPU the bundled ROCm runtime does not support) is skipped with
@@ -925,6 +927,12 @@ def BM3D(clip: vs.VideoNode, sigma: Sequence[float], radius: int = 0, block_step
             basic = core.bm3d.VBasic(clip, sigma=list(sigma), radius=radius, block_step=block_step,
                                      bm_range=bm_range, ps_num=ps_num, ps_range=ps_range)
             return core.bm3d.VAggregate(basic, radius=radius, sample=1)
+        if name == 'vszip':
+            if not hasattr(core.vszip, 'BM3D'):
+                raise vs.Error('vszip has no BM3D, it needs vszip 24 or newer')
+            # aggregates radius > 0 itself and leaves planes with sigma 0 untouched
+            return core.vszip.BM3D(clip, sigma=list(sigma), radius=radius, block_step=[block_step], bm_range=[bm_range],
+                                   ps_num=[ps_num], ps_range=[ps_range], chroma=int(chroma))
         kwargs = dict(sigma=list(sigma), radius=radius, block_step=block_step, bm_range=bm_range, ps_num=ps_num,
                       ps_range=ps_range, chroma=chroma)
         if name not in ('bm3dcpu', 'bm3dvk') and device_id is not None and device_id >= 0:
@@ -939,7 +947,7 @@ def BM3D(clip: vs.VideoNode, sigma: Sequence[float], radius: int = 0, block_step
 
 def _bm3d_order(backend: Optional[str], tools: Optional[Mapping[str, str]]) -> Tuple[str, ...]:
     '''The BM3D implementations in the order to try them; backend, else tools['bm3d'], moves one to the front.'''
-    order = _BM3D_IMPLEMENTATIONS + ('bm3d',)
+    order = _BM3D_IMPLEMENTATIONS + ('bm3d', 'vszip')
     first = pick_tool(tools, 'bm3d', order) if backend is None and tools else None
     if first is not None:
         order = (first,) + tuple(name for name in order if name != first)
@@ -983,8 +991,9 @@ def _bm3d_first(order: Sequence[str], create: Callable[[str], vs.VideoNode]) -> 
 
 # The NLMeans implementations, in the order they are preferred when more than one is loaded.
 # The name of the call differs only for KNLMeansCL.
-_NLMEANS_IMPLEMENTATIONS = (('nlm_ispc', 'NLMeans'), ('nlm_cuda', 'NLMeans'), ('vszipcu', 'NLMeans'),
-                            ('vszipcl', 'NLMeans'), ('knlmvk', 'KNLMeans'), ('knlm', 'KNLMeansCL'))
+_NLMEANS_IMPLEMENTATIONS = (('vszip', 'NLMeans'), ('nlm_ispc', 'NLMeans'), ('nlm_cuda', 'NLMeans'),
+                            ('vszipcu', 'NLMeans'), ('vszipcl', 'NLMeans'), ('knlmvk', 'KNLMeans'),
+                            ('knlm', 'KNLMeansCL'))
 
 
 def NLMeans(
@@ -1004,18 +1013,19 @@ def NLMeans(
     """Calls the NLMeans implementation that is loaded, with the arguments it understands.
 
     d, a, s, h, channels, wmode, wref and rclip mean the same everywhere. device_type exists in
-    knlm alone, device_id in everything but nlm_ispc and knlmvk; a negative device_id means "the plugin
-    picks" and is left out. tools['nlmeans'] names the implementation to use. knlmvk (Vulkan,
-    VapourSynth R80+) returns GPU-resident frames and is downloaded here.
+    knlm alone, device_id in everything but vszip, nlm_ispc and knlmvk; a negative device_id means "the plugin
+    picks" and is left out. tools['nlmeans'] names the implementation to use. vszip (CPU) needs vszip 24 or
+    newer. knlmvk (Vulkan, VapourSynth R80+) returns GPU-resident frames and is downloaded here.
     """
     functions = dict(_NLMEANS_IMPLEMENTATIONS)
-    namespace = pick_tool(tools, 'nlmeans', list(functions), lambda n: hasattr(core, n))
+    namespace = pick_tool(tools, 'nlmeans', list(functions),
+                          lambda n: hasattr(core, n) and hasattr(getattr(core, n), functions[n]))
     if namespace is not None:
         name = functions[namespace]
         kwargs = {'d': d, 'a': a, 's': s, 'h': h, 'channels': channels, 'wmode': wmode,
                   'wref': wref, 'rclip': rclip}
         kwargs = {key: value for key, value in kwargs.items() if value is not None}
-        if device_id is not None and device_id >= 0 and namespace not in ('nlm_ispc', 'knlmvk'):
+        if device_id is not None and device_id >= 0 and namespace not in ('vszip', 'nlm_ispc', 'knlmvk'):
             kwargs['device_id'] = device_id
         if device_type is not None and namespace == 'knlm':
             kwargs['device_type'] = device_type

@@ -47,7 +47,7 @@ def SMDegrain(input: vs.VideoNode, tr: int = 2, thSAD: int = 300, thSADC: Option
     # v4formulas: thSADC, thSCD1, the refine threshold and the motion search parameters follow Dogway's SMDegrain 4.x.
     # LFR: Dogway's Low Frequency Restore; True = 300 Hz cutoff at 1920 wide, a number = cutoff in Hz (at least 50), False/0 = off.
     # DCTFlicker: with LFR, calms the restored low frequencies with a second, temporal SMDegrain pass on them.
-    # bm3d_backend: BM3D implementation for prefilter 5 ('bm3dcuda', 'bm3dhip', 'bm3dmetal', 'bm3dvk2', 'bm3dvk', 'vsfeel', 'bm3dcpu', 'bm3d'); None = first one loaded.
+    # bm3d_backend: BM3D implementation for prefilter 5 ('bm3dcuda', 'bm3dhip', 'bm3dmetal', 'bm3dvk2', 'bm3dvk', 'vsfeel', 'bm3dcpu', 'bm3d', 'vszip'); None = first one loaded.
     if not isinstance(input, vs.VideoNode):
         raise vs.Error('SMDegrain: This is not a clip')
 
@@ -191,9 +191,9 @@ def SMDegrain(input: vs.VideoNode, tr: int = 2, thSAD: int = 300, thSADC: Option
         elif prefilter > 6:
             raise vs.Error("SMDegrain: 'prefilter' must be -1 to 6 or a clip")
         elif prefilter == 4:
-            # Takes the first NLMeans implementation that is loaded: nlm_ispc (CPU),
+            # Takes the first NLMeans implementation that is loaded: vszip (CPU), nlm_ispc (CPU),
             # nlm_cuda (CUDA), knlmvk (Vulkan), knlm (KNLMeansCL, OpenCL). Usually exactly one of
-            # them is loaded for this filter - nlm_ispc when 'opencl' is off,
+            # them is loaded for this filter - vszip or nlm_ispc when 'opencl' is off,
             # otherwise whichever GPU port was chosen.
             # device_type/device_id only reach knlm and nlm_cuda; 'device' is -1 or None
             # when no device was pinned, and neither plugin takes that as an index.
