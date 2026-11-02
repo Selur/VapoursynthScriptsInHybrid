@@ -73,11 +73,11 @@ def DeStripe(clip: vs.VideoNode, rad: int=2, offset: int=0, thr: int=256, vertic
 
     expr = ''
     for pair in pattern:
-        if hvmode == 'v':
+        if hvmode == 'h':
             pair = tuple(reversed(pair))
         expr += partial_expr(*pair)
 
-    expr += f'sort{len(pattern)} ' + 'drop ' * (len(pattern)//2) + 'swap ' + 'drop ' * (len(pattern)//2)
+    expr += f'sort{len(pattern)} ' + 'drop ' * (len(pattern)//2) + 'swap drop ' * (len(pattern)//2)
 
     EXPR = get_expr(tools)
 
