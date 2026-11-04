@@ -6,7 +6,7 @@ import math
 from functools import partial
 from typing import Optional, Union, Sequence, Any, Dict, Callable, Mapping
 
-from helpers import GetPlane, BoxFilter, scale, get_expr, get_rg, pick_tool, zsmooth_namespace, type_error, value_error
+from helpers import GetPlane, BoxFilter, scale, get_expr, get_rg, pick_tool, f3kdb_usable, f3kdb_function, zsmooth_namespace, type_error, value_error
 from misc import SCDetect
 
 # taken from adjust
@@ -318,11 +318,10 @@ def SmoothLevels(
     
     if useDB:
         deband_expr = f'x {neutral[1]} - {Mfactor} / {neutral[1]} +'
-        deband = pick_tool(tools, 'f3kdb', ('vszip', 'neo_f3kdb', 'f3kdb'),
-                           lambda name: name == 'f3kdb' or hasattr(core, name)) or 'f3kdb'
+        deband = pick_tool(tools, 'f3kdb', ('vszip', 'neo_smo', 'neo_f3kdb', 'f3kdb'), f3kdb_usable) or 'f3kdb'
         use_vszip = deband == 'vszip'
         if not use_vszip:
-            deband_func = core.neo_f3kdb.Deband if deband == 'neo_f3kdb' else core.f3kdb.Deband
+            deband_func = f3kdb_function(deband)
 
         def _deband(clip: vs.VideoNode) -> vs.VideoNode:
             deband_in = EXPR(clip, expr=[deband_expr])

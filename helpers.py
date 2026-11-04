@@ -45,7 +45,7 @@ TOOLS: Dict[str, Dict[str, tuple]] = {
     'edgemasks':      {'edgemasks': ('edgemasks', None), 'std': ('std', None)},
     'tcanny':         {'tcanny': ('tcanny', None), 'std': ('std', None)},
     'fft3d':          {'neo_fft': ('neo_fft', 'FFT3D'), 'neo_fft3d': ('neo_fft3d', None), 'fft3dfilter': ('fft3dfilter', None)},
-    'f3kdb':          {'neo_smo': ('neo_smo', 'Deen'), 'vszip': ('vszip', 'Deband'), 'neo_f3kdb': ('neo_f3kdb', None), 'f3kdb': ('f3kdb', None)},
+    'f3kdb':          {'neo_smo': ('neo_smo', 'F3kdb'), 'vszip': ('vszip', 'Deband'), 'neo_f3kdb': ('neo_f3kdb', None), 'f3kdb': ('f3kdb', None)},
     'scd':            {'scd': ('scd', None), 'misc': ('misc', 'SCDetect'), 'std': ('std', None), 'mv': ('mv', 'SCDetection')},
     'hysteresis':     {'hysteresis': ('hysteresis', None), 'misc': ('misc', 'Hysteresis')},
     'grain':          {'noise': ('noise', None), 'grain': ('grain', None)},
@@ -146,6 +146,18 @@ def zsmooth_namespace(tools: Optional[Mapping[str, str]], family: str, order: Se
     '''Namespace for a call written for zsmooth ('zsmooth' or 'neo_smo'), None when the pick is another implementation.'''
     name = pick_zsmooth(tools, family, order, usable)
     return name if name in ('zsmooth', 'neo_smo') else None
+
+
+def f3kdb_usable(name: str) -> bool:
+    '''Whether f3kdb implementation `name` is loaded and has its function (neo_smo has F3kdb from 0.9.3 on).'''
+    namespace, function = TOOLS['f3kdb'][name]
+    return hasattr(core, namespace) and (function is None or hasattr(getattr(core, namespace), function))
+
+
+def f3kdb_function(name: str) -> Callable[..., Any]:
+    '''Deband function of a neo_f3kdb-compatible implementation (neo_smo, neo_f3kdb, f3kdb): same arguments and 14 bit scale.'''
+    namespace, function = TOOLS['f3kdb'][name]
+    return getattr(getattr(core, namespace), function or 'Deband')
 
 
 # Default order for tool_function() and the functions whose name differs between implementations.

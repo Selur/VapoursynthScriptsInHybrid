@@ -7,7 +7,7 @@ import warnings
 
 from typing import Any, Dict, List, Mapping, Optional, Sequence, Union
 
-from helpers import GetPlane, scale_value, scale, cround, DitherLumaRebuild, KNLMeansCL, DFTTest, BoxFilter, get_expr, get_rg, pick_tool, zsmooth_namespace, tool_function, tool_loaded, _bm3d_first, _bm3d_order
+from helpers import GetPlane, scale_value, scale, cround, DitherLumaRebuild, KNLMeansCL, DFTTest, BoxFilter, get_expr, get_rg, pick_tool, f3kdb_usable, f3kdb_function, zsmooth_namespace, tool_function, tool_loaded, _bm3d_first, _bm3d_order
 
 from misc import get_mv, MinBlur, SCDetect, mt_expand_multi
         
@@ -677,8 +677,7 @@ def mClean(clip: vs.VideoNode, thSAD: int = 400, chroma: bool = True, sharp: flo
     if deband:
         grainy = defH/15
         grainc = defH/16 if chroma else 0
-        deband_plugin = pick_tool(tools, 'f3kdb', ('vszip', 'neo_f3kdb', 'f3kdb'),
-                                  lambda name: name == 'f3kdb' or hasattr(core, name)) or 'f3kdb'
+        deband_plugin = pick_tool(tools, 'f3kdb', ('vszip', 'neo_smo', 'neo_f3kdb', 'f3kdb'), f3kdb_usable) or 'f3kdb'
         if deband_plugin == 'vszip':
             # vszip.Deband is f3kdb on a 255 scale, f3kdb itself uses a 14 bit one. The preset
             # "high" puts every plane at 64, "luma" leaves chroma at 0. See
@@ -687,7 +686,7 @@ def mClean(clip: vs.VideoNode, thSAD: int = 400, chroma: bool = True, sharp: flo
             thrc = 64 * f3k if chroma else 0
             filt = core.vszip.Deband(filt, range=16, thr=[64 * f3k, thrc, thrc], grain=[grainy * f3k, grainc * f3k])
         else:
-            deband_func = core.neo_f3kdb.Deband if deband_plugin == 'neo_f3kdb' else core.f3kdb.Deband
+            deband_func = f3kdb_function(deband_plugin)
             filt = deband_func(filt, range=16, preset="high" if chroma else "luma", grainy=grainy, grainc=grainc, output_depth=outbits)
         clean = core.std.ShufflePlanes(filt, [0], vs.GRAY)
         filt = core.vcm.Veed(filt) if deband == 2 else filt
