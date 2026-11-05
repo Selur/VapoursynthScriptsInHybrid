@@ -8,7 +8,7 @@ from typing import Sequence, Union, Optional, Any, Dict, List, Mapping
 import math
 import warnings
 
-from helpers import scale, cround, Padding, DitherLumaRebuild, DFTTest, GetPlane, KNLMeansCL, get_expr, is_limited_range, BM3D
+from helpers import scale, cround, Padding, DitherLumaRebuild, DFTTest, GetPlane, KNLMeansCL, get_expr, is_limited_range, BM3D, bm3d_implementation
 from misc import get_mv, MinBlur
 from gaussblur import GaussBlur
 from sharpen import LSFmod, ContraSharpening
@@ -365,6 +365,11 @@ def _bm3d_prefilter(clip: vs.VideoNode, chroma: bool, device: Optional[int], bac
     params: Dict[str, Any] = dict(radius=1, block_step=4, bm_range=16, ps_range=5, device_id=device if isinstance(device, int) else None,
                   backend=backend, tools=tools)
     expr = get_expr(tools)
+    if chroma and fmt.color_family != vs.GRAY and bm3d_implementation(backend, tools) == 'bm3dvk2':
+        try:
+            return _bm3dvk2_prefilter(clip, params)
+        except vs.Error as error:
+            warnings.warn(f'SMDegrain: bm3dvk2 cannot denoise chroma through RGB ({str(error).splitlines()[0]}), using the YUV path')
     if chroma and fmt.color_family != vs.GRAY:
         # Chroma is denoised together with luma (CBM3D), which needs 4:4:4; the float step is x / peak (zimg would stretch limited range to 0..1).
         bits = max(fmt.bits_per_sample, 16)
@@ -379,6 +384,17 @@ def _bm3d_prefilter(clip: vs.VideoNode, chroma: bool, device: Optional[int], bac
     work = BM3D(expr(luma, f'x {peak} /', format=vs.GRAYS), sigma=[10.0], **params)
     work = expr(work, f'x {peak} *', format=luma.format.id)
     return work if fmt.color_family == vs.GRAY else core.std.ShufflePlanes([work, clip], [0, 1, 2], vs.YUV)
+
+def _bm3dvk2_prefilter(clip: vs.VideoNode, params: Dict[str, Any]) -> vs.VideoNode:
+    '''CBM3D on bm3dvk2, which takes RGB only: full-range RGBS and back, sigma scaled to full range (255/219 for limited input).'''
+    with clip.get_frame(0) as f:
+        matrix = f.props.get('_Matrix')
+    limited = is_limited_range(clip)
+    factor = 255 / 219 if limited else 1.0
+    rgb = core.resize.Bicubic(clip, format=vs.RGBS, range_s='full')
+    work = BM3D(rgb, sigma=[10.0 * factor, 5.0 * factor, 5.0 * factor], **params)
+    return core.resize.Bicubic(work, format=clip.format.id, matrix=None if matrix is None else int(matrix), range_in_s='full',
+                               range_s='limited' if limited else 'full', chromaloc=_chroma_location(clip))
 
 def _chroma_location(clip: vs.VideoNode) -> Optional[int]:
     '''_ChromaLocation of frame 0 for the resize back from 4:4:4 (that clip carries none, zimg would site the chroma left).'''

@@ -915,7 +915,8 @@ def BM3D(clip: vs.VideoNode, sigma: Sequence[float], radius: int = 0, block_step
     32-bit float. Looked for in this order: bm3dcuda, bm3dhip, bm3dmetal, bm3dvk2, bm3dvk, vsfeel, bm3dcpu, core.bm3d, then vszip
     (CPU, needs vszip 24 or newer). backend
     ('bm3dcuda', 'bm3dhip', 'bm3dmetal', 'bm3dvk2', 'bm3dvk', 'vsfeel', 'bm3dcpu', 'bm3d' or 'vszip') moves that implementation to the front, a GPU one
-    followed by bm3dcpu (the Vulkan ports bm3dvk, bm3dvk2 and vsfeel by bm3d); bm3dvk2 takes Gray only here, and the
+    followed by bm3dcpu (the Vulkan ports bm3dvk, bm3dvk2 and vsfeel by bm3d); bm3dvk2 takes Gray or RGBS (RGB is denoised in the
+    opponent colour space, sigma per opponent plane), RGBS goes to bm3dvk2 only and raises vs.Error without it, and the
     default order skips the Vulkan ports when the core's Vulkan device is a CPU (llvmpipe); it matters where every plugin is autoloaded (Linux, macOS), with explicit loading only
     the chosen one is there anyway. A GPU plugin that cannot create its filter (no usable card, e.g. an AMD iGPU the bundled ROCm runtime does not support) is skipped with
     a warning, so a GPU choice should be loaded together with bm3dcpu. With the BM3DCUDA plugins, planes with
@@ -927,10 +928,11 @@ def BM3D(clip: vs.VideoNode, sigma: Sequence[float], radius: int = 0, block_step
 
     def create(name: str) -> vs.VideoNode:
         if name == 'bm3dvk2':
-            if clip.format.color_family != vs.GRAY:
+            if clip.format.color_family not in (vs.GRAY, vs.RGB):
                 raise vs.Error('bm3dvk2 takes Gray or RGB (opponent colour space) only, no CBM3D on YUV')
             options = dict(ps_num=ps_num, ps_range=ps_range) if radius > 0 else {}
-            out = core.bm3dvk2.BM3D(clip, sigma=[sigma[0]], radius=radius, block_step=block_step, bm_range=bm_range, **options)
+            planes = [sigma[0]] if clip.format.color_family == vs.GRAY else list(sigma)
+            out = core.bm3dvk2.BM3D(clip, sigma=planes, radius=radius, block_step=block_step, bm_range=bm_range, **options)
             # GPU-resident result; the callers mix it with CPU clips (Expr, ShufflePlanes), which R81 does not download on its own.
             return core.std.GPUDownload(out)
         if name == 'bm3d':
@@ -954,7 +956,22 @@ def BM3D(clip: vs.VideoNode, sigma: Sequence[float], radius: int = 0, block_step
         # bm3dvk and vsfeel take CPU clips but return GPU-resident frames (VapourSynth R80+); callers mix the result with CPU clips.
         return core.std.GPUDownload(out) if name in ('bm3dvk', 'vsfeel') else out
 
-    return _bm3d_first(_bm3d_order(backend, tools), create)[1]
+    order = _bm3d_order(backend, tools)
+    if clip.format.color_family == vs.RGB:
+        # The other implementations would filter RGB planes as if they were YUV.
+        if not hasattr(core, 'bm3dvk2'):
+            raise vs.Error('BM3D: RGB input needs bm3dvk2')
+        order = ('bm3dvk2',)
+    return _bm3d_first(order, create)[1]
+
+
+def bm3d_implementation(backend: Optional[str] = None, tools: Optional[Mapping[str, str]] = None) -> Optional[str]:
+    '''The loaded BM3D implementation BM3D() tries first for these arguments, None if none is loaded.'''
+    with warnings.catch_warnings():
+        # BM3D() itself reports a tools choice that is not loaded.
+        warnings.simplefilter('ignore')
+        order = _bm3d_order(backend, tools)
+    return next((name for name in order if hasattr(core, name)), None)
 
 
 def _bm3d_order(backend: Optional[str], tools: Optional[Mapping[str, str]]) -> Tuple[str, ...]:
