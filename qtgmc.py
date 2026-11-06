@@ -888,7 +888,9 @@ def QTGMC(
 
     # Support badly deinterlaced progressive content - drop half the fields and reweave to get 1/2fps interlaced stream appropriate for QTGMC processing
     if InputType > 1:
-        ediInput = Weave(innerClip.std.SeparateFields(tff=TFF).std.SelectEvery(cycle=4, offsets=[0, 3]), tff=TFF)
+        # Odd frame counts lose the last frame in the reweave; pad with the last frame and trim edi1 below
+        reweaveInput = innerClip + innerClip[-1] if innerClip.num_frames % 2 else innerClip
+        ediInput = Weave(reweaveInput.std.SeparateFields(tff=TFF).std.SelectEvery(cycle=4, offsets=[0, 3]), tff=TFF)
     else:
         ediInput = innerClip
 
@@ -899,6 +901,8 @@ def QTGMC(
         edi1 = QTGMC_Interpolate(
             ediInput, InputType, EdiMode, NNSize, NNeurons, EdiQual, EdiMaxD, bobbed, ChromaEdi.lower(), TFF, nnedi3_args, eedi3_args, opencl, device
         , tools=tools)
+    if edi1.num_frames > innerClip.num_frames:
+        edi1 = edi1[:innerClip.num_frames]
 
     # InputType=2,3: use motion mask to blend luma between original clip & reweaved clip based on ProgSADMask setting. Use chroma from original clip in any case
     if InputType < 2:
