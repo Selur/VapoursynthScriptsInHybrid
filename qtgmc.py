@@ -901,7 +901,7 @@ def QTGMC(
         edi1 = QTGMC_Interpolate(
             ediInput, InputType, EdiMode, NNSize, NNeurons, EdiQual, EdiMaxD, bobbed, ChromaEdi.lower(), TFF, nnedi3_args, eedi3_args, opencl, device
         , tools=tools)
-    if edi1.num_frames > innerClip.num_frames:
+    if InputType > 1 and edi1.num_frames > innerClip.num_frames:
         edi1 = edi1[:innerClip.num_frames]
 
     # InputType=2,3: use motion mask to blend luma between original clip & reweaved clip based on ProgSADMask setting. Use chroma from original clip in any case
