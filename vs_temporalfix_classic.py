@@ -4,26 +4,33 @@
 
 # Based on plugins and functions from many different people. See function comments here and in utils for details.
 
+from __future__ import annotations
+
+from typing import Mapping, Optional
+
 import vapoursynth as vs
+from misc import mvu_namespace, to_cpu
 from vs_temporalfix_utils import temporal_median, median, basic_expr, advanced_expr, box_blur, average_color_fix, average_color_fix_fast, tweak_darks, contrasharp, exclude_regions, lowfreq_denoise
 
 core = vs.core
 
 
-def _motion_search_prefilter(clip, thsad=250, tr=6, tools=None):
+def _motion_search_prefilter(clip: vs.VideoNode, thsad: int = 250, tr: int = 6, tools: Optional[Mapping[str, str]] = None) -> vs.VideoNode:
     # creates a temporally extremely stable reference for better motion vector estimation, but with lots of ghosting
     # based on SpotLess function from G41Fun https://github.com/Vapoursynth-Plugins-Gitify/G41Fun
     # which was modified from lostfunc https://github.com/theChaosCoder/lostfunc/blob/v1/lostfunc.py#L10
     # which was a port of Didée's original avisynth function https://forum.doom9.org/showthread.php?p=1402690
 
+    mvu = mvu_namespace(tools)  # mvutensils or mvgpu (tools['mv'])
+
     # first pass with temporal median
     bs  = 128  # large blocksize to reduce warping
     pel = 1
     
-    sup  = core.mvu.Super(clip, blksize=bs, overlap=bs // 2, pad=bs // 2, pel=pel, sharp=1, rfilter=2)
-    bv1, fv1 = core.mvu.AnalyseMany(sup, radius=1, search=2, searchparam=2, mvlambda=0, lsad=400, plevel=0, pnew=0, pzero=0, globalmv=False)
-    bc1  = core.mvu.Compensate(clip, sup, bv1, thscd1=400, thscd2=51)
-    fc1  = core.mvu.Compensate(clip, sup, fv1, thscd1=400, thscd2=51)
+    sup  = mvu.Super(clip, blksize=bs, overlap=bs // 2, pad=bs // 2, pel=pel, sharp=1, rfilter=2)
+    bv1, fv1 = mvu.AnalyseMany(sup, radius=1, search=2, searchparam=2, mvlambda=0, lsad=400, plevel=0, pnew=0, pzero=0, globalmv=False)
+    bc1  = to_cpu(mvu.Compensate(clip, sup, bv1, thscd1=400, thscd2=51))
+    fc1  = to_cpu(mvu.Compensate(clip, sup, fv1, thscd1=400, thscd2=51))
     fcb  = core.std.Interleave([fc1, clip, bc1])
     clip = temporal_median(fcb, radius=1, planes=0, tools=tools)[1::3]
 
@@ -31,25 +38,26 @@ def _motion_search_prefilter(clip, thsad=250, tr=6, tools=None):
     bs  = 128  # large blocksize to reduce warping
     pel = 1
     
-    sup  = core.mvu.Super(clip, blksize=bs, overlap=0, pel=pel, sharp=1, rfilter=2)
-    vecs = core.mvu.AnalyseMany(sup, radius=tr, search=2, searchparam=1, mvlambda=0, lsad=400, plevel=0, pnew=0, pzero=0, globalmv=False)
-    return core.mvu.Degrain(clip, sup, vecs, thsad=[thsad, thsad], planes=[0])
+    sup  = mvu.Super(clip, blksize=bs, overlap=0, pel=pel, sharp=1, rfilter=2)
+    vecs = mvu.AnalyseMany(sup, radius=tr, search=2, searchparam=1, mvlambda=0, lsad=400, plevel=0, pnew=0, pzero=0, globalmv=False)
+    return to_cpu(mvu.Degrain(clip, sup, vecs, thsad=[thsad, thsad], planes=[0]))
 
 
-def _non_global_motion_mask(clip, downscale=320, tools=None):
+def _non_global_motion_mask(clip: vs.VideoNode, downscale: int = 320, tools: Optional[Mapping[str, str]] = None) -> vs.VideoNode:
     # masks pixels that don't follow global motion and adds temporal smoothing
 
     # convert to faster format
     clip = core.resize.Point(clip, format=vs.GRAY8, range_s="limited")
 
     # compensate next frame for motionmask so that it works on pans and zooms
-    sup = core.mvu.Super(clip, blksize=128, overlap=64, pad=64, pel=2, sharp=1, rfilter=2)
-    vec = core.mvu.Analyse(sup, delta=-1, search=3, mvlambda=1000, lsad=1200, plevel=1, pnew=50, pzero=50, globalmv=True)
-    window = core.mvu.Compensate(clip, sup, vec, thsad=200000, thscd1=1000, thscd2=100.0)
+    mvu = mvu_namespace(tools)  # mvutensils or mvgpu (tools['mv'])
+    sup = mvu.Super(clip, blksize=128, overlap=64, pad=64, pel=2, sharp=1, rfilter=2)
+    vec = mvu.Analyse(sup, delta=-1, search=3, mvlambda=1000, lsad=1200, plevel=1, pnew=50, pzero=50, globalmv=True)
+    window = to_cpu(mvu.Compensate(clip, sup, vec, thsad=200000, thscd1=1000, thscd2=100.0))
     window = core.std.Interleave([window, clip])
     
     # make textures and their motion more detectable
-    window = core.resize.Bicubic(window, width=(window.width / window.height) * downscale, height=downscale)  # downscale so that small spatial changes are not in the mask, only larger changes
+    window = core.resize.Bicubic(window, width=int((window.width / window.height) * downscale), height=downscale)  # downscale so that small spatial changes are not in the mask, only larger changes
     blur   = box_blur(window, hradius=window.width // 55, vradius=window.width // 55, hpasses=3, vpasses=3, tools=tools)
     window = basic_expr([window, blur], "y 0 <= 1 x y / 1 + ? log 0 max 1 min", format=vs.GRAYS, tools=tools)  # retinex approximation with box blur instead of gauss
     window = core.vszip.PlaneMinMax(window, minthr=0.011, maxthr=0.011, prop="temporalfix_")
@@ -74,7 +82,8 @@ def _non_global_motion_mask(clip, downscale=320, tools=None):
     return box_blur(mask, hradius=4, vradius=4, hpasses=2, vpasses=2, tools=tools)  # feather mask
 
 
-def classic(clip, strength=500, tr=6, denoise=False, exclude=None, debug=False, tools=None):
+def classic(clip: vs.VideoNode, strength: int = 500, tr: int = 6, denoise: bool = False, exclude: Optional[str] = None,
+            debug: bool = False, tools: Optional[Mapping[str, str]] = None) -> vs.VideoNode:
     """Add temporal coherence to single image AI upscaling models. Also known as temporal consistency, line wiggle fix, stabilization, deshimmering. 
     This is the original CPU based version. It can run on any CPU, but is harder to tune, may miss some areas, and only works well for 2D animation. Check the 
     tips at the bottom for important usage information!
@@ -121,6 +130,9 @@ def classic(clip, strength=500, tr=6, denoise=False, exclude=None, debug=False, 
     if not isinstance(debug, bool):
         raise TypeError("vs_temporalfix: Debug must be either True or False.")
 
+    # vszip, akarin, edgemasks and zsmooth return CPU clips that std.MaskedMerge mixes with the input
+    clip = to_cpu(clip)
+
     # original props
     orig_clip   = clip
     props       = clip.get_frame(0).props
@@ -148,7 +160,9 @@ def classic(clip, strength=500, tr=6, denoise=False, exclude=None, debug=False, 
     
     # formats
     proc_format = core.get_video_format(getattr(vs, f"YUV444P{depth}")) if orig_family == vs.RGB else orig_format.replace(sample_type=vs.INTEGER, bits_per_sample=depth)  # format for the main processing steps
-    pref_format = proc_format.replace(sample_type=vs.INTEGER, bits_per_sample=8, **(dict(subsampling_w=1, subsampling_h=1) if proc_format.color_family == vs.YUV else {}))  # format for the prefilter step
+    pref_format = proc_format.replace(sample_type=vs.INTEGER, bits_per_sample=8)  # format for the prefilter step
+    if proc_format.color_family == vs.YUV:
+        pref_format = pref_format.replace(subsampling_w=1, subsampling_h=1)
     alys_format = proc_format.replace(sample_type=pref_format.sample_type, bits_per_sample=pref_format.bits_per_sample)  # format for motion analysing during the main processing steps
 
 
@@ -190,12 +204,13 @@ def classic(clip, strength=500, tr=6, denoise=False, exclude=None, debug=False, 
         pref = core.resize.Bicubic(pref, format=alys_format, width=clip.width, height=clip.height)
     
     # create superclips
-    pref_sup = core.mvu.Super(pref, blksize=blksize, overlap=overlap, rfilter=2, pel=pel, **({'pelclip': pelclip} if pel > 1 else {'sharp': 1}))
-    clip_sup = core.mvu.Super(clip, blksize=blksize, overlap=overlap, pel=pel, sharp=subpixel, onelevel=True)
+    mvu = mvu_namespace(tools)  # mvutensils or mvgpu (tools['mv'])
+    pref_sup = mvu.Super(pref, blksize=blksize, overlap=overlap, rfilter=2, pel=pel, **({'pelclip': pelclip} if pel > 1 else {'sharp': 1}))
+    clip_sup = mvu.Super(clip, blksize=blksize, overlap=overlap, pel=pel, sharp=subpixel, onelevel=True)
     
     # analyse and degrain
-    vecs = core.mvu.AnalyseMany(pref_sup, radius=tr, search=search, searchparam=searchparam, chroma=chroma, mvlambda=0, lsad=400, plevel=0, pnew=0, pzero=0, globalmv=False, satd=False)
-    clip = core.mvu.Degrain(clip, clip_sup, vecs, thsad=[strength, strengthc], planes=[0, 1, 2] if chroma else [0], thscd1=thscd1, thscd2=thscd2)
+    vecs = mvu.AnalyseMany(pref_sup, radius=tr, search=search, searchparam=searchparam, chroma=chroma, mvlambda=0, lsad=400, plevel=0, pnew=0, pzero=0, globalmv=False, satd=False)
+    clip = to_cpu(mvu.Degrain(clip, clip_sup, vecs, thsad=[strength, strengthc], planes=[0, 1, 2] if chroma else [0], thscd1=thscd1, thscd2=thscd2))
 
 
     ##### recover details #####

@@ -1,28 +1,33 @@
 # Script by pifroggi https://github.com/pifroggi/vs_temporalfix
 # or tepete and pifroggi on Discord
 
+from __future__ import annotations
+
 import re
 import math
+from typing import List, Mapping, Optional, Sequence, Tuple, Union
+
 import vapoursynth as vs
 from helpers import pick_tool, pick_zsmooth, tool_function
+from misc import mvu_namespace, to_cpu
 
 core = vs.core
 
 
-def temporal_median(clip, radius=1, planes=None, tools=None):
+def temporal_median(clip: vs.VideoNode, radius: int = 1, planes: Optional[Union[int, Sequence[int]]] = None, tools: Optional[Mapping[str, str]] = None) -> vs.VideoNode:
     # fallback plugin because zsmooth does not support non AVX2 CPUs
     return tool_function(tools, 'tmedian', 'TemporalMedian')(clip, radius=radius, planes=planes)
 
 
-def repair(clip, repairclip, mode=[1], tools=None):
+def repair(clip: vs.VideoNode, repairclip: vs.VideoNode, mode: Sequence[int] = (1,), tools: Optional[Mapping[str, str]] = None) -> vs.VideoNode:
     # fallback plugin because zsmooth does not support non AVX2 CPUs
-    return tool_function(tools, 'rg', 'Repair')(clip, repairclip, mode=mode)
+    return tool_function(tools, 'rg', 'Repair')(clip, repairclip, mode=list(mode))
 
 
-def median(clip, radius=1, planes=None, tools=None):
+def median(clip: vs.VideoNode, radius: int = 1, planes: Optional[Union[int, Sequence[int]]] = None, tools: Optional[Mapping[str, str]] = None) -> vs.VideoNode:
     # fallback plugin because zsmooth does not support non AVX2 CPUs
     usable = {'zsmooth': hasattr(core, 'zsmooth'), 'std': radius == 1, 'ctmf': True}
-    median = pick_zsmooth(tools, 'median', ('zsmooth', 'std', 'ctmf'), usable.get)
+    median = pick_zsmooth(tools, 'median', ('zsmooth', 'std', 'ctmf'), lambda name: usable.get(name, False))
     if median in ('zsmooth', 'neo_smo'):
         return getattr(core, median).Median(clip, radius=radius, planes=planes)
     elif median == 'std':
@@ -31,30 +36,29 @@ def median(clip, radius=1, planes=None, tools=None):
         return core.ctmf.CTMF(clip, radius=radius, planes=planes)
 
 
-def basic_expr(clips, expr, format=None, tools=None):
+def basic_expr(clips: Union[vs.VideoNode, Sequence[vs.VideoNode]], expr: Union[str, Sequence[str]], format: Optional[int] = None, tools: Optional[Mapping[str, str]] = None) -> vs.VideoNode:
     # backend for basic exprs supported by std.Expr
-    return getattr(core, pick_tool(tools, 'expr', ('akarin', 'std'))).Expr(clips, expr, format=format)
+    return getattr(core, pick_tool(tools, 'expr', ('akarin', 'std')) or 'std').Expr(clips, expr, format=format)
 
 
-def advanced_expr(clips, expr, format=None, tools=None):
+def advanced_expr(clips: Union[vs.VideoNode, Sequence[vs.VideoNode]], expr: Union[str, Sequence[str]], format: Optional[int] = None, tools: Optional[Mapping[str, str]] = None) -> vs.VideoNode:
     # backend for advanced exprs not possible with std.Expr; akarin is the only one, other tools['expr'] values warn
     pick_tool(tools, 'expr', ('akarin',), lambda name: True)
     return core.akarin.Expr(clips, expr, format=format)
 
 
-def box_blur(clip, planes=None, hradius=1, hpasses=1, vradius=1, vpasses=1, tools=None):
+def box_blur(clip: vs.VideoNode, planes: Optional[Union[int, Sequence[int]]] = None, hradius: int = 1, hpasses: int = 1, vradius: int = 1, vpasses: int = 1, tools: Optional[Mapping[str, str]] = None) -> vs.VideoNode:
     # optional plugin for slight speed boost
     return tool_function(tools, 'boxblur', 'BoxBlur')(clip, planes=planes, hradius=hradius, hpasses=hpasses, vradius=vradius, vpasses=vpasses)
 
 
-def min_blur(clip, planes=[0, 1, 2], tools=None):
+def min_blur(clip: vs.VideoNode, planes: Union[int, Sequence[int]] = (0, 1, 2), tools: Optional[Mapping[str, str]] = None) -> vs.VideoNode:
     # simplified function from G41Fun https://github.com/Vapoursynth-Plugins-Gitify/G41Fun
     # original avisynth function by Didée https://avisynth.nl/index.php/MinBlur
 
     if clip.format.num_planes == 1:
         planes = [0]
-    if isinstance(planes, int):
-        planes = [planes]
+    planes = [planes] if isinstance(planes, int) else list(planes)
     
     mat1 = [1, 2, 1, 2, 4, 2, 1, 2, 1]
     mat2 = [1, 1, 1, 1, 1, 1, 1, 1, 1]
@@ -64,7 +68,7 @@ def min_blur(clip, planes=[0, 1, 2], tools=None):
     return basic_expr([clip, RG11, RG4], [expr if i in planes else "" for i in range(clip.format.num_planes)], tools=tools)
 
 
-def average_color_fix(clip, ref, radius=4, passes=4, tools=None):
+def average_color_fix(clip: vs.VideoNode, ref: vs.VideoNode, radius: int = 4, passes: int = 4, tools: Optional[Mapping[str, str]] = None) -> vs.VideoNode:
     # simplified from https://github.com/pifroggi/vs_colorfix
     blurred_reference = box_blur(ref, hradius=radius, hpasses=passes, vradius=radius, vpasses=passes, tools=tools)
     blurred_clip = box_blur(clip, hradius=radius, hpasses=passes, vradius=radius, vpasses=passes, tools=tools)
@@ -72,7 +76,7 @@ def average_color_fix(clip, ref, radius=4, passes=4, tools=None):
     return core.std.MergeDiff(clip, diff_clip)
 
 
-def average_color_fix_fast(clip, ref, downscale_factor=8, tools=None):
+def average_color_fix_fast(clip: vs.VideoNode, ref: vs.VideoNode, downscale_factor: int = 8, tools: Optional[Mapping[str, str]] = None) -> vs.VideoNode:
     # faster but faint blocky artifacts
     width  = int(clip.width  / downscale_factor) >> clip.format.subsampling_w << clip.format.subsampling_w
     height = int(clip.height / downscale_factor) >> clip.format.subsampling_h << clip.format.subsampling_h
@@ -83,7 +87,7 @@ def average_color_fix_fast(clip, ref, downscale_factor=8, tools=None):
     return core.std.MergeDiff(clip, diff_clip)
 
 
-def frequency_merge(low, high, radius=40, passes=3, tools=None):
+def frequency_merge(low: vs.VideoNode, high: vs.VideoNode, radius: int = 40, passes: int = 3, tools: Optional[Mapping[str, str]] = None) -> vs.VideoNode:
     # merges low freqs of one clip with high freqs of another clip
     low_remaining  = box_blur(low,  hradius=radius, hpasses=passes, vradius=radius, vpasses=passes, tools=tools)
     high_removed   = box_blur(high, hradius=radius, hpasses=passes, vradius=radius, vpasses=passes, tools=tools)
@@ -91,7 +95,7 @@ def frequency_merge(low, high, radius=40, passes=3, tools=None):
     return core.std.MergeDiff(low_remaining, high_remaining)
 
 
-def tweak_darks(src, strength=2.5, amp=0.2, tools=None):
+def tweak_darks(src: vs.VideoNode, strength: float = 2.5, amp: float = 0.2, tools: Optional[Mapping[str, str]] = None) -> vs.VideoNode:
     # simplified DitherLumaRebuild function that works on full range
     # DitherLumaRebuild function from G41Fun https://github.com/Vapoursynth-Plugins-Gitify/G41Fun
     # originally created by cretindesalpes https://forum.doom9.org/showthread.php?p=1548318
@@ -106,14 +110,13 @@ def tweak_darks(src, strength=2.5, amp=0.2, tools=None):
     return basic_expr([src], expr, tools=tools)
 
 
-def contrasharp(clip, src, rep=24, planes=[0, 1, 2], tools=None):
+def contrasharp(clip: vs.VideoNode, src: vs.VideoNode, rep: int = 24, planes: Union[int, Sequence[int]] = (0, 1, 2), tools: Optional[Mapping[str, str]] = None) -> vs.VideoNode:
     # simplified function from G41Fun https://github.com/Vapoursynth-Plugins-Gitify/G41Fun
     # original avisynth function by Didée at the VERY GRAINY thread https://forum.doom9.org/showthread.php?p=1076491
 
     if clip.format.num_planes == 1:
         planes = [0]
-    if isinstance(planes, int):
-        planes = [planes]
+    planes = [planes] if isinstance(planes, int) else list(planes)
 
     mat1 = [1, 2, 1, 2, 4, 2, 1, 2, 1]
     mat2 = [1, 1, 1, 1, 1, 1, 1, 1, 1]
@@ -131,7 +134,7 @@ def contrasharp(clip, src, rep=24, planes=[0, 1, 2], tools=None):
     return core.std.MergeDiff(clip, ssDD, planes)  # apply the limited difference (sharpening is just inverse blurring)
 
 
-def exclude_regions(clip, replacement, exclude=None):
+def exclude_regions(clip: vs.VideoNode, replacement: vs.VideoNode, exclude: Optional[str] = None) -> vs.VideoNode:
     # simplified ReplaceFrames function from fvsfunc https://github.com/Irrational-Encoding-Wizardry/fvsfunc
     # which is a port of ReplaceFramesSimple by James D. Lin http://avisynth.nl/index.php/RemapFrames
 
@@ -143,13 +146,13 @@ def exclude_regions(clip, replacement, exclude=None):
     exclude = exclude.replace(",", " ").replace(":", " ")
     frames = re.findall(r"\d+(?!\d*\s*\d*\s*\d*\])", exclude)
     ranges = re.findall(r"\[\s*\d+\s+\d+\s*\]", exclude)
-    maps = []
+    maps: List[List[int]] = []
     for range_ in ranges:
         maps.append([int(x) for x in range_.strip("[ ]").split()])
     for frame in frames:
         maps.append([int(frame), int(frame)])
 
-    replace_frames = []
+    replace_frames: List[int] = []
     for start, end in maps:
         if start > end:
             raise ValueError("vs_temporalfix: Exclusions start frame is bigger than end frame: [{} {}]".format(start, end))
@@ -164,7 +167,7 @@ def exclude_regions(clip, replacement, exclude=None):
     return clip.vszip.RFS(replacement, frames=replace_frames)
 
 
-def lowfreq_denoise(low, high, motionmask, thsad=200, tr=6, tools=None):
+def lowfreq_denoise(low: vs.VideoNode, high: vs.VideoNode, motionmask: vs.VideoNode, thsad: int = 200, tr: int = 6, tools: Optional[Mapping[str, str]] = None) -> vs.VideoNode:
     # temporally denoise low frequencies only
 
     bs  = 8
@@ -179,13 +182,15 @@ def lowfreq_denoise(low, high, motionmask, thsad=200, tr=6, tools=None):
     motionmask = core.std.Maximum(motionmask)                  # expand mask
     prefilter  = tweak_darks(low_down, strength=2.5, amp=0.2, tools=tools)  # brighten darks
 
+    mvu = mvu_namespace(tools)  # mvutensils or mvgpu (tools['mv'])
+
     # create superclips
-    pref_sup = core.mvu.Super(prefilter, blksize=bs, overlap=bs // 2, pel=pel, sharp=1, rfilter=2)
-    low_sup  = core.mvu.Super(low_down,  blksize=bs, overlap=bs // 2, pel=pel, sharp=0, onelevel=True)
+    pref_sup = mvu.Super(prefilter, blksize=bs, overlap=bs // 2, pel=pel, sharp=1, rfilter=2)
+    low_sup  = mvu.Super(low_down,  blksize=bs, overlap=bs // 2, pel=pel, sharp=0, onelevel=True)
 
     # analyse and degrain
-    low_vecs = core.mvu.AnalyseMany(pref_sup, radius=tr, search=2, searchparam=1, mvlambda=0, lsad=400, plevel=0, pnew=0, pzero=0, globalmv=False)
-    low_degr = core.mvu.Degrain(low_down, low_sup, low_vecs, thsad=[thsad, thsad], planes=[0])
+    low_vecs = mvu.AnalyseMany(pref_sup, radius=tr, search=2, searchparam=1, mvlambda=0, lsad=400, plevel=0, pnew=0, pzero=0, globalmv=False)
+    low_degr = to_cpu(mvu.Degrain(low_down, low_sup, low_vecs, thsad=[thsad, thsad], planes=[0]))
 
     # merge
     low_degr = core.std.MaskedMerge(low_degr, low_down, motionmask)               # reduce blending/ghosting
@@ -193,7 +198,7 @@ def lowfreq_denoise(low, high, motionmask, thsad=200, tr=6, tools=None):
     return frequency_merge(low_degr, high, 10, 3, tools=tools)                                 # merge low freqs with original high freqs
 
 
-def gen_shifts(clip, radius):
+def gen_shifts(clip: vs.VideoNode, radius: int) -> List[vs.VideoNode]:
     # create shifted versions of the input clip with mirror padding
     frames = clip.num_frames
     prefix = clip[1:radius + 1][::-1]
@@ -211,7 +216,7 @@ def gen_shifts(clip, radius):
     return shifts
 
 
-def get_spans(length, tile_length, count):
+def get_spans(length: int, tile_length: int, count: int) -> List[Tuple[int, int, int, int]]:
     if count == 1:
         return [(0, length, 0, length)]
 
@@ -226,7 +231,7 @@ def get_spans(length, tile_length, count):
     return spans
 
 
-def get_tiles(clip_w, clip_h, tiles, overlap=0):
+def get_tiles(clip_w: int, clip_h: int, tiles: int, overlap: int = 0) -> Tuple[int, int, int, int]:
     # calculate tile size and choose the most square layout
     if tiles not in (1, 2, 4, 6, 8):
         raise ValueError("vs_temporalfix: Tiles must be 1, 2, 4, 6, or 8.")
@@ -239,13 +244,13 @@ def get_tiles(clip_w, clip_h, tiles, overlap=0):
         8: [(8, 1), (4, 2), (2, 4), (1, 8)],
     }[tiles]
 
-    def _tile_size(layout):
+    def _tile_size(layout: Tuple[int, int]) -> Tuple[int, int]:
         cols, rows = layout
         tile_w = math.ceil((clip_w + 2 * overlap * (cols - 1)) / cols)
         tile_h = math.ceil((clip_h + 2 * overlap * (rows - 1)) / rows)
         return tile_w, tile_h
 
-    def _layout_valid(layout):
+    def _layout_valid(layout: Tuple[int, int]) -> bool:
         # tiles must have a positive non overlapped stride
         cols, rows = layout
         tile_w, tile_h = _tile_size(layout)
@@ -255,7 +260,7 @@ def get_tiles(clip_w, clip_h, tiles, overlap=0):
             return False
         return True
 
-    def _score(layout):
+    def _score(layout: Tuple[int, int]) -> Tuple[float, int, int]:
         tile_w, tile_h = _tile_size(layout)
         cols, rows = layout
 
@@ -276,7 +281,7 @@ def get_tiles(clip_w, clip_h, tiles, overlap=0):
     return tile_w, tile_h, cols, rows
 
 
-def interpolate_onnx(onnx_path_lower, onnx_path_upper, save_path, weighting):
+def interpolate_onnx(onnx_path_lower: str, onnx_path_upper: str, save_path: str, weighting: float) -> None:
     # interpolate two onnx models
     import onnx
     import numpy as np

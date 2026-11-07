@@ -12,7 +12,7 @@ from typing import Optional, Union, Sequence, Dict, Any, Mapping, Callable, Tupl
 # Family -> {value: (namespace, function)}. The value is what a `tools` dict names; the function is
 # only given where the namespace alone does not say whether the implementation is there.
 TOOLS: Dict[str, Dict[str, tuple]] = {
-    'mv':             {'mvutensils': ('mvu', None), 'mvsf': ('mvsf', None), 'mv': ('mv', None)},
+    'mv':             {'mvutensils': ('mvu', None), 'mvgpu': ('mvgpu', None), 'mvsf': ('mvsf', None), 'mv': ('mv', None)},
     'expr':           {'akarin': ('akarin', None), 'cranexpr': ('cranexpr', None), 'std': ('std', None)},
     'rg':             {'zsmooth': ('zsmooth', None), 'neo_smo': ('neo_smo', None), 'rgsf': ('rgsf', None), 'rgvs': ('rgvs', None)},
     'median':         {'zsmooth': ('zsmooth', 'Median'), 'neo_smo': ('neo_smo', 'Median'), 'ctmf': ('ctmf', None), 'std': ('std', None)},
@@ -82,7 +82,7 @@ def tool_loaded(family: str, name: str) -> bool:
     if namespace == 'dfttest2':
         return any(hasattr(core, ns) for ns in _DFTTEST2_NAMESPACES)
     if family == 'scd' and name == 'mv':
-        return any(hasattr(core, ns) and hasattr(getattr(core, ns), 'SCDetection') for ns in ('mvu', 'mv'))
+        return any(hasattr(core, ns) and hasattr(getattr(core, ns), 'SCDetection') for ns in ('mvu', 'mvgpu', 'mv'))
     if not hasattr(core, namespace):
         return False
     return function is None or hasattr(getattr(core, namespace), function)

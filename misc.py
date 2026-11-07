@@ -777,7 +777,7 @@ def mt_inpand_multi(src: vs.VideoNode, mode: str = 'rectangle', planes: Optional
     return src
 
 # =============================================================================
-# Motion-vector plugin wrapper (mvtools / mvsf / mvutensils)
+# Motion-vector plugin wrapper (mvtools / mvsf / mvutensils / mvutensilsvk)
 # =============================================================================
 #
 # Every other script in this repository that needs motion estimation/compensation
@@ -814,6 +814,8 @@ def mt_inpand_multi(src: vs.VideoNode, mode: str = 'rectangle', planes: Optional
 #     needs to be checked when switching a given call site over.
 #   - thscd2: rescaled from the old 0-256 integer to mvu's 0-100 float percentage.
 #
+# tools['mv'] = 'mvgpu' (mvutensilsvk, R82+): mvutensils translation on core.mvgpu; results that meet CPU clips in std filters are downloaded.
+#
 # Usage in other files:
 #   from misc import MV
 #   sup   = MV.Super(clip, hpad=16, vpad=16, pel=2, blksize=8, overlap=2)
@@ -840,6 +842,30 @@ def mt_inpand_multi(src: vs.VideoNode, mode: str = 'rectangle', planes: Optional
 def has_mvutensils() -> bool:
     '''Returns True if the mvutensils plugin (core.mvu) is loaded.'''
     return hasattr(core, 'mvu')
+
+
+def has_mvgpu() -> bool:
+    '''Returns True if the mvutensilsvk plugin (core.mvgpu) is loaded.'''
+    return hasattr(core, 'mvgpu')
+
+
+def to_cpu(clip: vs.VideoNode) -> vs.VideoNode:
+    '''The clip on the CPU: GPUDownload for a GPU resident clip (VapourSynth R80+), else unchanged.'''
+    return core.std.GPUDownload(clip) if getattr(clip, 'gpu_resident', False) else clip
+
+
+def mvu_namespace(tools: Optional[Mapping[str, str]] = None) -> vs.Plugin:
+    '''core.mvgpu for tools['mv'] == 'mvgpu', else core.mvu; for scripts that call mvutensils with its own arguments.'''
+    wanted = (tools or {}).get('mv')
+    if wanted == 'mvgpu':
+        if not has_mvgpu():
+            raise vs.Error('tools: mv "mvgpu" is not loaded (mvutensilsvk, needs VapourSynth R82 and a Vulkan device)')
+        return core.mvgpu
+    if wanted not in (None, 'mvutensils'):
+        raise vs.Error(f'tools: mv "{wanted}" cannot serve this call, it needs mvutensils arguments ("mvutensils" or "mvgpu")')
+    if not has_mvutensils():
+        raise vs.Error('tools: mv "mvutensils" is not loaded')
+    return core.mvu
 
 
 # The block shapes mvutensils accepts (its CheckBlkSize), as (horizontal, vertical).
@@ -896,15 +922,15 @@ def _mvu_super_grid(clip: vs.VideoNode, blksize: int, blksizev: int, overlap: in
     return dict(blksize=[bx, by], overlap=[ox, oy])
 
 
-def _mvu_takes_fields() -> bool:
-    '''mvutensils up to v9 takes fields/tff in Analyse, AnalyseMany, Recalculate, Compensate and Flow; v10 removed them:
+def _mvu_takes_fields(ns: vs.Plugin) -> bool:
+    '''mvutensils up to v9 takes fields/tff in Analyse, AnalyseMany, Recalculate, Compensate and Flow; v10 and mvgpu don't:
     on separated fields the search finds the half-line offset between fields of opposite parity itself, and the vectors carry it.'''
-    return 'fields:' in core.mvu.Analyse.signature
+    return 'fields:' in ns.Analyse.signature
 
 
-def _mvu_fields(fields: bool, tff: Optional[bool]) -> Dict[str, bool]:
-    '''fields/tff for an mvutensils call, or nothing where the loaded version no longer takes them.'''
-    return dict(fields=fields, tff=bool(tff)) if _mvu_takes_fields() else {}
+def _mvu_fields(ns: vs.Plugin, fields: bool, tff: Optional[bool]) -> Dict[str, bool]:
+    '''fields/tff for an mvutensils/mvgpu call, or nothing where the loaded version no longer takes them.'''
+    return dict(fields=fields, tff=bool(tff)) if _mvu_takes_fields(ns) else {}
 
 
 def _mvu_pad(clip: vs.VideoNode, hpad: int, vpad: int) -> List[int]:
@@ -914,14 +940,14 @@ def _mvu_pad(clip: vs.VideoNode, hpad: int, vpad: int) -> List[int]:
     return [-(-max(1, hpad) // align_x) * align_x, -(-max(1, vpad) // align_y) * align_y]
 
 
-def _mvu_super_geometry(super: vs.VideoNode) -> Dict[str, Any]:
-    '''blksize/overlap/pad/pel of an mvutensils super, for a second Super that has to match it.'''
+def _mvu_super_geometry(super: vs.VideoNode, prefix: str = 'MVUtensils') -> Dict[str, Any]:
+    '''blksize/overlap/pad/pel of an mvutensils (prefix MVUtensils) or mvgpu (MVUtensilsVk) super, for a second Super that has to match it.'''
     sp = super.get_frame(0).props
     return dict(
-        blksize=[sp['MVUtensilsSuperBlkSizeX'], sp['MVUtensilsSuperBlkSizeY']],
-        overlap=[sp['MVUtensilsSuperOverlapX'], sp['MVUtensilsSuperOverlapY']],
-        pad=[sp['MVUtensilsSuperHPad'], sp['MVUtensilsSuperVPad']],
-        pel=sp['MVUtensilsSuperPel'],
+        blksize=[sp[prefix + 'SuperBlkSizeX'], sp[prefix + 'SuperBlkSizeY']],
+        overlap=[sp[prefix + 'SuperOverlapX'], sp[prefix + 'SuperOverlapY']],
+        pad=[sp[prefix + 'SuperHPad'], sp[prefix + 'SuperVPad']],
+        pel=sp[prefix + 'SuperPel'],
     )
 
 
@@ -1001,7 +1027,7 @@ class MotionVectors:
     '''
 
     def __init__(self, prefer_mvutensils: Optional[bool] = None, legacy_ns: Optional[str] = None,
-                 tools: Optional[Mapping[str, str]] = None) -> None:
+                 tools: Optional[Mapping[str, str]] = None, gpu: bool = False) -> None:
         '''
         prefer_mvutensils:
             None  -> use mvutensils automatically whenever core.mvu is available (default).
@@ -1011,15 +1037,22 @@ class MotionVectors:
             'mvsf' -> core.mvsf for float clips; integer clips warn and use core.mv.
             None   -> core.mvsf for float clips when loaded, core.mv otherwise.
         tools: passed on to the helpers the wrapper uses itself (Expr).
+        gpu: True -> mvutensilsvk (core.mvgpu) with the mvutensils translation; raises if it isn't loaded.
 
         NOTE: availability is checked live on every call
         '''
         self._prefer_mvutensils = prefer_mvutensils
         self._legacy = legacy_ns
         self._tools = tools
+        self._gpu = gpu
 
     @property
     def use_mvu(self) -> bool:
+        '''True for mvutensils and mvgpu, which share the argument translation.'''
+        if self._gpu:
+            if not has_mvgpu():
+                raise vs.Error('MotionVectors: mvgpu (mvutensilsvk) was requested but is not loaded')
+            return True
         if self._prefer_mvutensils is True:
             if not has_mvutensils():
                 raise vs.Error('MotionVectors: mvutensils (core.mvu) was requested but is not loaded')
@@ -1028,10 +1061,23 @@ class MotionVectors:
             return False
         return has_mvutensils()
 
+    @property
+    def _ns(self) -> vs.Plugin:
+        '''The mvutensils-style namespace: core.mvgpu or core.mvu.'''
+        return core.mvgpu if self._gpu else core.mvu
+
+    def _out(self, clip: vs.VideoNode) -> vs.VideoNode:
+        '''A result the scripts process further: on the CPU for mvgpu, unchanged otherwise.'''
+        return to_cpu(clip) if self._gpu else clip
+
+    def _no_depan(self, name: str) -> None:
+        if self._gpu:
+            raise vs.Error(f'MV.{name}: mvgpu (mvutensilsvk) has no Depan functions, use tools mv "mvutensils"')
+
     def max_degrain_radius(self, clip: vs.VideoNode) -> Optional[int]:
-        '''Largest temporal radius Degrain() accepts for this clip; None = no limit (mvutensils).'''
+        '''Largest temporal radius Degrain() accepts for this clip; None = no limit (mvutensils), 25 for mvgpu.'''
         if self.use_mvu:
-            return None
+            return 25 if self._gpu else None
         ns = self._legacy_ns(clip)
         radius = 0
         while hasattr(ns, f'Degrain{radius + 1}'):
@@ -1091,8 +1137,10 @@ class MotionVectors:
                     'MV.Super: mvutensils requires blksize and overlap to be passed '
                     '(use the same values as the matching Analyse() call)'
                 )
+            if self._gpu and pelclip is not None and pel == 4:
+                raise vs.Error('MV.Super: mvgpu (mvutensilsvk) takes no pelclip at pel=4, use pel=2 with a pelclip or pel=4 without one')
             grid = _mvu_super_grid(clip, blksize, blksizev or blksize, overlap, (overlapv if overlapv is not None else overlap), recalculate)
-            return core.mvu.Super(
+            return self._ns.Super(
                 clip,
                 **grid,
                 pad=_mvu_pad(clip, hpad, vpad),
@@ -1131,7 +1179,7 @@ class MotionVectors:
             meander=meander,
             trymany=(2 if trymany else 0),
             satd=_mvu_dct_to_satd(dct),
-            **_mvu_fields(fields, tff),
+            **_mvu_fields(self._ns, fields, tff),
         )
         kwargs['pzero'] = pzero if pzero is not None else kwargs['pnew']
         if pelsearch:
@@ -1178,7 +1226,7 @@ class MotionVectors:
             )
             # isb=True (old "is backward") -> positive delta; isb=False (forward) -> negative delta.
             kwargs['delta'] = delta if isb else -delta
-            return core.mvu.Analyse(super, **kwargs)
+            return self._ns.Analyse(super, **kwargs)
         ns = self._legacy_ns(super)
         func = self._legacy_analyse_func(ns)
         return func(
@@ -1240,7 +1288,7 @@ class MotionVectors:
                 truemotion, lsad, plevel, global_, pnew, pzero, pglobal, overlap, overlapv,
                 badsad, badrange, meander, trymany, fields, tff, dct,
             )
-            return list(core.mvu.AnalyseMany(super, radius=radius, delta=delta, **kwargs))
+            return list(self._ns.AnalyseMany(super, radius=radius, delta=delta, **kwargs))
         vectors = []
         for step in range(delta, delta * radius + 1, delta):
             for isb in (True, False):
@@ -1280,7 +1328,7 @@ class MotionVectors:
         if isinstance(vectors, (list, tuple)):
             if self.use_mvu:
                 # mvutensils takes/returns a whole vector list in one call (e.g. from AnalyseMany).
-                return list(core.mvu.Recalculate(
+                return list(self._ns.Recalculate(
                     super, list(vectors),
                     thsad=thsad,
                     smooth=bool(smooth),
@@ -1293,7 +1341,7 @@ class MotionVectors:
                     overlap=[overlap, (overlapv if overlapv is not None else overlap)],
                     meander=meander,
                     satd=_mvu_dct_to_satd(dct),
-                    **_mvu_fields(fields, tff),
+                    **_mvu_fields(self._ns, fields, tff),
                 ))
             # Legacy mv/mvsf Recalculate only takes a single vector clip at a time.
             return [
@@ -1305,7 +1353,7 @@ class MotionVectors:
                 for v in vectors
             ]
         if self.use_mvu:
-            return core.mvu.Recalculate(
+            return self._ns.Recalculate(
                 super, vectors,
                 thsad=thsad,
                 smooth=bool(smooth),
@@ -1318,7 +1366,7 @@ class MotionVectors:
                 overlap=[overlap, (overlapv if overlapv is not None else overlap)],
                 meander=meander,
                 satd=_mvu_dct_to_satd(dct),
-                **_mvu_fields(fields, tff),
+                **_mvu_fields(self._ns, fields, tff),
             )
         ns = self._legacy_ns(super)
         return ns.Recalculate(
@@ -1344,10 +1392,10 @@ class MotionVectors:
     ) -> vs.VideoNode:
         if self.use_mvu:
             # mvutensils dropped `scbehavior`.
-            return core.mvu.Compensate(
+            return self._out(self._ns.Compensate(
                 clip, super, vectors, thsad=thsad, time=time,
-                thscd1=thscd1, thscd2=_mvu_scale_thscd2(thscd2), **_mvu_fields(fields, tff),
-            )
+                thscd1=thscd1, thscd2=_mvu_scale_thscd2(thscd2), **_mvu_fields(self._ns, fields, tff),
+            ))
         ns = self._legacy_ns(clip)
         return ns.Compensate(clip, super, vectors, scbehavior=scbehavior, thsad=thsad, fields=fields, time=time, thscd1=thscd1, thscd2=thscd2, tff=tff)
 
@@ -1444,12 +1492,13 @@ class MotionVectors:
                 _mvu_limit_to_float(limitc if limitc is not None else limit, clip),
             ]
             if centre_from_clip:
-                if 'centersuper:' not in core.mvu.Degrain.signature:
+                if 'centersuper:' not in self._ns.Degrain.signature:
                     raise vs.Error('MV.Degrain: centre_from_clip needs mvutensils 10 or newer (Degrain without centersuper).')
                 # A one-level super of clip supplies the centre pixels and the limit reference.
-                centre_super = core.mvu.Super(clip, onelevel=True, **_mvu_super_geometry(super))
-                return core.mvu.Degrain(clip, super, vec_list, limit=mvu_limit, centersuper=centre_super, **weight_args)
-            return core.mvu.Degrain(clip, super, vec_list, limit=mvu_limit, **weight_args)
+                prefix = 'MVUtensilsVk' if self._gpu else 'MVUtensils'
+                centre_super = self._ns.Super(clip, onelevel=True, **_mvu_super_geometry(super, prefix))
+                return self._out(self._ns.Degrain(clip, super, vec_list, limit=mvu_limit, centersuper=centre_super, **weight_args))
+            return self._out(self._ns.Degrain(clip, super, vec_list, limit=mvu_limit, **weight_args))
 
         ns = self._legacy_ns(clip)
         radius = len(vec_list) // 2
@@ -1484,7 +1533,7 @@ class MotionVectors:
     ) -> vs.VideoNode:
         if self.use_mvu:
             # mvutensils dropped `mode` (only the old mode=0 behaviour remains).
-            return core.mvu.Flow(clip, super, vectors, time=time, thscd1=thscd1, thscd2=_mvu_scale_thscd2(thscd2), **_mvu_fields(fields, tff))
+            return self._out(self._ns.Flow(clip, super, vectors, time=time, thscd1=thscd1, thscd2=_mvu_scale_thscd2(thscd2), **_mvu_fields(self._ns, fields, tff)))
         ns = self._legacy_ns(clip)
         return ns.Flow(clip, super, vectors, time=time, mode=mode, fields=fields, thscd1=thscd1, thscd2=thscd2, tff=tff)
 
@@ -1494,7 +1543,7 @@ class MotionVectors:
         thscd1: float = 400.0, thscd2: float = 130.0,
     ) -> vs.VideoNode:
         if self.use_mvu:
-            return core.mvu.FlowInter(clip, super, [mvbw, mvfw], time=time, ml=ml, blend=blend, thscd1=thscd1, thscd2=_mvu_scale_thscd2(thscd2))
+            return self._out(self._ns.FlowInter(clip, super, [mvbw, mvfw], time=time, ml=ml, blend=blend, thscd1=thscd1, thscd2=_mvu_scale_thscd2(thscd2)))
         ns = self._legacy_ns(clip)
         return ns.FlowInter(clip, super, mvbw, mvfw, time=time, ml=ml, blend=blend, thscd1=thscd1, thscd2=thscd2)
 
@@ -1505,7 +1554,7 @@ class MotionVectors:
     ) -> vs.VideoNode:
         if self.use_mvu:
             # old mask=1 -> extramask=False, old mask=2 (default) -> extramask=True.
-            return core.mvu.FlowFPS(clip, super, [mvbw, mvfw], num=num, den=den, extramask=(mask != 1), ml=ml, blend=blend, thscd1=thscd1, thscd2=_mvu_scale_thscd2(thscd2))
+            return self._out(self._ns.FlowFPS(clip, super, [mvbw, mvfw], num=num, den=den, extramask=(mask != 1), ml=ml, blend=blend, thscd1=thscd1, thscd2=_mvu_scale_thscd2(thscd2)))
         ns = self._legacy_ns(clip)
         return ns.FlowFPS(clip, super, mvbw, mvfw, num=num, den=den, mask=mask, ml=ml, blend=blend, thscd1=thscd1, thscd2=thscd2)
 
@@ -1514,7 +1563,7 @@ class MotionVectors:
         blur: float = 50.0, prec: int = 1, thscd1: float = 400.0, thscd2: float = 130.0,
     ) -> vs.VideoNode:
         if self.use_mvu:
-            return core.mvu.FlowBlur(clip, super, [mvbw, mvfw], blur=blur, prec=prec, thscd1=thscd1, thscd2=_mvu_scale_thscd2(thscd2))
+            return self._out(self._ns.FlowBlur(clip, super, [mvbw, mvfw], blur=blur, prec=prec, thscd1=thscd1, thscd2=_mvu_scale_thscd2(thscd2)))
         ns = self._legacy_ns(clip)
         return ns.FlowBlur(clip, super, mvbw, mvfw, blur=blur, prec=prec, thscd1=thscd1, thscd2=thscd2)
 
@@ -1533,14 +1582,18 @@ class MotionVectors:
         when porting that specific call.
         '''
         if self.use_mvu:
-            func = {0: core.mvu.VectorLengthMask, 1: core.mvu.SADMask, 2: core.mvu.OcclusionMask}.get(kind)
+            func = {0: self._ns.VectorLengthMask, 1: self._ns.SADMask, 2: self._ns.OcclusionMask}.get(kind)
             if func is None:
                 raise vs.Error(f'MV.Mask: unsupported kind {kind!r}')
-            # ysc is on the 8-bit scale; mvutensils takes it as scval in the vector clip's own format.
-            fmt = vectors.format
-            peak = 1.0 if fmt.sample_type == vs.FLOAT else (1 << fmt.bits_per_sample) - 1
-            return func(vectors, ml=ml, gamma=gamma, time=time, scval=ysc * peak / 255.0, thscd1=thscd1,
-                        thscd2=_mvu_scale_thscd2(thscd2))
+            # ysc is on the 8-bit scale; scval is in the mask's format (the analysed clip's depth; mvgpu vectors are always Gray32).
+            if self._gpu:
+                bits = vectors.get_frame(0).props['MVUtensilsVkAnalysisBitsPerSample']
+                peak = 1.0 if bits == 32 else (1 << bits) - 1
+            else:
+                fmt = vectors.format
+                peak = 1.0 if fmt.sample_type == vs.FLOAT else (1 << fmt.bits_per_sample) - 1
+            return self._out(func(vectors, ml=ml, gamma=gamma, time=time, scval=ysc * peak / 255.0, thscd1=thscd1,
+                                  thscd2=_mvu_scale_thscd2(thscd2)))
         ns = self._legacy_ns(clip)
         return ns.Mask(clip, vectors, ml=ml, gamma=gamma, kind=kind, time=time, ysc=ysc, thscd1=thscd1, thscd2=thscd2)
 
@@ -1548,15 +1601,16 @@ class MotionVectors:
 
     def SCDetection(self, clip: vs.VideoNode, vectors: vs.VideoNode, thscd1: float = 400.0, thscd2: float = 130.0) -> vs.VideoNode:
         if self.use_mvu:
-            return core.mvu.SCDetection(clip, vectors, thscd1=thscd1, thscd2=_mvu_scale_thscd2(thscd2))
+            return self._ns.SCDetection(clip, vectors, thscd1=thscd1, thscd2=_mvu_scale_thscd2(thscd2))
         ns = self._legacy_ns(clip)
         return ns.SCDetection(clip, vectors, thscd1=thscd1, thscd2=thscd2)
 
-    # -- Depan family (integer-only in both mvtools and mvutensils) ---------
+    # -- Depan family (integer-only in both mvtools and mvutensils; mvgpu has none) ---------
 
     def DepanEstimate(self, clip: vs.VideoNode, trust: float = 4.0, winx: int = 0, winy: int = 0, wleft: int = -1, wtop: int = -1,
                        dxmax: int = -1, dymax: int = -1, zoommax: float = 0.0, stab: float = 1.0, pixaspect: float = 1.0,
                        info: bool = False, show: bool = False, fields: bool = False, tff: Optional[bool] = None) -> vs.VideoNode:
+        self._no_depan('DepanEstimate')
         ns = core.mvu if self.use_mvu else core.mv
         return ns.DepanEstimate(clip, trust=trust, winx=winx, winy=winy, wleft=wleft, wtop=wtop, dxmax=dxmax, dymax=dymax,
                                  zoommax=(zoommax or 1.0) if self.use_mvu else zoommax, stab=stab, pixaspect=pixaspect,
@@ -1565,6 +1619,7 @@ class MotionVectors:
     def DepanAnalyse(self, clip: vs.VideoNode, vectors: vs.VideoNode, mask: Optional[vs.VideoNode] = None, zoom: bool = True, rot: bool = True,
                       pixaspect: float = 1.0, error: float = 15.0, info: bool = False, wrong: float = 10.0, zerow: float = 0.05,
                       thscd1: float = 400.0, thscd2: float = 130.0, fields: bool = False, tff: Optional[bool] = None) -> vs.VideoNode:
+        self._no_depan('DepanAnalyse')
         ns = core.mvu if self.use_mvu else core.mv
         return ns.DepanAnalyse(clip, vectors, mask=mask, zoom=zoom, rot=rot, pixaspect=pixaspect, error=error, info=info,
                                 wrong=wrong, zerow=zerow, thscd1=thscd1,
@@ -1575,6 +1630,7 @@ class MotionVectors:
                         addzoom: bool = False, prev: int = 0, next: int = 0, mirror: int = 0, blur: int = 0, dxmax: float = 60.0,
                         dymax: float = 30.0, zoommax: float = 0.0, rotmax: float = 1.0, subpixel: int = 2, pixaspect: float = 1.0,
                         fitlast: int = 0, tzoom: float = 3.0, info: bool = False, method: int = 0, fields: bool = False) -> vs.VideoNode:
+        self._no_depan('DepanStabilise')
         ns = core.mvu if self.use_mvu else core.mv
         return ns.DepanStabilise(clip, data, cutoff=cutoff, damping=damping, initzoom=initzoom, addzoom=addzoom, prev=prev,
                                   next=next, mirror=mirror, blur=blur, dxmax=dxmax, dymax=dymax,
@@ -1584,6 +1640,7 @@ class MotionVectors:
     def DepanCompensate(self, clip: vs.VideoNode, data: vs.VideoNode, offset: float = 0.0, subpixel: int = 2, pixaspect: float = 1.0,
                          matchfields: bool = True, mirror: int = 0, blur: int = 0, info: bool = False, fields: bool = False,
                          tff: Optional[bool] = None) -> vs.VideoNode:
+        self._no_depan('DepanCompensate')
         ns = core.mvu if self.use_mvu else core.mv
         return ns.DepanCompensate(clip, data, offset=offset, subpixel=subpixel, pixaspect=pixaspect, matchfields=matchfields,
                                    mirror=mirror, blur=blur, info=info, fields=fields, tff=bool(tff) if self.use_mvu else tff)
@@ -1597,17 +1654,20 @@ _MV_BY_TOOL = {}
 # tools['mv'] -> MotionVectors arguments, and the check whether that choice can be used.
 _MV_CHOICES = {
     'mvutensils': (dict(prefer_mvutensils=True), has_mvutensils),
+    'mvgpu': (dict(gpu=True), has_mvgpu),
     'mv': (dict(prefer_mvutensils=False), lambda: hasattr(core, 'mv')),
     'mvsf': (dict(prefer_mvutensils=False, legacy_ns='mvsf'), lambda: hasattr(core, 'mvsf')),
 }
 
 
 def get_mv(tools: Optional[Mapping[str, str]] = None) -> MotionVectors:
-    '''MotionVectors for tools['mv'] ('mvutensils', 'mv' or 'mvsf'); the default MV without it.
+    '''MotionVectors for tools['mv'] ('mvutensils', 'mvgpu', 'mv' or 'mvsf'); the default MV without it.
 
-    A choice that is not loaded gives a warning and the default MV. 'mv' still takes mvsf for float clips when it is
-    loaded, 'mvsf' uses it for every clip.
+    A choice that is not loaded gives a warning and the default MV, except 'mvgpu', which raises. 'mv' still takes
+    mvsf for float clips when it is loaded, 'mvsf' uses it for every clip.
     '''
+    if (tools or {}).get('mv') == 'mvgpu' and not has_mvgpu():
+        raise vs.Error('tools: mv "mvgpu" is not loaded (mvutensilsvk, needs VapourSynth R82 and a Vulkan device)')
     choice = pick_tool(tools, 'mv', (), lambda name: _MV_CHOICES[name][1](), candidates=tuple(_MV_CHOICES))
     expr = (tools or {}).get('expr')
     if choice is None and expr is None:
