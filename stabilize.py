@@ -6,7 +6,7 @@ import vapoursynth as vs
 import misc
 from helpers import pick_tool, tool_function, zsmooth_namespace
 
-def Stab(clp: vs.VideoNode, range: int = 5, dxmax: int = 8, dymax: int = 8, mirror: int = 5, scd_thscd1: float = 400.0, scd_thscd2: float = 130.0, tools: Optional[Mapping[str, str]] = None) -> vs.VideoNode:
+def Stab(clp: vs.VideoNode, dxmax: int = 8, dymax: int = 8, mirror: int = 5, scd_thscd1: float = 400.0, scd_thscd2: float = 130.0, tools: Optional[Mapping[str, str]] = None) -> vs.VideoNode:
     if not isinstance(clp, vs.VideoNode):
         raise TypeError('Stab: This is not a clip')
 
