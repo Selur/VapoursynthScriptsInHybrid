@@ -106,6 +106,10 @@ def Overlay(
     if opacity < 1:
         mask = EXPR(mask, expr=f'x {opacity} *')
 
+    if mode in ('addition', 'subtract'):
+        last = _overlay_add_sub(base, overlay, mask, mode == 'addition', planes, mask_first_plane, plane_range, EXPR)
+        return last.resize.Point(format=base_orig.format) if base_orig is not None else last
+
     if mode == 'normal':
         pass
     elif mode == 'addition':
@@ -179,6 +183,40 @@ def Overlay(
     if base_orig is not None:
         last = last.resize.Point(format=base_orig.format)
     return last
+
+def _overlay_add_sub(base, overlay, mask, add, planes, mask_first_plane, plane_range, EXPR):
+    '''AviSynth Overlay add/subtract: base +- eff*overlay, YUV chroma around neutral, chroma pulled to neutral where luma clips.'''
+    fmt = base.format
+    if fmt.sample_type == vs.INTEGER:
+        peak = (1 << fmt.bits_per_sample) - 1
+        rng = peak + 1
+        neutral = 1 << (fmt.bits_per_sample - 1)
+        over32 = 32 << (fmt.bits_per_sample - 8)
+    else:
+        peak = rng = 1.0
+        neutral = 0.0  # VS float chroma is centred on 0
+        over32 = 32 / 255
+    family = fmt.color_family
+    as3 = lambda c: core.std.ShufflePlanes(c, [0, 0, 0], family) if family != vs.GRAY else c
+    m = as3(mask) if (mask_first_plane or mask.format.num_planes == 1) else mask
+    op = '+' if add else '-'
+    # x=base y=overlay z=mask a=base luma b=overlay luma
+    luma = f'x y z * {peak} / {op}'
+    if family == vs.RGB:
+        return EXPR([base, overlay, m], expr=[luma if i in planes else '' for i in plane_range])
+    luma += f' {peak} min' if add else ' 0 max'
+    if family == vs.GRAY:
+        return EXPR([base, overlay, m], expr=[luma if i in planes else '' for i in plane_range])
+    raw_y = f'a b z * {peak} / {op}'
+    chroma = f'x y {neutral} - z * {peak} / {op}'
+    if add:
+        s = f'{rng} {over32} + {raw_y} - 0 max {over32} /'
+        chroma_expr = f'{raw_y} {peak} > {chroma} {s} * {neutral} 1 {s} - * + {chroma} ?'
+    else:
+        t = f'0 {raw_y} - {over32} min {over32} /'
+        chroma_expr = f'{raw_y} 0 < {chroma} 1 {t} - * {neutral} {t} * + {chroma} ?'
+    exprs = [luma, chroma_expr, chroma_expr]
+    return EXPR([base, overlay, m, as3(base), as3(overlay)], expr=[exprs[i] if i in planes else '' for i in plane_range])
 
 def ShiftLinesHorizontally(clip: vs.VideoNode, shift: int, ymin: int, ymax: int) -> vs.VideoNode:
     # Validate clip format and subsampling
