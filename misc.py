@@ -327,7 +327,7 @@ def SCDetect(clip: vs.VideoNode, threshold: float = 0.1, plane: int = 0,
 
     usable = {'scd': hasattr(core, 'scd') and plane == 0 and clip.format.sample_type == vs.INTEGER,
               'misc': hasattr(core, 'misc') and plane == 0, 'std': True,
-              'mv': has_mvutensils() or hasattr(core, 'mv')}
+              'mv': has_mvutensils() or hasattr(core, 'mv') or ((tools or {}).get('mv') == 'mvgpu' and has_mvgpu())}
     detector = pick_tool(tools, 'scd', ('scd', 'misc', 'std'), usable.get, candidates=('scd', 'misc', 'std', 'mv'))
     if detector == 'mv':
         return _scd_mv(clip, scd_thscd1, scd_thscd2, tools)
