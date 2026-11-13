@@ -71,7 +71,7 @@ def _bm3d(clip, tools, device):
 def _bilateral(clip, tools, device):
     # the dispatcher of the vsscripts: vsfeel runs at 16 bit there, its GPU frames come back as normal frames
     import derainbow
-    return derainbow._bilateral(clip, sigmaS=3.0, sigmaR=0.02, tools=tools)
+    return derainbow._bilateral(clip, sigmaS=3.0, sigmaR=0.02, tools=tools, **_device(device))
 
 
 def _wnnm(clip, tools, device):
