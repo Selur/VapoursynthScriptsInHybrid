@@ -136,10 +136,12 @@ def _edgemasks(clip, tools, device):
 
 
 def _tcanny(clip, tools, device):
-    # std: the Sobel edge mask the vsscripts use where TCanny is missing
+    # TCanny as the Gaussian blur most scripts use it for; std: their stand-in, three box blur passes of radius round(1.5 * sigma)
+    sigma = 1.5
     if helpers.pick_tool(tools, 'tcanny', ('tcanny', 'std')) == 'tcanny':
-        return core.tcanny.TCanny(clip, sigma=1.5, mode=1)
-    return core.std.Sobel(clip)
+        return core.tcanny.TCanny(clip, sigma=sigma, mode=-1)
+    radius = max(1, round(sigma * 1.5))
+    return helpers.tool_function(None, 'boxblur', 'BoxBlur')(clip, hradius=radius, hpasses=3, vradius=radius, vpasses=3)
 
 
 def _scd(clip, tools, device):
