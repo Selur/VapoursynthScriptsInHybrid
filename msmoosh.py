@@ -46,7 +46,7 @@ from __future__ import annotations
 
 from typing import Mapping, Optional, Sequence, Union
 import vapoursynth as vs
-from helpers import bilateral_port_args, get_expr, gpu_download, pick_tool, zsmooth_namespace
+from helpers import bilateral_port_args, expr_backend, get_expr, gpu_download, pick_tool, zsmooth_namespace
 
 core = vs.core
 
@@ -85,6 +85,11 @@ def _get_format_id(color_family: vs.ColorFamily, sample_type: vs.SampleType, bit
     return fmt.id
 
 
+def _trunc(bits: int, tools: Optional[Mapping[str, str]]) -> str:
+    """RPN that truncates a non-negative value for an integer output of `bits`; std.Expr has no trunc, its output rounding does it after a shift just under half a step."""
+    return "trunc " if expr_backend(tools) != 'std' else f"{0.5 - 2.0 ** -(bits + 1)} - "
+
+
 def _depth(clip: vs.VideoNode, bits: int, tools: Optional[Mapping[str, str]] = None) -> vs.VideoNode:
     """
     Linearly scale an integer clip to a different bit depth.
@@ -104,7 +109,7 @@ def _depth(clip: vs.VideoNode, bits: int, tools: Optional[Mapping[str, str]] = N
                             fmt.subsampling_w, fmt.subsampling_h)
     if bits < fmt.bits_per_sample:
         # Downscale: multiply first to preserve precision, then round
-        expr = f"x {peak_dst} * {peak_src} / 0.5 + trunc"  
+        expr = f"x {peak_dst} * {peak_src} / 0.5 + " + _trunc(bits, tools)
     else:
         # Upscale: simple multiply
         expr = f"x {peak_dst} * {peak_src} /"
@@ -184,7 +189,7 @@ def _make_edge_mask(clip: vs.VideoNode,
         m0 = _plane_edge(0)
         m1 = _plane_edge(1)
         m2 = _plane_edge(2)
-        combined = EXPR([m0, m1, m2], "x y OR z OR")
+        combined = EXPR([m0, m1, m2], "x y or z or")
         return core.std.ShufflePlanes(
             [combined, combined, combined],
             planes=[0, 0, 0],
@@ -362,11 +367,11 @@ def MSharpen(clip: vs.VideoNode,
     inv_str = peak - str_i
 
     sharpen_expr = (
-        f"x 4 * y 3 * - 0 {peak} clamp "   # tmp = clamp(4·src − 3·blur, 0, peak)
+        f"x 4 * y 3 * - 0 max {peak} min "  # tmp = clamp(4·src − 3·blur, 0, peak)
         f"{str_i} * "                       # strength_i · tmp
         f"x {inv_str} * + "                 # + inv_str · src
-        f"{1 << bits} / trunc "             # ÷ 2^bits  (was: >> bits)
-        f"0 {peak} clamp"                    # safety clamp
+        f"{1 << bits} / " + _trunc(bits, tools) +  # ÷ 2^bits  (was: >> bits)
+        f"0 max {peak} min"                  # safety clamp
     )
     # Empty string on unprocessed planes = copy-through in all Expr backends
     plane_exprs = [sharpen_expr if p in proc else "" for p in range(num_planes)]

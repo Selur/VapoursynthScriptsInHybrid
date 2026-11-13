@@ -62,8 +62,9 @@ def _TemporalSoften(clip: "vs.VideoNode", radius: int, threshold: int) -> "vs.Vi
         # bit-depth scale, so pass scalep=True for automatic conversion.
         # scenechange=-1 reuses any _SceneChangePrev/Next props already on the clip.
         return core.zsmooth.TemporalSoften(clip, radius=radius, threshold=[threshold], scenechange=-1, scalep=True)
-    # Legacy fallback: luma_threshold=threshold, chroma disabled (0), scenechange=32.
-    return core.focus2.TemporalSoften2(clip, radius, threshold, 0, 32, 2)
+    # Legacy fallback: luma_threshold=threshold, chroma disabled (0); focus2 reads the scene change props of SCDetect whenever scenechange > 0
+    import misc
+    return core.focus2.TemporalSoften2(misc.SCDetect(clip, threshold=0.1), radius, threshold, 0, 32, 2)
 
 
 # ---------------------------------------------------------------------------

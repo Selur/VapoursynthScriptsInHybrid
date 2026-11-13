@@ -7,7 +7,7 @@ import math
 from typing import Optional, Union, Sequence, TypeVar, Callable, Mapping, Tuple
 
 from misc import MinBlur, median_blur, mt_expand_multi, mt_inflate_multi
-from helpers import scale, DFTTest, get_expr, pick_tool, zsmooth_namespace, tool_function, value_error
+from helpers import scale, DFTTest, get_expr, pick_tool, zsmooth_namespace, tool_function, value_error, relative_expr
 from color import LimitFilter
 
 def _hysteresis_fn(tools: Optional[Mapping[str, str]] = None) -> Callable[..., vs.VideoNode]:
@@ -321,14 +321,8 @@ def _limit_filter_expr(defref: bool, thr: float, elast: float, largen_thr: float
     
 
 def _expr2(clips: vs.VideoNode | list[vs.VideoNode], expr: str | list[str], tools: Optional[Mapping[str, str]] = None) -> vs.VideoNode:
-    """Expr — akarin or cranexpr (tools['expr'] picks between them); std cannot evaluate these expressions."""
-    name = pick_tool(tools, 'expr', ('akarin', 'cranexpr'))
-    if name is not None:
-        return getattr(core, name).Expr(clips, expr)
-    raise RuntimeError(
-            "AntiRingLR requires akarin or cranexpr — "
-            "none found. Install akarin or cranexpr into your VS plugins folder."
-    )
+    """Expr with relative pixel access: akarin or cranexpr directly, std.Expr on shifted copies of the clip (tools['expr'] picks)."""
+    return relative_expr(clips, expr, tools)
 
 # --- Hans' Ringing Remover ----------------------------------------------------
 #

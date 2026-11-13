@@ -1,6 +1,7 @@
 from __future__ import annotations
 from typing import Any, Mapping, Optional
 import math
+import warnings
 import vapoursynth as vs
 
 core = vs.core
@@ -886,8 +887,19 @@ def ChubbyRain2(c: vs.VideoNode, th: int = 10, radius: int = 10, show: bool = Fa
     else:
         cc = core.cnr2.Cnr2(cc)  # defaults: mode="oxx", scdthr=10.0, ln=35, lm=192, un=47, um=255, vn=47, vm=255
 
-    soften = zsmooth_namespace(tools, 'temporalsoften', ('zsmooth', 'focus'), lambda name: name == 'focus' or hasattr(core, 'zsmooth'))
-    if soften:
+    focus2 = (tools or {}).get('temporalsoften') == 'focus2' and hasattr(core, 'focus2') and 1 <= radius <= 7
+    soften_tools = tools
+    if (tools or {}).get('temporalsoften') == 'focus2' and not focus2:
+        warnings.warn('tools: temporalsoften "focus2" cannot serve this call (radius 1 to 7), using the default order')
+    if (tools or {}).get('temporalsoften') == 'focus2':
+        soften_tools = {key: value for key, value in tools.items() if key != 'temporalsoften'}
+    soften = zsmooth_namespace(soften_tools, 'temporalsoften', ('zsmooth', 'focus'), lambda name: name == 'focus' or hasattr(core, 'zsmooth'))
+    if focus2:
+        # focus2 reads _SceneChangePrev/Next whenever scenechange > 0; the Cnr2 path above sets none
+        if not cnr4:
+            cc = SCDetect(clip=cc, threshold=0.10, scd_thscd1=scd_thscd1, scd_thscd2=scd_thscd2, tools=tools)
+        cc = core.focus2.TemporalSoften2(cc, radius=radius, luma_threshold=0, chroma_threshold=sft, scenechange=1, mode=2)
+    elif soften:
         # zsmooth takes one threshold per plane and scales it itself (scalep=True)
         # scenechange=-1 consumes the props set above; any positive value makes zsmooth
         # demand the miscfilters plugin so it can detect scene changes itself

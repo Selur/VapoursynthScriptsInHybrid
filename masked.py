@@ -4,7 +4,7 @@ from math import sqrt
 
 from typing import Union, List, Mapping, Optional, Sequence
 import misc
-from helpers import GetPlane, Depth, BoxFilter, get_expr, get_rg, pick_tool
+from helpers import GetPlane, Depth, BoxFilter, get_expr, get_rg, pick_tool, tool_function
 
 core = vs.core
 
@@ -28,9 +28,14 @@ def retinex_edgemask(src: vs.VideoNode, sigma: int = 1, draft: bool = False, too
         ret = core.retinex.MSRCP(luma, sigma=[50, 200, 350], upper_thr=0.005)
     k = kirsch(luma, tools=tools)
     if pick_tool(tools, 'tcanny', ('tcanny', 'std')) == 'tcanny':
-        tc = ret.tcanny.TCanny(mode=1, sigma=sigma).std.Minimum(coordinates=[1, 0, 1, 0, 0, 1, 0, 1])
-        return EXPR([k, tc], f"x y + {max_value} min")
-    return EXPR([k, ret], f"x y + {max_value} min")
+        edges = ret.tcanny.TCanny(mode=1, sigma=sigma)
+    else:
+        # without TCanny: Gaussian-like box blur of about the same sigma, then a Sobel edge mask (edgemasks or std)
+        radius = max(1, round(sigma * 1.5))
+        blurred = tool_function(tools, 'boxblur', 'BoxBlur')(ret, hradius=radius, hpasses=3, vradius=radius, vpasses=3)
+        edges = core.edgemasks.Sobel(blurred) if pick_tool(tools, 'edgemasks', ('edgemasks', 'std')) == 'edgemasks' else core.std.Sobel(blurred)
+    tc = edges.std.Minimum(coordinates=[1, 0, 1, 0, 0, 1, 0, 1])
+    return EXPR([k, tc], f"x y + {max_value} min")
 
 # Like retinex_edgemask, but using CLAHE (contrast limited adaptive histogram equalization) to lift dark scenes.
 # from https://github.com/dnjulek/jvsfunc/blob/master/jvsfunc/mask.py, ehist.CLAHE replaced by vszip.CLAHE

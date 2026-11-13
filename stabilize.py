@@ -87,8 +87,13 @@ def Stab(clp: vs.VideoNode, dxmax: int = 8, dymax: int = 8, mirror: int = 5, scd
     source = clp
     pref = misc.SCDetect(clip=clp if prefilter is None else prefilter, threshold=0.25, scd_thscd1=scd_thscd1, scd_thscd2=scd_thscd2, tools=tools)
 
-    soften = zsmooth_namespace(tools, 'temporalsoften', ('zsmooth',))
-    if soften:
+    focus2 = (tools or {}).get('temporalsoften') == 'focus2' and hasattr(core, 'focus2')
+    soften = None if focus2 else zsmooth_namespace(tools, 'temporalsoften', ('zsmooth',))
+    if focus2:
+        # scenechange > 0 makes focus2 read the _SceneChangePrev/Next of SCDetect above, like zsmooth's -1
+        temp = core.focus2.TemporalSoften2(pref, radius=ts, luma_threshold=255, chroma_threshold=255, scenechange=1, mode=2)
+        temp2 = core.focus2.TemporalSoften2(pref, radius=1, luma_threshold=255, chroma_threshold=255, scenechange=1, mode=2)
+    elif soften:
         temp = getattr(core, soften).TemporalSoften(pref, radius=ts, threshold=[255], scenechange=-1, scalep=True)
         temp2 = getattr(core, soften).TemporalSoften(pref, radius=1, threshold=[255], scenechange=-1, scalep=True)
     else:

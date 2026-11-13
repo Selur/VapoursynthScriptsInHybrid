@@ -5,6 +5,7 @@ import vapoursynth as vs
 core = vs.core
 
 import math
+import re
 import warnings
 from typing import Optional, Union, Sequence, Dict, Any, Mapping, Callable, Tuple, List
 
@@ -501,10 +502,65 @@ def bilateral_port_args(namespace: str, sigma_spatial: float) -> Dict[str, Any]:
     '''Extra arguments for a GPU bilateral port: bilateralgpu_rtc fails with shared memory above radius 49 (radius ~ 3 * sigma_spatial).'''
     return {'use_shared_memory': False} if namespace == 'bilateralgpu_rtc' and 3 * sigma_spatial >= 49 else {}
 
+def expr_backend(tools: Optional[Mapping[str, str]] = None) -> str:
+    '''Name of the Expr backend get_expr() returns: 'akarin', 'cranexpr' or 'std'.'''
+    return pick_tool(tools, 'expr', ('akarin', 'cranexpr', 'std')) or 'std'
+
+
 def get_expr(tools: Optional[Mapping[str, str]] = None) -> Callable[..., vs.VideoNode]:
     '''Return the Expr backend: tools['expr'], else the best available of akarin, cranexpr, std.'''
-    name = pick_tool(tools, 'expr', ('akarin', 'cranexpr', 'std'))
+    name = expr_backend(tools)
     return _akarin_expr if name == 'akarin' else getattr(core, tool_namespace('expr', name)).Expr
+
+
+_EXPR_VARIABLES = 'xyzabcdefghijklmnopqrstuvw'
+_RELATIVE_PIXEL = re.compile(r'(?<![A-Za-z0-9_])([a-z])\[(-?\d+),(-?\d+)\]')
+
+
+def _shift_plane(plane: vs.VideoNode, dx: int, dy: int) -> vs.VideoNode:
+    # crop and repeat the edge pixel: akarin clamps out-of-range pixels, resize would mirror them
+    if dx > 0:
+        plane = core.std.StackHorizontal([core.std.Crop(plane, left=dx)] + [core.std.Crop(plane, left=plane.width - 1)] * dx)
+    elif dx < 0:
+        plane = core.std.StackHorizontal([core.std.Crop(plane, right=plane.width - 1)] * -dx + [core.std.Crop(plane, right=-dx)])
+    if dy > 0:
+        plane = core.std.StackVertical([core.std.Crop(plane, top=dy)] + [core.std.Crop(plane, top=plane.height - 1)] * dy)
+    elif dy < 0:
+        plane = core.std.StackVertical([core.std.Crop(plane, bottom=plane.height - 1)] * -dy + [core.std.Crop(plane, bottom=-dy)])
+    return plane
+
+
+def shift_clip(clip: vs.VideoNode, dx: int, dy: int) -> vs.VideoNode:
+    '''Every plane moved by whole pixels of its own size: pixel (i, j) shows the input at (i + dx, j + dy), edges clamped like akarin's x[dx,dy].'''
+    if clip.format.num_planes == 1:
+        return _shift_plane(clip, dx, dy)
+    planes = [_shift_plane(core.std.ShufflePlanes(clip, plane, vs.GRAY), dx, dy) for plane in range(clip.format.num_planes)]
+    return core.std.CopyFrameProps(core.std.ShufflePlanes(planes, [0, 0, 0], clip.format.color_family), clip)
+
+
+def relative_expr(clips: Union[vs.VideoNode, Sequence[vs.VideoNode]], expr: Union[str, Sequence[str]],
+                  tools: Optional[Mapping[str, str]] = None, **kwargs: Any) -> vs.VideoNode:
+    '''Expr with relative pixel access (x[dx,dy], edges clamped): akarin or cranexpr as is, std.Expr on shifted copies of the clips.'''
+    clips = [clips] if isinstance(clips, vs.VideoNode) else list(clips)
+    if expr_backend(tools) != 'std':
+        return get_expr(tools)(clips, expr, **kwargs)
+    exprs = [expr] if isinstance(expr, str) else list(expr)
+    names: Dict[Tuple[str, int, int], str] = {}
+    for text in exprs:
+        for match in _RELATIVE_PIXEL.finditer(text):
+            letter, dx, dy = match.group(1), int(match.group(2)), int(match.group(3))
+            if (dx, dy) == (0, 0) or (letter, dx, dy) in names:
+                continue
+            if len(clips) >= len(_EXPR_VARIABLES):
+                raise vs.Error('relative_expr: std.Expr takes at most %d clips' % len(_EXPR_VARIABLES))
+            clips.append(shift_clip(clips[_EXPR_VARIABLES.index(letter)], dx, dy))
+            names[(letter, dx, dy)] = _EXPR_VARIABLES[len(clips) - 1]
+
+    def replace(match: re.Match) -> str:
+        letter, dx, dy = match.group(1), int(match.group(2)), int(match.group(3))
+        return letter if (dx, dy) == (0, 0) else names[(letter, dx, dy)]
+
+    return core.std.Expr(clips, [_RELATIVE_PIXEL.sub(replace, text) for text in exprs], **kwargs)
 
 def get_rg(is_float: bool = False, tools: Optional[Mapping[str, str]] = None) -> Callable[..., vs.VideoNode]:
     '''Return the RemoveGrain implementation: tools['rg'], else zsmooth, rgsf (float only), rgvs.'''

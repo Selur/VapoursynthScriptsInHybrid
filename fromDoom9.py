@@ -11,7 +11,7 @@ except ImportError:
 
 from misc import get_mv, SCDetect
 from color import LimitFilter
-from helpers import NLMeans, get_expr, pick_tool, tool_function, zsmooth_namespace
+from helpers import NLMeans, expr_backend, get_expr, pick_tool, shift_clip, tool_function, zsmooth_namespace
 
 def _boxblur_fn(tools: Optional[Mapping[str, str]] = None) -> Callable[..., vs.VideoNode]:
     """Pick the BoxBlur: tools['boxblur'], else vszip, else std."""
@@ -29,6 +29,24 @@ def _nlmeans_gray(clip: vs.VideoNode, d: int, a: int, s: int, h: float, tools: O
 # int thr: blur threshold, wil be scaled by bit depth (default: 256, range: 1-256)
 # boolean vertical: transposes the source for the filtering, to handle vertical lines instead of horizontal ones. (default: False)
 # str hvmode: whether to use vertival or hoizontal convolution
+# std.Expr has neither relative pixel access nor sortN: every term on its own clip, the median from a min/max sorting network
+def _destripe_std_median(diff: vs.VideoNode, pattern: list, partial_expr) -> vs.VideoNode:
+    luma = core.std.ShufflePlanes(diff, 0, vs.GRAY) if diff.format.num_planes > 1 else diff
+    terms = []
+    for dx, dy in pattern:
+        term = partial_expr(dx, dy).replace(f'x[{dx},{dy}]', 'y')
+        terms.append(core.std.Expr([luma, shift_clip(luma, dx, dy)], term))
+    for round_ in range(len(terms)):
+        for i in range(round_ % 2, len(terms) - 1, 2):
+            low = core.std.Expr([terms[i], terms[i + 1]], 'x y min')
+            high = core.std.Expr([terms[i], terms[i + 1]], 'x y max')
+            terms[i], terms[i + 1] = low, high
+    median = terms[len(terms) // 2]
+    if diff.format.num_planes == 1:
+        return median
+    return core.std.ShufflePlanes([median, diff, diff], [0, 1, 2], diff.format.color_family)
+
+
 def DeStripe(clip: vs.VideoNode, rad: int=2, offset: int=0, thr: int=256, vertical: bool = False, hvmode: str='v', tools: Optional[Mapping[str, str]] = None) -> vs.VideoNode:
     if (rad < 1) or (rad > 5):
         raise vs.Error('rad not valid (range: 1-5)')
@@ -71,17 +89,15 @@ def DeStripe(clip: vs.VideoNode, rad: int=2, offset: int=0, thr: int=256, vertic
     pattern = pattern[0:matrix_length]
     pattern = [(0,0)] + pattern[start:]
 
-    expr = ''
-    for pair in pattern:
-        if hvmode == 'h':
-            pair = tuple(reversed(pair))
-        expr += partial_expr(*pair)
+    if hvmode == 'h':
+        pattern = [tuple(reversed(pair)) for pair in pattern]
 
-    expr += f'sort{len(pattern)} ' + 'drop ' * (len(pattern)//2) + 'swap drop ' * (len(pattern)//2)
-
-    EXPR = get_expr(tools)
-
-    medianDiff = EXPR(diff, [expr, ''])
+    if expr_backend(tools) == 'std':
+        medianDiff = _destripe_std_median(diff, pattern, partial_expr)
+    else:
+        expr = ''.join(partial_expr(*pair) for pair in pattern)
+        expr += f'sort{len(pattern)} ' + 'drop ' * (len(pattern)//2) + 'swap drop ' * (len(pattern)//2)
+        medianDiff = get_expr(tools)(diff, [expr, ''])
     reconstructedMedian = core.std.MakeDiff(diff, medianDiff)
     blurred = core.std.MergeDiff(blurred, reconstructedMedian)
 
@@ -185,16 +201,16 @@ def deflickerPreset1(sm: vs.VideoNode, zsmooth: Union[bool, str]=False, scd_thsc
     from functools import partial
     SMOOTH = partial(msmoosh.MSmooth, tools=tools) 
   
+  sm = SCDetect(sm, threshold=0.1, scd_thscd1=scd_thscd1, scd_thscd2=scd_thscd2, tools=tools)
   if zsmooth:
-    sm = SCDetect(sm, threshold=0.1, scd_thscd1=scd_thscd1, scd_thscd2=scd_thscd2, tools=tools)
     smm = getattr(core, _zsmooth_ns(zsmooth)).TemporalSoften(clip=sm,radius=1, threshold=[6,9,9],scenechange=-1,scalep=True)
   else:
     smm = core.focus2.TemporalSoften2(clip=sm,radius=1,luma_threshold=6,chroma_threshold=9,scenechange=10,mode=2)
   smm = SMOOTH(clip=smm,threshold=0.8,strength=25.0,planes=[1,2])
   smm = core.std.Merge(smm, sm, 0.25)
   smm = core.std.Merge(smm, sm, 0.25)
+  sm = SCDetect(sm, threshold=0.06, scd_thscd1=scd_thscd1, scd_thscd2=scd_thscd2, tools=tools)
   if zsmooth:
-    sm = SCDetect(sm, threshold=0.06, scd_thscd1=scd_thscd1, scd_thscd2=scd_thscd2, tools=tools)
     smm = getattr(core, _zsmooth_ns(zsmooth)).TemporalSoften(clip=sm,radius=2, threshold=[3,5,5],scenechange=-1,scalep=True)
   else:
     smm = core.focus2.TemporalSoften2(clip=sm,radius=2,luma_threshold=3,chroma_threshold=5,scenechange=6,mode=2)
@@ -210,16 +226,16 @@ def deflickerPreset2(sm: vs.VideoNode, chroma: bool, zsmooth: Union[bool, str]=F
     from functools import partial
     SMOOTH = partial(msmoosh.MSmooth, tools=tools) 
     
+  sm = SCDetect(sm, threshold=0.24, scd_thscd1=scd_thscd1, scd_thscd2=scd_thscd2, tools=tools)
   if zsmooth:
-    sm = SCDetect(sm, threshold=0.24, scd_thscd1=scd_thscd1, scd_thscd2=scd_thscd2, tools=tools)
     smm = getattr(core, _zsmooth_ns(zsmooth)).TemporalSoften(clip=sm,radius=1, threshold=[12,255,255],scenechange=-1,scalep=True)
   else:
     smm = core.focus2.TemporalSoften2(clip=sm,radius=1,luma_threshold=12,chroma_threshold=255,scenechange=24,mode=2)
   smm = SMOOTH(clip=smm,threshold=0.8,strength=25.0,planes=[1,2])
   smm = core.std.Merge(smm, sm, 0.25)
   smm = core.std.Merge(smm, sm, 0.25)
+  sm = SCDetect(sm, threshold=0.2, scd_thscd1=scd_thscd1, scd_thscd2=scd_thscd2, tools=tools)
   if zsmooth:
-    sm = SCDetect(sm, threshold=0.2, scd_thscd1=scd_thscd1, scd_thscd2=scd_thscd2, tools=tools)
     smm = getattr(core, _zsmooth_ns(zsmooth)).TemporalSoften(clip=sm,radius=2, threshold=[7,255,255],scenechange=-1,scalep=True)
   else:
     smm = core.focus2.TemporalSoften2(clip=sm,radius=2,luma_threshold=7,chroma_threshold=255,scenechange=20,mode=2)
@@ -243,16 +259,16 @@ def deflickerPreset3(sm: vs.VideoNode, chroma: bool, zsmooth: Union[bool, str]=F
     from functools import partial
     SMOOTH = partial(msmoosh.MSmooth, tools=tools) 
     
+  sm = SCDetect(sm, threshold=0.24, scd_thscd1=scd_thscd1, scd_thscd2=scd_thscd2, tools=tools)
   if zsmooth:
-    sm = SCDetect(sm, threshold=0.24, scd_thscd1=scd_thscd1, scd_thscd2=scd_thscd2, tools=tools)
     smm = getattr(core, _zsmooth_ns(zsmooth)).TemporalSoften(clip=sm,radius=1, threshold=[32,255,255],scenechange=-1,scalep=True)
   else:
     smm = core.focus2.TemporalSoften2(clip=sm,radius=1,luma_threshold=32,chroma_threshold=255,scenechange=24,mode=2)
   smm = SMOOTH(clip=smm,threshold=0.8,strength=25.0,planes=[1,2])
   smm = core.std.Merge(smm, sm, 0.25)
   smm = core.std.Merge(smm, sm, 0.25)
+  sm = SCDetect(sm, threshold=0.2, scd_thscd1=scd_thscd1, scd_thscd2=scd_thscd2, tools=tools)
   if zsmooth:
-    sm = SCDetect(sm, threshold=0.2, scd_thscd1=scd_thscd1, scd_thscd2=scd_thscd2, tools=tools)
     smm = getattr(core, _zsmooth_ns(zsmooth)).TemporalSoften(clip=sm,radius=1, threshold=[12,255,255],scenechange=-1,scalep=True)
   else:
     smm = core.focus2.TemporalSoften2(clip=sm,radius=2,luma_threshold=12,chroma_threshold=255,scenechange=20,mode=2)
