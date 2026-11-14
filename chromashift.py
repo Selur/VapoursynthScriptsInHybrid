@@ -80,11 +80,9 @@ def ChromaShiftF(clip: vs.VideoNode, interlaced: int = 0, frame_shift: int = 0) 
     if not (-3 <= frame_shift <= 3):
         raise ValueError("frame_shift must be between -3 and 3.")
 
-    # Get subsampling information
-    is_yuv422_or_yuv444 = clip.format.subsampling_h == 0  # True for 4:2:2 or 4:4:4
-
-    # Separate fields only if interlaced and necessary for chroma format
-    if interlaced and is_yuv422_or_yuv444:
+    # Interlaced clips are shifted by fields; vertically subsampled chroma needs a field height that keeps whole chroma rows
+    by_fields = bool(interlaced) and clip.height % (2 << clip.format.subsampling_h) == 0
+    if by_fields:
         clip = core.std.SeparateFields(clip, tff=(interlaced > 0))
 
     # Split Y, U, and V planes
@@ -92,8 +90,8 @@ def ChromaShiftF(clip: vs.VideoNode, interlaced: int = 0, frame_shift: int = 0) 
 
     # Shift chroma frames forward or backward
     if frame_shift > 0:
-        clip_u_shifted = clip_u.std.Trim(frame_shift, clip_u.num_frames - 1) + clip_u[-frame_shift]
-        clip_v_shifted = clip_v.std.Trim(frame_shift, clip_v.num_frames - 1) + clip_v[-frame_shift]
+        clip_u_shifted = clip_u.std.Trim(frame_shift, clip_u.num_frames - 1) + clip_u[-1] * frame_shift
+        clip_v_shifted = clip_v.std.Trim(frame_shift, clip_v.num_frames - 1) + clip_v[-1] * frame_shift
     elif frame_shift < 0:
         clip_u_shifted = clip_u[0] * abs(frame_shift) + clip_u.std.Trim(0, clip_u.num_frames + frame_shift - 1)
         clip_v_shifted = clip_v[0] * abs(frame_shift) + clip_v.std.Trim(0, clip_v.num_frames + frame_shift - 1)
@@ -104,7 +102,7 @@ def ChromaShiftF(clip: vs.VideoNode, interlaced: int = 0, frame_shift: int = 0) 
     shifted_clip = core.std.ShufflePlanes([clip_y, clip_u_shifted, clip_v_shifted], planes=[0, 0, 0], colorfamily=vs.YUV)
 
     # Re-weave fields if interlaced and fields were separated
-    if interlaced and is_yuv422_or_yuv444:
+    if by_fields:
         shifted_clip = core.std.DoubleWeave(shifted_clip, tff=(interlaced > 0)).std.SelectEvery(2, 0)
 
     return shifted_clip

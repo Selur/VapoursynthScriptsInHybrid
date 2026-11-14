@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 from typing import Dict, Iterable, List, Tuple
 
 import vapoursynth as vs
@@ -93,9 +94,10 @@ class ChromaFixer:
         h_base, v_base = self.search(y_edges, chroma_plane,
                                      [(float(h), float(v)) for h in whole for v in whole])
 
-        # Fine search around the best match, never leaving the requested range
-        fine_h = self.clamped([h_base + x * self.accuracy for x in range(-2, 3)])
-        fine_v = self.clamped([v_base + x * self.accuracy for x in range(-2, 3)])
+        # Fine search around the best match: at least +/-0.5 pixel, so every offset between two whole pixels is reachable
+        steps = max(2, math.ceil(0.5 / self.accuracy - 1e-9))
+        fine_h = self.clamped([h_base + x * self.accuracy for x in range(-steps, steps + 1)])
+        fine_v = self.clamped([v_base + x * self.accuracy for x in range(-steps, steps + 1)])
         return self.search(y_edges, chroma_plane, [(h, v) for h in fine_h for v in fine_v])
 
     def clamped(self, values: Iterable[float]) -> List[float]:

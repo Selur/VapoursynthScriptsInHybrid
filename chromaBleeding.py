@@ -16,18 +16,18 @@ def FixChromaBleedingMod(input: vs.VideoNode, cx: int = 4, cy: int = 4, thr: flo
     if input.format.color_family != vs.YUV or input.format.sample_type != vs.INTEGER:
         raise vs.Error('FixChromaBleedingMod: only YUV format with integer sample type is supported')
 
-    # Extract V plane and apply initial tweak
-    v_plane = GetPlane(input, 2)
-    v_tweaked = Tweak(v_plane, sat=thr, tools=tools)
-    
+    # Boost the saturation, then take the V plane as mask source
+    v_tweaked = GetPlane(Tweak(input, sat=thr, tools=tools), 2)
+
     if blur:
         mask_area = v_tweaked.std.Convolution(matrix=[1, 2, 1, 2, 4, 2, 1, 2, 1])
     else:
         mask_area = v_tweaked
 
     EXPR = get_expr(tools)
-    # Apply basic mask processing (ensure dynamic level scaling)
-    mask = EXPR(mask_area, ['x 128 - abs 2 *'])
+    # Distance from neutral chroma at the clip's bit depth
+    neutral = 1 << (input.format.bits_per_sample - 1)
+    mask = EXPR(mask_area, [f'x {neutral} - abs 2 *'])
     mask = mask.std.Inflate()
 
     # Chroma shifting and strength adjustment

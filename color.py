@@ -769,10 +769,16 @@ def hablehdr10tosdr(clip: vs.VideoNode, source_peak: int = 1000, desat: int = 50
   core = vs.core
   clip=core.resize.Bicubic(clip=clip, format=vs.RGBS, filter_param_a=f_a, filter_param_b=f_b, range_in_s="limited", matrix_in_s="2020ncl", primaries_in_s="2020", primaries_s="2020", transfer_in_s="st2084", transfer_s="linear",dither_type="none", nominal_luminance=1000)
   clip=tm(clip=clip,source_peak=source_peak,desat=desat,show_satmask=show_satmask,lin=lin,show_clipped=show_clipped,tools=tools) 
-  if tFormat != vs.RGBS:
-    clip=core.resize.Bicubic(clip=clip, format=tFormat, filter_param_a=f_a, filter_param_b=f_b, matrix_s=tMatrix, primaries_in_s="2020", primaries_s=tMatrix, transfer_in_s="linear", transfer_s=tMatrix, dither_type="ordered")
-    
-  return clip
+  return _hdr10tosdr_output(clip, tFormat, tMatrix, tRange, color_loc, f_a, f_b)
+
+def _hdr10tosdr_output(clip: vs.VideoNode, tFormat: Union[int, vs.PresetVideoFormat], tMatrix: str, tRange: str, color_loc: str, f_a: float, f_b: float) -> vs.VideoNode:
+  """Converts the tone mapped linear BT.2020 RGBS clip to the target format, matrix, range and chroma location"""
+  if tFormat == vs.RGBS:
+    return clip
+  # primaries and transfer belonging to each target matrix
+  primaries, transfer = {"709": ("709", "709"), "470bg": ("470bg", "601"), "170m": ("170m", "601"), "ycgco": ("709", "709")}.get(tMatrix, ("709", "709"))
+  return core.resize.Bicubic(clip=clip, format=tFormat, filter_param_a=f_a, filter_param_b=f_b, matrix_s=tMatrix, primaries_in_s="2020", primaries_s=primaries,
+                             transfer_in_s="linear", transfer_s=transfer, range_s=tRange, chromaloc_s=color_loc, dither_type="ordered")
   
 def tm_simple(clip: vs.VideoNode, source_peak: float, tools: Optional[Mapping[str, str]] = None)  -> vs.VideoNode:
     core = vs.core
@@ -837,9 +843,7 @@ def simplehdr10tosdr(clip: vs.VideoNode, source_peak: int = 1000, tFormat: Union
   core = vs.core
   clip=core.resize.Bicubic(clip=clip, format=vs.RGBS,filter_param_a=f_a,filter_param_b=f_b, range_in_s="limited", matrix_in_s="2020ncl", primaries_in_s="2020", primaries_s="2020", transfer_in_s="st2084", transfer_s="linear",dither_type="none", nominal_luminance=1000)
   clip=tm_simple(clip=clip,source_peak=source_peak,tools=tools)
-  if tFormat != vs.RGBS:
-    clip=core.resize.Bicubic(clip=clip, format=tFormat, filter_param_a=f_a, filter_param_b=f_b, matrix_s=tMatrix, primaries_in_s="2020", primaries_s=tMatrix, transfer_in_s="linear", transfer_s=tMatrix, dither_type="ordered")
-  return clip
+  return _hdr10tosdr_output(clip, tFormat, tMatrix, tRange, color_loc, f_a, f_b)
   
   
   
