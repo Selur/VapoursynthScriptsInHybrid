@@ -545,10 +545,16 @@ def AverageFrames(
         clip = SCDetect(clip, threshold=scenechange, scd_thscd1=scd_thscd1, scd_thscd2=scd_thscd2, tools=tools)
     return clip.std.AverageFrames(weights=weights, scenechange=scenechange, planes=planes)
 
-# convert i.e. 1080p50 to 1080i25
-def Interlace(clip: vs.VideoNode, tff: bool=True, tools: Optional[Mapping[str, str]] = None) -> vs.VideoNode:
+# convert i.e. 1080p50 to 1080i25; prefilter: BBC WHP 315 vertical-temporal lowpass (interlace plugin only)
+def Interlace(clip: vs.VideoNode, tff: bool=True, prefilter: bool=True,
+              tools: Optional[Mapping[str, str]] = None) -> vs.VideoNode:
+  # an odd frame count repeats the last frame, so both implementations give ceil(n/2) frames
+  if clip.num_frames % 2:
+    clip = clip + clip[-1]
   if pick_tool(tools, 'interlace', ('interlace', 'std')) == 'interlace':
-    return core.interlace.Interlace(clip=clip,tff=tff)
+    return core.interlace.Interlace(clip=clip, tff=tff, filter=prefilter)
+  if prefilter and not hasattr(core, 'interlace'):
+    warnings.warn('Interlace: the prefilter needs the interlace plugin, weaving without it')
   clip = core.std.SeparateFields(clip=clip, tff=tff)
   # first field from frame 2n, second field from frame 2n+1
   clip = core.std.SelectEvery(clip=clip, cycle=4, offsets=[0, 3])
