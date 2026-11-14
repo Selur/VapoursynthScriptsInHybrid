@@ -446,39 +446,18 @@ def RGBAdjust(rgb: vs.VideoNode, r: float=1.0, g: float=1.0, b: float=1.0, a: fl
   funcName = 'RGBAdjust'
   if rgb.format.color_family != vs.RGB:
     raise ValueError(funcName + ': input clip needs to be RGB!')
-  type = rgb.format.sample_type
-  size = 2**rgb.format.bits_per_sample
-  #adjusting bias values rb,gb,bb for any RGB bit depth
-  # RGB without a range property is full range; _Range: 0 = limited, _ColorRange (before R74): 1 = limited
-  props = rgb.get_frame(0).props
-  if core.core_version.release_major >= 74:
-    limited = props.get('_Range', vs.RANGE_FULL) == vs.RANGE_LIMITED
-  else:
-    limited = props.get('_ColorRange', 0) == 1
-  if limited:
-    if rb > 235 or rb < -235: raise ValueError(funcName + ': source is flagged as "limited" but rb is out of range [-235,235]!')  
-    if gb > 235 or gb < -235: raise ValueError(funcName + ': source is flagged as "limited" but gb is out of range [-235,235]!')
-    if bb > 235 or bb < -235: raise ValueError(funcName + ': source is flagged as "limited" but bb is out of range [-235,235]!')
-  else:
-    if rb > 255 or rb < -255: raise ValueError(funcName + ': source is flagged as "full" but rb is out of range [-255,255]!') 
-    if gb > 255 or gb < -255: raise ValueError(funcName + ': source is flagged as "limited" but gb is out of range [-235,235]!')
-    if bb > 255 or bb < -255: raise ValueError(funcName + ': source is flagged as "limited" but bb is out of range [-235,235]!')
+  # bias values are given on the 8-bit scale
+  for name, value in (('rb', rb), ('gb', gb), ('bb', bb)):
+    if value > 255 or value < -255: raise ValueError(f'{funcName}: {name} is out of range [-255,255]!')
+  for name, value in (('rg', rg), ('gg', gg), ('bg', bg)):
+    if value <= 0: raise ValueError(f'{funcName}: {name} needs to be > 0!')
 
-  if rg < 0: raise ValueError(funcName + ': rg needs to be >= 0!')
-  if gg < 0: raise ValueError(funcName + ': gg needs to be >= 0!')
-  if bg < 0: raise ValueError(funcName + ': bg needs to be >= 0!')
-      
-  if limited:
-    if type==vs.INTEGER:
-      maxVal = 235
-    else:
-      maxVal = 235.0
+  # scale the 8-bit bias to the clip's sample range: 255 maps to the format maximum (1.0 for float)
+  if rgb.format.sample_type == vs.INTEGER:
+    factor = ((1 << rgb.format.bits_per_sample) - 1) / 255
   else:
-    if type==vs.INTEGER:
-      maxVal = 255
-    else:
-      maxVal = 255.0
-  rb,gb,bb = map(lambda b: b if size==maxVal else size/maxVal*b if type==vs.INTEGER else b/maxVal, [rb,gb,bb])
+    factor = 1 / 255
+  rb, gb, bb = (value * factor for value in (rb, gb, bb))
 
   EXPR = get_expr(tools)
   #x*r + rb , x*g + gb , x*b + bb
@@ -536,79 +515,61 @@ def AutoGain(
     fmt = clip.format
     if fmt.color_family != vs.YUV:
         raise ValueError("AutoGain: Only YUV clips supported.")
-        
-    if pick_tool(tools, 'planestats', ('vszip', 'std'), lambda name: name == 'std' or hasattr(core, 'vszip')) == 'vszip':
-      return AutoGainZ(clip, gain_limit, strength, darken, sc_threshold, ema_alpha, scd_thscd1=scd_thscd1, scd_thscd2=scd_thscd2, tools=tools)
 
-    # Extract luma plane
     Y = core.std.ShufflePlanes(clip, 0, vs.GRAY)
+    peak = 1.0 if fmt.sample_type == vs.FLOAT else (1 << fmt.bits_per_sample) - 1
 
-    # Plane statistics + scene detection
-    stats = core.std.PlaneStats(Y)
+    # Luma statistics: min/max in sample values, average normalized to 0..1 (both plugins)
+    if pick_tool(tools, 'planestats', ('vszip', 'std'), lambda name: name == 'std' or hasattr(core, 'vszip')) == 'vszip':
+        stats = core.vszip.PlaneMinMax(Y, prop="ag")
+        stats = core.vszip.PlaneAverage(stats, exclude=[-1], prop="ag")
+        keys = ("agMin", "agMax", "agAvg")
+    else:
+        stats = core.std.PlaneStats(Y)
+        keys = ("PlaneStatsMin", "PlaneStatsMax", "PlaneStatsAverage")
+
     sc = SCDetect(Y, threshold=sc_threshold, scd_thscd1=scd_thscd1, scd_thscd2=scd_thscd2, tools=tools)
     prop_src = core.std.CopyFrameProps(sc, stats)
 
-    # Determine peak value
-    peak = 1.0 if fmt.sample_type == vs.FLOAT else (1 << fmt.bits_per_sample) - 1
-
-    # Adjust EMA inversely with gain_limit to reduce flicker
+    # Slower EMA for higher gain limits to reduce flicker
     effective_alpha = ema_alpha / max(gain_limit, 0.01)
-
-    # Persistent state for EMA
     state = {"scale": 1.0, "offset": 0.0, "first": True}
+    w = max(min(strength, 1.0), 0.0)
+    EXPR = get_expr(tools)
 
-    # FrameEval callback
     def apply_gain(n: int, f: vs.VideoFrame) -> vs.VideoNode:
-        # Extract PlaneStats
-        avg = f.props.get("PlaneStatsAverage", None)
-        mn  = f.props.get("PlaneStatsMin", None)
-        mx  = f.props.get("PlaneStatsMax", None)
-        if avg is None or mn is None or mx is None:
-            return Y  # fallback
+        mn, mx, avg = (f.props.get(k, None) for k in keys)
+        if mn is None or mx is None or avg is None:
+            return Y
+        avg *= peak  # average in sample values
 
         rng = mx - mn
         if rng <= 0:
             tgt_s, tgt_o = 1.0, 0.0
+        elif darken:
+            # compress around the average
+            tgt_s = max(min(1.0 - gain_limit * strength, 3.0), 0.3)
+            tgt_o = (1.0 - tgt_s) * avg
         else:
-            if darken:
-                tgt_s = 1.0 - gain_limit * strength
-                tgt_o = (1.0 - tgt_s) * avg
-            else:
-                ideal = peak / rng
-                tgt_s = 1.0 + (ideal - 1.0) * (gain_limit * strength)
-                tgt_o = -tgt_s * mn
+            # stretch [mn, mx] towards [0, peak]
+            tgt_s = max(min(1.0 + (peak / rng - 1.0) * (gain_limit * strength), 3.0), 0.3)
+            tgt_o = -tgt_s * mn
 
-        # Clamp scale to prevent extreme swings
-        tgt_s = max(min(tgt_s, 3.0), 0.3)
-
-        # Scene change detection
-        sc_prev = f.props.get("_SceneChangePrev", 0) > 0
-
-        # EMA update
-        if state["first"] or sc_prev:
-            state["scale"]  = tgt_s
-            state["offset"] = tgt_o
-            state["first"] = False
+        # reset at scene changes, EMA within a scene
+        if state["first"] or f.props.get("_SceneChangePrev", 0) > 0:
+            state["scale"], state["offset"], state["first"] = tgt_s, tgt_o, False
         else:
-            state["scale"]  = state["scale"]  * (1 - effective_alpha) + tgt_s * effective_alpha
+            state["scale"] = state["scale"] * (1 - effective_alpha) + tgt_s * effective_alpha
             state["offset"] = state["offset"] * (1 - effective_alpha) + tgt_o * effective_alpha
 
-        # Weighted adjustment
-        s = state["scale"]
-        o = state["offset"]
-        w = max(min(strength, 1.0), 0.0)
-        expr = f"x {o:.8f} + {s:.8f} * {w:.8f} * x {1.0-w:.8f} * +"
-
-        # Use Akarin / Expr depending on availability
-        EXPR = get_expr(tools)
-        return EXPR([Y], expr=[expr])
+        s, o = state["scale"], state["offset"]
+        # y = x * s + o, mixed with the original by strength
+        return EXPR([Y], expr=[f"x {s:.8f} * {o:.8f} + {w:.8f} * x {1.0 - w:.8f} * +"])
 
     Y_adj = core.std.FrameEval(Y, eval=apply_gain, prop_src=prop_src)
 
-    # Recombine U/V planes
     if fmt.num_planes == 1:
         return Y_adj
-
     U = core.std.ShufflePlanes(clip, 1, vs.GRAY)
     V = core.std.ShufflePlanes(clip, 2, vs.GRAY)
     return core.std.ShufflePlanes([Y_adj, U, V], [0, 0, 0], vs.YUV)
@@ -625,97 +586,11 @@ def AutoGainZ(
     tools: Optional[Mapping[str, str]] = None
 ) -> vs.VideoNode:
     """
-    AutoGain optimized with vszip PlaneAverage.
+    AutoGain with vszip PlaneMinMax/PlaneAverage statistics.
     """
-
-    if not clip.format:
-        raise ValueError("AutoGain: Variable-format clips not supported.")
-    fmt = clip.format
-    if fmt.color_family != vs.YUV:
-        raise ValueError("AutoGain: Only YUV clips supported.")
-
-    # Extract luma
-    Y = core.std.ShufflePlanes(clip, 0, vs.GRAY)
-
-    # Compute stats with vszip (average, min, max if your build supports)
-    stats = core.vszip.PlaneAverage(
-        Y,
-        exclude=[-1],
-        planes=[0],
-        prop="y_avg"
-    )
-
-    # Scene detection
-    sc = SCDetect(Y, threshold=sc_threshold, scd_thscd1=scd_thscd1, scd_thscd2=scd_thscd2, tools=tools)
-
-    # Combine stats + scene detection properties
-    prop_src = core.std.CopyFrameProps(sc, stats)
-
-    peak = 1.0 if fmt.sample_type == vs.FLOAT else (1 << fmt.bits_per_sample) - 1
-    effective_alpha = ema_alpha / max(gain_limit, 0.01)
-
-    # Persistent EMA state
-    state = {"scale": 1.0, "offset": 0.0, "first": True}
-
-    # FrameEval lambda with minimal Python work
-    def apply_gain(n: int, f: vs.VideoFrame) -> vs.VideoNode:
-        avg = f.props.get("y_avgAvg", None)
-        if avg is None:
-            return Y  # fallback
-
-        # Use min/max if available; else assume 0..peak range
-        mn = f.props.get("y_avgMin", 0.0)
-        mx = f.props.get("y_avgMax", peak)
-
-        rng = mx - mn
-        if rng <= 0:
-            tgt_s, tgt_o = 1.0, 0.0
-        else:
-            if darken:
-                tgt_s = 1.0 - gain_limit * strength
-                tgt_o = (1.0 - tgt_s) * avg
-            else:
-                ideal = peak / rng
-                tgt_s = 1.0 + (ideal - 1.0) * (gain_limit * strength)
-                tgt_o = -tgt_s * mn
-
-        # Clamp scale
-        tgt_s = max(min(tgt_s, 3.0), 0.3)
-
-        # Scene change detection
-        sc_prev = f.props.get("_SceneChangePrev", 0) > 0
-
-        # EMA update
-        if state["first"] or sc_prev:
-            state["scale"] = tgt_s
-            state["offset"] = tgt_o
-            state["first"] = False
-        else:
-            state["scale"]  = state["scale"] * (1 - effective_alpha) + tgt_s * effective_alpha
-            state["offset"] = state["offset"] * (1 - effective_alpha) + tgt_o * effective_alpha
-
-        s = state["scale"]
-        o = state["offset"]
-        w = max(min(strength, 1.0), 0.0)
-
-        # Expression applied entirely in C++
-        expr = f"x {o:.8f} + {s:.8f} * {w:.8f} * x {1.0-w:.8f} * +"
-
-        # Use Akarin / Expr depending on availability
-        EXPR = get_expr(tools)
-
-        return EXPR(Y, expr=[expr])
-
-    # Apply per-frame gain
-    Y_adj = core.std.FrameEval(Y, eval=apply_gain, prop_src=prop_src)
-
-    # Recombine U/V planes
-    if fmt.num_planes == 1:
-        return Y_adj
-
-    U = core.std.ShufflePlanes(clip, 1, vs.GRAY)
-    V = core.std.ShufflePlanes(clip, 2, vs.GRAY)
-    return core.std.ShufflePlanes([Y_adj, U, V], [0, 0, 0], vs.YUV)
+    tools = dict(tools or {})
+    tools['planestats'] = 'vszip'
+    return AutoGain(clip, gain_limit, strength, darken, sc_threshold, ema_alpha, scd_thscd1=scd_thscd1, scd_thscd2=scd_thscd2, tools=tools)
 
 
 
