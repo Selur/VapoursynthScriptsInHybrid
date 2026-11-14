@@ -8,7 +8,7 @@ from typing import Sequence, Union, Optional, Any, Dict, List, Mapping
 import math
 import warnings
 
-from helpers import scale, cround, Padding, DitherLumaRebuild, DFTTest, GetPlane, KNLMeansCL, get_expr, is_limited_range, BM3D, bm3d_implementation
+from helpers import scale, cround, Padding, DitherLumaRebuild, DFTTest, GetPlane, KNLMeansCL, get_expr, is_limited_range, BM3D, bm3d_implementation, pick_tool
 from misc import get_mv, MinBlur
 from gaussblur import GaussBlur
 from sharpen import LSFmod, ContraSharpening
@@ -319,11 +319,12 @@ def _lfr_unsharp(clip: vs.VideoNode, strength: float, planes: Sequence[int], too
     '''Dogway's ex_unsharp(strength, Fc=width/8, th=0): clip + strength * (clip - blur), blur = 0.8 * box(r) + 0.2 * box(r + 1), vertical then horizontal.'''
     radius = max(math.ceil(2 * max(clip.width, clip.height) / (clip.width / 8.0)) - 1, 1)
     EXPR = get_expr(tools)
+    box = getattr(core, pick_tool(tools, 'boxblur', ('vszip', 'std'))).BoxBlur
     mix = ['x 0.8 * y 0.2 * +' if p in planes else '' for p in range(clip.format.num_planes)]
-    blur = EXPR([clip.std.BoxBlur(planes=planes, hradius=0, hpasses=0, vradius=radius, vpasses=1),
-                 clip.std.BoxBlur(planes=planes, hradius=0, hpasses=0, vradius=radius + 1, vpasses=1)], expr=mix)
-    blur = EXPR([blur.std.BoxBlur(planes=planes, hradius=radius, hpasses=1, vradius=0, vpasses=0),
-                 blur.std.BoxBlur(planes=planes, hradius=radius + 1, hpasses=1, vradius=0, vpasses=0)], expr=mix)
+    blur = EXPR([box(clip, planes=planes, hradius=0, hpasses=0, vradius=radius, vpasses=1),
+                 box(clip, planes=planes, hradius=0, hpasses=0, vradius=radius + 1, vpasses=1)], expr=mix)
+    blur = EXPR([box(blur, planes=planes, hradius=radius, hpasses=1, vradius=0, vpasses=0),
+                 box(blur, planes=planes, hradius=radius + 1, hpasses=1, vradius=0, vpasses=0)], expr=mix)
     return EXPR([clip, blur], expr=[f'x x y - {strength} * +' if p in planes else '' for p in range(clip.format.num_planes)])
 
 def _lfr_mask(vectors: Sequence[vs.VideoNode], luma: vs.VideoNode, gamma: float, thscd1: int, thscd2: int, tools: Optional[Mapping[str, str]] = None) -> vs.VideoNode:
