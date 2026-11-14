@@ -550,7 +550,8 @@ def Interlace(clip: vs.VideoNode, tff: bool=True, tools: Optional[Mapping[str, s
   if pick_tool(tools, 'interlace', ('interlace', 'std')) == 'interlace':
     return core.interlace.Interlace(clip=clip,tff=tff)
   clip = core.std.SeparateFields(clip=clip, tff=tff)
-  clip = core.std.SelectEvery(clip=clip, cycle=2, offsets=[0])
+  # first field from frame 2n, second field from frame 2n+1
+  clip = core.std.SelectEvery(clip=clip, cycle=4, offsets=[0, 3])
   clip = core.std.DoubleWeave(clip=clip, tff=tff)
   return core.std.SelectEvery(clip=clip, cycle=2, offsets=[0])
 
