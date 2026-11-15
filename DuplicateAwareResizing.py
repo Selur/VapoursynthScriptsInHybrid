@@ -58,8 +58,23 @@ class DAResizer:
     self.tWidth = tWidth
     self.tHeight = tHeight
     if self.method == 'VSGAN' and vsgan_models == None:
-      raise ValueError(f'DAResizer: "method" \'{self.method}\' called while not setting a model!')      
-      
+      raise ValueError(f'DAResizer: "method" \'{self.method}\' called while not setting a model!')
+    if self.method == 'VSGAN':
+      self.upscaled = self.vsganResize()
+
+  # VSGAN network over the whole clip, set up once; frames are only computed when requested
+  def vsganResize(self) -> vs.VideoNode:
+    inFormat = self.clip.format.id
+    vsgan = ESRGAN(clip=self.clip, device="cuda")
+    for model in self.models:
+      vsgan.load(model)
+      vsgan.apply()
+    resized = vsgan.clip
+    if inFormat == vs.RGBH:
+      resized = core.resize.Bicubic(clip=resized, format=vs.RGBS)
+    resized = core.fmtc.resample(clip=resized, w=self.tWidth, h=self.tHeight, kernel="spline64", interlaced=False, interlacedd=False)
+    return core.resize.Bicubic(clip=resized, format=inFormat, range_s="full")
+
   def daResize(self, n: int, f: vs.VideoFrame) -> vs.VideoNode:
     out = self.resize(n)
     if self.debug:
@@ -76,16 +91,7 @@ class DAResizer:
       return self.previous
     
     if self.method == 'VSGAN':
-      inFormat = self.clip[n].format.id
-      self.vsgan = ESRGAN(clip=self.clip[n],device="cuda")
-      for model in self.models:
-        self.vsgan.load(model)
-        self.vsgan.apply()
-        resized = self.vsgan.clip
-        if inFormat == vs.RGBH:
-          resized = core.resize.Bicubic(clip=resized, format=vs.RGBS)  
-        resized = core.fmtc.resample(clip=resized, w=self.tWidth, h=self.tHeight, kernel="spline64", interlaced=False, interlacedd=False)
-        resized = core.resize.Bicubic(clip=resized, format=inFormat, range_s="full")
+      resized = self.upscaled[n]
       self.previous = resized
       return resized
       
