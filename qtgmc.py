@@ -830,8 +830,7 @@ def QTGMC(
             
             # Restore original format
             if dnWindow.format.id != noiseWindow.format.id:
-                dnWindow = Depth(dnWindow, noiseWindow.format.bits_per_sample, 
-                                sample_type=noiseWindow.format.sample_type)
+                dnWindow = Depth(dnWindow, noiseWindow.format.bits_per_sample)
         elif Denoiser == 'dfttest':
           # Takes the first DFTTest implementation that is loaded, GPU ones first.
           dnWindow = DFTTest(noiseWindow, sigma=Sigma * 4, tbsize=noiseTD, planes=CNplanes, tools=tools, device_id=device)
