@@ -170,7 +170,7 @@ def HQDeringmod(
     EXPR = get_expr(tools)
     # Post-Process: Ringing Mask Generating
     if ringmask is None:
-        expr = f'x {scale(mthr, bits)} < 0 x ?'
+        expr = f'x {scale(mthr, peak)} < 0 x ?'
         PREWITT = core.edgemasks.ExPrewitt if pick_tool(tools, 'edgemasks', ('edgemasks', 'std')) == 'edgemasks' else core.std.Prewitt
         prewittm = EXPR(PREWITT(input, planes=0), expr=expr if is_gray else [expr, ''])
         fmask = _hysteresis_fn(tools)(getattr(prewittm, has_zsmooth).Median(planes=0), prewittm, planes=0) if has_zsmooth else _hysteresis_fn(tools)(prewittm.std.Median(planes=0), prewittm, planes=0)
@@ -224,7 +224,7 @@ def mdering(clip: vs.VideoNode, thr: float = 2, tools: Optional[Mapping[str, str
         raise TypeError('mdering: \"clip\" must be an integer clip!')
 
     bits = clip.format.bits_per_sample
-    thr = scale(thr, bits)
+    thr = scale(thr, (1 << bits) - 1)
 
     rg11_1 = core.std.Convolution(clip, matrix=[1, 2, 1, 2, 4, 2, 1, 2, 1])
     rg11_2 = core.std.Convolution(rg11_1, [1]*9)

@@ -53,13 +53,15 @@ def DeHalo_alpha(
 
     ox = clp.width
     oy = clp.height
+    # 255 stands for white: the format maximum, not the shifted 8-bit value
+    peak = (1 << bits) - 1 if clp.format.sample_type == vs.INTEGER else 1.0
     EXPR = get_expr(tools)
     halos = clp.resize.Bicubic(m4(ox / rx), m4(oy / ry), filter_param_a=1 / 3, filter_param_b=1 / 3).resize.Bicubic(ox, oy, filter_param_a=1, filter_param_b=0)
     are = EXPR([clp.std.Maximum(), clp.std.Minimum()], expr='x y -')
     ugly = EXPR([halos.std.Maximum(), halos.std.Minimum()], expr='x y -')
     so = EXPR(
         [ugly, are],
-        expr=f'y x - y 0.000001 + / {scale_value(255, 8, bits)} * {scale_value(lowsens, 8, bits)} - y {scale_value(256, 8, bits)} + {scale_value(512, 8, bits)} / {highsens / 100} + *',
+        expr=f'y x - y 0.000001 + / {peak} * {scale_value(lowsens, 8, bits)} - y {scale_value(256, 8, bits)} + {scale_value(512, 8, bits)} / {highsens / 100} + *',
     )
     if clp.format.sample_type == vs.FLOAT:
         so = so.vszip.Limiter() if pick_tool(tools, 'limiter', ('vszip', 'std'), lambda name: name == 'std' or hasattr(core, 'vszip')) == 'vszip' else so.std.Limiter()
@@ -630,9 +632,9 @@ def BlindDeHalo3(clp: vs.VideoNode, rx: float = 3.0, ry: float = 3.0, strength: 
             This has less effect on halos, but can deal for sources containing more mosquito noise than halos.
             Default is 0.
 
-        PPlimit: (int) Can be used to make the PP routine change no pixel by more than [PPlimit].
-            I'm not sure if this makes much sense in this context. However the option is there - you never know what it might be good for.
-            Default is 0.
+        PPlimit: (int) Can be used to make the PP routine change no pixel by more than [PPlimit] (8-bit scale, 0 = no limit).
+            Only used when PPmode is not 0.
+            Default is 4 for PPmode -3/3, else 0.
 
         interlaced: (bool) As formerly, this is intended for sources that were originally interlaced, but then made progressive by deinterlacing.
             It aims in particular at clips that made their way through Restore24.
@@ -709,11 +711,11 @@ def BlindDeHalo3(clp: vs.VideoNode, rx: float = 3.0, ry: float = 3.0, strength: 
               postclean = core.std.MaskedMerge(base, base.std.Median(), hull)
         else:
             raise ValueError(funcName + ': \"PPmode\" must be in [-3 ... 3]!')
+
+        if PPlimit != 0:
+            postclean = core.std.Expr([base, postclean], [LIM])
     else:
         postclean = clean
-
-    if PPlimit != 0:
-        postclean = core.std.Expr([base, postclean], [LIM])
 
     last = core.std.DoubleWeave(postclean, tff=True)[::2] if interlaced else postclean
 
