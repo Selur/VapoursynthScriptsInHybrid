@@ -173,7 +173,7 @@ def LUTDeRainbow(
 ) -> vs.VideoNode:
     """
     LUTDeRainbow — frame-based derainbowing by Scintilla.
-    Last updated 2022-10-08.
+    Last updated 10/3/08 (date of the original AviSynth script).
 
     Requires YUV input, frame-based only.
 
@@ -538,8 +538,8 @@ def SRFComb2(
         property (0 = progressive, 1 = BFF, 2 = TFF). Override this
         if the source is mistagged.
     contrasharp : bool
-        Apply contra-sharpening after motion compensation to recover
-        detail lost during degrain (default ``True``).
+        Apply contra-sharpening to the spatial clean against the degrain
+        result (default ``True``); only used when ``dedot`` is on.
     bilateral_gpu : bool, optional
         ``False`` keeps the chroma bilateral filter on the CPU (vszip) even
         when a GPU port is loaded; by default a loaded GPU port
@@ -810,22 +810,19 @@ def SRFComb2(
         motion_mask = _mt_expand_horizontal(motion_mask)
         motion_mask = _mt_inflate(motion_mask)
 
-        # ContraSharpening on the spatial clean to recover detail after degrain
-        if contrasharp and _contra_sharpening is not None:
+        # ContraSharpening on the spatial clean against the degrain result, only with dedot
+        if dedot and contrasharp and _contra_sharpening is not None:
             sharp = _contra_sharpening(spati_comb_c, degrain, tools=tools)
         else:
             sharp = spati_comb_c
 
-        # MaskedMerge(A, B, mask): A where mask=0, B where mask=255.
-        # motion_mask is bright where motion exists.
-        # We want degrain (motion-compensated) where there IS motion,
-        # and sharp (spatial clean) where there is NOT — so degrain is B.
+        # Spatial clean where there is motion, degrain result where there is none; planes that are off keep the degrain result
         if dedot and derainbow:
-            mc_merged = core.std.MaskedMerge(sharp, degrain, motion_mask, planes=[0, 1, 2])
+            mc_merged = core.std.MaskedMerge(degrain, sharp, motion_mask, planes=[0, 1, 2])
         elif dedot:
-            mc_merged = core.std.MaskedMerge(sharp, degrain, motion_mask, planes=[0])
+            mc_merged = core.std.MaskedMerge(degrain, sharp, motion_mask, planes=[0])
         else:  # derainbow only
-            mc_merged = core.std.MaskedMerge(sharp, degrain, motion_mask, planes=[1, 2])
+            mc_merged = core.std.MaskedMerge(degrain, sharp, motion_mask, planes=[1, 2])
     else:
         mc_merged = degrain
 
@@ -898,7 +895,9 @@ def ChubbyRain2(c: vs.VideoNode, th: int = 10, radius: int = 10, show: bool = Fa
         # focus2 reads _SceneChangePrev/Next whenever scenechange > 0; the Cnr2 path above sets none
         if not cnr4:
             cc = SCDetect(clip=cc, threshold=0.10, scd_thscd1=scd_thscd1, scd_thscd2=scd_thscd2, tools=tools)
-        cc = core.focus2.TemporalSoften2(cc, radius=radius, luma_threshold=0, chroma_threshold=sft, scenechange=1, mode=2)
+        # focus2 compares chroma_threshold with raw samples, so sft is scaled like zsmooth's scalep
+        sft_scaled = sft / 255 if is_float else sft * peak // 255
+        cc = core.focus2.TemporalSoften2(cc, radius=radius, luma_threshold=0, chroma_threshold=sft_scaled, scenechange=1, mode=2)
     elif soften:
         # zsmooth takes one threshold per plane and scales it itself (scalep=True)
         # scenechange=-1 consumes the props set above; any positive value makes zsmooth

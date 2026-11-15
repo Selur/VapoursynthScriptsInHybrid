@@ -7,7 +7,7 @@ from helpers import Depth, GetPlane, NNEDI3, get_expr, pick_tool
 import masked
 
 
-def RainbowSmooth(clip: vs.VideoNode, radius: int = 3, lthresh: int = 0, hthresh: int = 220, mask: str = "original", tools: Optional[Mapping[str, str]] = None) -> vs.VideoNode:
+def RainbowSmooth(clip: vs.VideoNode, radius: int = 3, lthresh: int = 0, hthresh: int = 220, mask: str = "original", interlaced: bool = False, tools: Optional[Mapping[str, str]] = None) -> vs.VideoNode:
     if isinstance(mask, str):
         if mask == "original":
             EXPR = get_expr(tools)
@@ -30,9 +30,9 @@ def RainbowSmooth(clip: vs.VideoNode, radius: int = 3, lthresh: int = 0, hthresh
     lderain = clip
 
     if lthresh > 0:
-        lderain = clip.smoothuv.SmoothUV(radius=radius, threshold=lthresh, interlaced=False)
+        lderain = clip.smoothuv.SmoothUV(radius=radius, threshold=lthresh, interlaced=interlaced)
 
-    hderain = clip.smoothuv.SmoothUV(radius=radius, threshold=hthresh, interlaced=False)
+    hderain = clip.smoothuv.SmoothUV(radius=radius, threshold=hthresh, interlaced=interlaced)
 
     if hthresh > lthresh:
         return core.std.MaskedMerge(clipa=lderain, clipb=hderain, mask=mask, planes=[1, 2], first_plane=True)

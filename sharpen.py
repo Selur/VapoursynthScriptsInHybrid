@@ -580,7 +580,8 @@ def FineSharp(clip: vs.VideoNode, mode: int = 1, sstr: float = 2.5, cstr: Option
 
     if cstr is None:
         cstr = spline(sstr, {0: 0, 0.5: 0.1, 1: 0.6, 2: 0.9, 2.5: 1, 3: 1.1, 3.5: 1.15, 4: 1.2, 8: 1.25, 255: 1.5})
-        cstr **= 0.8 if mode > 0 else cstr
+        if mode <= 0:
+            cstr **= 0.8
 
     if ldmp is None:
         ldmp = sstr
@@ -709,7 +710,9 @@ def psharpen(clip: vs.VideoNode, strength: int = 25, threshold: int = 75, ss_x: 
     nmax = EXPR([max_, min_], ["x y -"])
     nval = EXPR([clip, min_], ["x y -"])
 
-    expr0 = threshold * (1.0 - strength) / (1.0 - (1.0 - threshold) * (1.0 - strength))
+    denom = 1.0 - (1.0 - threshold) * (1.0 - strength)
+    # strength 0 with threshold 0 uses the limit 1 of strength 0 (no sharpening)
+    expr0 = threshold * (1.0 - strength) / denom if denom != 0 else 1.0
     epsilon = 0.000000000000001
     scl = (1 << clip.format.bits_per_sample) // 256
     x = f"x {scl} /" if scl != 1 else "x"
