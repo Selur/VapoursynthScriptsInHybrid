@@ -23,8 +23,8 @@ def RemoveDirt(input: vs.VideoNode, repmode: int=16, remgrainmode: int=17, limit
   else:
     # Fallback to rdvs.SCSelect
     scenechange = core.rdvs.SCSelect(input, sbegin, send, cleansed)
-  alt = RG('Repair')(scenechange, input, mode=[repmode,repmode,1])
-  restore = RG('Repair')(cleansed, input, mode=[repmode,repmode,1])
+  alt = RG('Repair')(scenechange, input, mode=[repmode,repmode,repmode])
+  restore = RG('Repair')(cleansed, input, mode=[repmode,repmode,repmode])
 
   if removedirt:
     # Use removedirt.RestoreMotionBlocks if available
@@ -32,18 +32,18 @@ def RemoveDirt(input: vs.VideoNode, repmode: int=16, remgrainmode: int=17, limit
   else:
     # Fallback to rdvs.RestoreMotionBlocks
     corrected = core.rdvs.RestoreMotionBlocks(cleansed, restore, neighbour=input, alternative=alt, gmthreshold=70, dist=1, dmode=2, noise=limit, noisy=12)
-  return RG('RemoveGrain')(corrected, mode=[remgrainmode,remgrainmode,1])
+  return RG('RemoveGrain')(corrected, mode=[remgrainmode,remgrainmode,remgrainmode])
   
 def RemoveDirtMC(input: vs.VideoNode, limit: int=6, repmode: int=16, remgrainmode: int=17, block_size: int=8, block_over: int=4, gpu: bool=False, tools: Optional[Mapping[str, str]] = None) -> vs.VideoNode:
-  quad = tool_function(tools, 'rg', 'RemoveGrain')(input, mode=[12,0,1])   # blur the luma for searching motion vectors  orig avs: mode=12, modeU=-1
+  quad = tool_function(tools, 'rg', 'RemoveGrain')(input, mode=[12,0,0])   # blurred luma only for the motion search, orig avs: mode=12, modeU=-1
   if gpu:
     import ChangeFPS
     block_over = 0 if block_over == 0 else 1 if block_over == 2 else 2 if block_over == 4 else 3 
     Super = core.svp1.Super(quad, "{gpu:1,pel:4}")
     bvec = core.svp1.Analyse(Super['clip'], Super['data'], input, "{ gpu:1, block:{w:"+str(block_size)+", h:"+str(block_size)+",overlap:"+str(block_over)+"} }")
     fvec = core.svp1.Analyse(Super['clip'], Super['data'], input, "{ gpu:1, block:{w:"+str(block_size)+", h:"+str(block_size)+",overlap:"+str(block_over)+",special:{delta: 1}} }")
-    backw = core.svp2.SmoothFps(quad,Super['clip'], Super['data'],bvec['clip'],bvec['data'],"{}") # here the frame rate is doubled
-    forw = core.svp2.SmoothFps(quad,Super['clip'], Super['data'],fvec['clip'],fvec['data'],"{}")  # here the frame rate is doubled
+    backw = core.svp2.SmoothFps(input,Super['clip'], Super['data'],bvec['clip'],bvec['data'],"{}") # here the frame rate is doubled
+    forw = core.svp2.SmoothFps(input,Super['clip'], Super['data'],fvec['clip'],fvec['data'],"{}")  # here the frame rate is doubled
     # since backw and forw now have twice the frame count I drop half the frames
     backw = ChangeFPS.ChangeFPS(backw,input.fps_num,input.fps_den)
     forw = ChangeFPS.ChangeFPS(forw,input.fps_num,input.fps_den)
@@ -54,10 +54,11 @@ def RemoveDirtMC(input: vs.VideoNode, limit: int=6, repmode: int=16, remgrainmod
     i = MV.Super(quad, pel=2, blksize=block_size,overlap=block_over)    #  avs: i=MSuper(clip,pel=2, isse=false)
     bvec = MV.Analyse(super=i,isb=True, blksize=block_size,overlap=block_over, delta=1, truemotion=True, chroma=True)  
     fvec = MV.Analyse(super=i,isb=False, blksize=block_size,overlap=block_over, delta=1, truemotion=True, chroma=True)
-    backw = MV.Flow(clip=quad,super=i,vectors=[bvec])
-    forw  = MV.Flow(clip=quad,super=i,vectors=[fvec])
+    render = MV.Super(input, pel=2, levels=1, blksize=block_size, overlap=block_over)  # compensate the untouched clip
+    backw = MV.Flow(clip=input,super=render,vectors=[bvec])
+    forw  = MV.Flow(clip=input,super=render,vectors=[fvec])
 
-  clp = core.std.Interleave([backw,quad,forw])
-  clp = RemoveDirt(clp, repmode=2, remgrainmode=17, limit=limit, tools=tools)
+  clp = core.std.Interleave([backw,input,forw])
+  clp = RemoveDirt(clp, repmode=repmode, remgrainmode=remgrainmode, limit=limit, tools=tools)
   clp = core.std.SelectEvery(clp,3,1)
   return clp

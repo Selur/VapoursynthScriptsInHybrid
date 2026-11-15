@@ -340,7 +340,7 @@ def channel_mixer(rgb: vs.VideoNode, RR: float = 100.0, RG: float = 0.0,   RB: f
 
 # Port from AVILs Avisynth version: https://forum.doom9.org/showthread.php?t=185261
 # Required masktools2, mvtools2
-# Should work on YUVXXXP8 
+# Works on YUV in all bit depths, integer and float
 
 def _adjust_focus(clip: vs.VideoNode, amount: float) -> vs.VideoNode:
   '''AviSynth's AdjustFocus: kernel [(1-c)/2, c, (1-c)/2] with c = 2^amount, horizontal and vertical.'''

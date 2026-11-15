@@ -21,7 +21,7 @@ from helpers import tool_function
 def KillerSpots(clip: vs.VideoNode, limit: int=10, advanced: bool=False, tools: Optional[Mapping[str, str]] = None) -> vs.VideoNode:
   core = vs.core
   MV = get_mv(tools)
-  # advanced: Use 'False' for best speed and original KillerSpots. Use 'True' to specify a 'limit'. Default True;
+  # advanced: Use 'False' for best speed and original KillerSpots. Use 'True' to specify a 'limit'. Default False;
   # limit: default 10, spot removal limit (for advanced=true only)
   osup = MV.Super(clip=clip, pel=2, sharp=2, blksize=8, overlap=4)
   bv1  = MV.Analyse(super=osup, isb=True, delta=1, blksize=8, overlap=4, search=4)

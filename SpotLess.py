@@ -86,6 +86,10 @@ def _expr2(a: vs.VideoNode, b: vs.VideoNode, expr: str, tools: Optional[Mapping[
 # Plane helpers
 # ---------------------------------------------------------------------------
 
+def _scale8(value: float, clip: vs.VideoNode) -> float:
+    """An 8-bit value (0-255) scaled to the bit depth of clip, like rgr1/rgr2."""
+    return value * ((1 << clip.format.bits_per_sample) - 1) / 255.0
+
 def _blank_gray(ref: vs.VideoNode) -> vs.VideoNode:
     """Black GRAY clip matching the format/size of ref (which may be GRAY or YUV)."""
     gray_fmt = core.query_video_format(
@@ -160,7 +164,7 @@ def _exaggerated_chroma_diff(source: vs.VideoNode,
 # Basic mask operations  (all GRAY in, GRAY out)
 # ---------------------------------------------------------------------------
 
-def _binarize(clip: vs.VideoNode, threshold: int, tools: Optional[Mapping[str, str]] = None) -> vs.VideoNode:
+def _binarize(clip: vs.VideoNode, threshold: float, tools: Optional[Mapping[str, str]] = None) -> vs.VideoNode:
     bits = clip.format.bits_per_sample
     peak = (1 << bits) - 1
     return _expr1(clip, f'x {threshold} > {peak} 0 ?', tools=tools)
@@ -310,7 +314,7 @@ def _chroma_delta_mask(source: vs.VideoNode,
         v_delta = core.resize.Bilinear(v_delta, W, H)
 
     uv_delta = _expr2(u_delta, v_delta, 'x x * y y * + sqrt', tools=tools)
-    mask     = _binarize(uv_delta, delta, tools=tools)
+    mask     = _binarize(uv_delta, _scale8(delta, source), tools=tools)  # delta is an 8-bit value
     mask     = _remove_small_spots(mask, spot_size, tools=tools)
 
     return mask   # GRAY
@@ -367,11 +371,12 @@ def _unsharp_mask(clip: vs.VideoNode,
     bits = clip.format.bits_per_sample
     peak = (1 << bits) - 1
     s    = strength / 100.0
+    threshold = _scale8(threshold, clip)  # threshold is an 8-bit value
 
     diff           = _makediff(luma, blurred)
     sharpened_diff = _expr1(diff,
-        f'x {1 << (bits-1)} - dup abs {threshold} > dup {s} * 0 ? + '
-        f'{1 << (bits-1)} + 0 max {peak} min', tools=tools)
+        f'x {1 << (bits-1)} - dup abs {threshold} > swap {s} * 0 ? '
+        f'{1 << (bits-1)} + 0 max {peak} min', tools=tools)  # mid + (|d| > threshold ? d * strength : 0)
     # Add sharpening back: base + diff - mid  (core.std.AddDiff does not exist in VS)
     result_luma    = _adddiff(luma, sharpened_diff, tools=tools)
 
@@ -590,9 +595,10 @@ tools: Optional[Mapping[str, str]] = None) -> vs.VideoNode:
 
         ic = core.std.Interleave(bc + [denoised] + fc)
 
-        if   smoother == 'tmedian':  out = core.tmedian.TemporalMedian(ic, radius=radT)
-        elif smoother == 'ttsmooth': out = core.ttmpsm.TTempSmooth(ic, maxr=min(7, radT))
-        elif smoother == 'zsmooth':  out = core.zsmooth.TemporalMedian(ic, radius=radT)
+        # tools['tmedian'] / tools['ttempsmooth'] pick the implementation, smoother only the order without them
+        if   smoother == 'tmedian':  out = tool_function(tools, 'tmedian', 'TemporalMedian', ('tmedian', 'zsmooth'))(ic, radius=radT)
+        elif smoother == 'ttsmooth': out = tool_function(tools, 'ttempsmooth', 'TTempSmooth', ('ttmpsm', 'zsmooth'))(ic, maxr=min(7, radT))
+        elif smoother == 'zsmooth':  out = tool_function(tools, 'tmedian', 'TemporalMedian', ('zsmooth', 'tmedian'))(ic, radius=radT)
         else: raise ValueError(f"Unknown smoother '{smoother}'")
 
         denoised = core.std.SelectEvery(out, 2 * radT + 1, radT)
@@ -689,7 +695,7 @@ tools: Optional[Mapping[str, str]] = None) -> vs.VideoNode:
     asearchparam    MV search radius. Default aoverlap//2.
     truemotion      MV truemotion flag. Default False.
     blur            Blur before vector analysis. Default False.
-    smoother        'tmedian' | 'ttsmooth' | 'zsmooth'. Default 'tmedian'.
+    smoother        'tmedian' | 'ttsmooth' | 'zsmooth'. Default 'zsmooth'.
     thsad2          SAD threshold at temporal radius > 1. Default = thsad.
     ssharp          mv.Super sharpness (1–3). Default 1.
     pglobal         Use global motion estimation. Default True.
@@ -708,13 +714,13 @@ tools: Optional[Mapping[str, str]] = None) -> vs.VideoNode:
                     DeltaRestore unmodified – no sharpening is applied anywhere.
     usharp_strength Unsharp strength (0–200). Default 80.
     usharp_radius   Unsharp radius in pixels (1–20). Default 5.
-    usharp_th       Unsharp threshold (0–255). Default 1.
-    dark2_brt       Secondary dark-mask brightness ratio (0.5–1.0). Default 0.97.
+    usharp_th       Unsharp threshold (0–255, 8-bit scale). Default 1.
+    dark2_brt       Secondary dark-mask brightness ratio (0.5–1.0). Default 0.85.
     dark2_brt_limit Secondary dark-mask brightness limit (0.3–dark2_brt). Default 0.86.
     slog            Auto-level for mask generation (S-Log / washed-out).
     rgr             Restore film grain after cleaning. Default False.
-    rgr1            Grain restoration blur radius for source (1–50). Default 10.
-    rgr2            Grain restoration blur radius for filtered (1–50). Default 20.
+    rgr1            Grain restoration upper difference threshold (1–50, 8-bit scale). Default 10.
+    rgr2            Grain restoration lower difference threshold (1–50, 8-bit scale). Default 20.
     luma_brt        Brightness ratio for the main luma restore mask (1.01–1.5).
                     Default 1.1. Lower (e.g. 1.02) to restore bright fast-moving
                     objects like a white tennis ball that SpotLess removes.
@@ -765,7 +771,7 @@ tools: Optional[Mapping[str, str]] = None) -> vs.VideoNode:
 
     # ── SpotLess ──────────────────────────────────────────────────────────
     _blksz    = ablksize or (32 if clip.width > 1920 else 16 if clip.width > 960 else 8)
-    _olap     = aoverlap or (_blksz // 2)
+    _olap     = _blksz // 2 if aoverlap is None else aoverlap  # 0 is a valid overlap
     _schparam = _olap // 2 if asearchparam is None else asearchparam
 
     sl_kw: Dict[str, Any] = dict(
@@ -809,7 +815,7 @@ tools: Optional[Mapping[str, str]] = None) -> vs.VideoNode:
     # Edge mask: Scharr detector – sharp edges are likely dirt, not objects
     edges     = _scharr(source_lvl_shp, tools=tools)
     edges     = _z_padding(edges, 60, 14, 14, 10)
-    edge_mask = _binarize(edges, 52, tools=tools)
+    edge_mask = _binarize(edges, _scale8(52, edges), tools=tools)
 
     # Chroma override: larger delta / spot size, not suppressed
     chroma_override = _chroma_delta_mask(source_lvl_shp, source_lvl_shp_spt,
@@ -836,7 +842,7 @@ tools: Optional[Mapping[str, str]] = None) -> vs.VideoNode:
                              spot_size            = 5, tools=tools)
     dark2 = _expand_mask(dark2, 2, blur=2, tools=tools)
 
-    dark_edge_mask = _binarize(edges, 54, tools=tools)
+    dark_edge_mask = _binarize(edges, _scale8(54, edges), tools=tools)
     dark_final     = _dark_delta_mask(dark_near_light,
                                       secondary = dark2,
                                       edge_mask = dark_edge_mask, tools=tools)

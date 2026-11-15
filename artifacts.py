@@ -155,10 +155,10 @@ def RemoveSpotsMCX(clip: vs.VideoNode, limit: int = 6, grey: bool = False, runs:
     sup  = MV.Super(clip, pel=2, blksize=8, overlap=4)
 
     # Analyse backward motion (next frame -> current)
-    bvec = MV.Analyse(sup, isb=False, blksize=8, delta=1, truemotion=True)
+    bvec = MV.Analyse(sup, isb=False, blksize=8, overlap=4, delta=1, truemotion=True)
 
     # Analyse forward motion (prev frame -> current)
-    fvec = MV.Analyse(sup, isb=True,  blksize=8, delta=1, truemotion=True)
+    fvec = MV.Analyse(sup, isb=True,  blksize=8, overlap=4, delta=1, truemotion=True)
 
     # Motion-compensate: create frames warped to match current frame's motion
     backw = MV.Flow(clip, sup, bvec)  # Next frame compensated to current
