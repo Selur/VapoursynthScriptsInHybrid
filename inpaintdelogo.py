@@ -13,7 +13,7 @@ from vapoursynth import core
 from helpers import pick_tool, tool_function, tool_namespace
 
 # Port of InpaintDelogo 3.7 by VoodooFX (public domain): https://github.com/Purfview/InpaintDelogo
-# Needs AvsInpaint >= 1.4 (core.avsinpaint) and akarin; BestSource for mask files, an FFT3D plugin for negative oPP/dPP, addGrain for GrainPP.
+# Needs AvsInpaint >= 1.4 (core.avsinpaint) and akarin or cranexpr; BestSource for mask files, an FFT3D plugin for negative oPP/dPP, addGrain for GrainPP.
 # The helpers below rebuild AviSynth+ 3.7.5 (AVX2) and MaskTools2 bit-exactly where the original relies on them.
 
 _NAME = 'InpaintDelogo'
@@ -43,9 +43,13 @@ def _require_tool(family: str, purpose: str) -> None:
         raise _error(f'one of {", ".join(_TOOL_ORDER[family])} is required for {purpose}.')
 
 
+def _expr_namespace() -> str:
+    # akarin and cranexpr both have Expr and Select with the same syntax
+    return tool_namespace('expr', pick_tool(_tools, 'expr', _TOOL_ORDER['expr']) or 'akarin')
+
+
 def _expr(clips: Union[vs.VideoNode, Sequence[vs.VideoNode]], expr: Union[str, Sequence[str]], fmt: Optional[int] = None) -> vs.VideoNode:
-    name = pick_tool(_tools, 'expr', _TOOL_ORDER['expr']) or 'akarin'
-    func = getattr(core, tool_namespace('expr', name)).Expr
+    func = getattr(core, _expr_namespace()).Expr
     if fmt is None:
         return func(clips, expr)
     return func(clips, expr, format=fmt)
@@ -330,7 +334,7 @@ def _halve_point(c: vs.VideoNode) -> vs.VideoNode:
 
 
 class _Ring:
-    # per-frame range of a blurred clip on a ring, as props for akarin.Select (RT_YPlaneMinMaxDifference(mask=))
+    # per-frame range of a blurred clip on a ring, as props for Select of the expr tool (RT_YPlaneMinMaxDifference(mask=))
 
     def __init__(self, cb: vs.VideoNode, ring: vs.VideoNode, grey: bool) -> None:
         self.props = list(_range_props(_plane(cb, 0), ring, 'Y'))
@@ -345,7 +349,7 @@ class _Ring:
         return ' '.join(parts) + ' and' * (len(parts) - 1)
 
     def select(self, clips: Sequence[vs.VideoNode], expr: str) -> vs.VideoNode:
-        return core.akarin.Select(list(clips), self.props, expr)
+        return getattr(core, _expr_namespace()).Select(list(clips), self.props, expr)
 
 
 def _inpaint(src: vs.VideoNode, m: vs.VideoNode, grey: bool, radius: float, sharpness: float, preblur: float, postblur: float) -> vs.VideoNode:
@@ -1147,7 +1151,6 @@ def InpaintDelogo(clp: vs.VideoNode, mask: Union[str, vs.VideoNode, None] = None
       is inpainted. Inpaint mode with a static mask only; an extension of this port.
     tools: implementation per family (helpers.pick_tool()): expr (akarin, cranexpr), rg (zsmooth, neo_smo, rgvs),
       hysteresis (hysteresis, misc), fft3d (neo_fft, neo_fft3d, fft3dfilter), grain (passed to GrainFactory3).
-      akarin stays required for akarin.Select.
     The other parameters have the meaning and the defaults of the original; ebmp files and negative Analyze are not supported.
     '''
     global _tools
@@ -1165,7 +1168,7 @@ def InpaintDelogo(clp: vs.VideoNode, mask: Union[str, vs.VideoNode, None] = None
         else:
             raise _error(f'unknown parameter "{key}".')
     _require('avsinpaint', 'inpainting')
-    _require('akarin', 'the mask helpers')
+    _require_tool('expr', 'the mask helpers')
     fmt = clp.format
     if fmt is None or fmt.color_family != vs.YUV or fmt.sample_type != vs.INTEGER or fmt.bits_per_sample > 16:
         raise _error('only constant-format YUV 8..16 bit integer clips are supported.')
@@ -1563,7 +1566,7 @@ def _clipblend(c: vs.VideoNode, delay: int) -> vs.VideoNode:
     shifted = [c] + [(c[0] * k + c)[:c.num_frames] for k in range(1, delay + 1)]
     terms = ['src0'] + [f'src{k} N {k} >= *' for k in range(1, delay + 1)]
     expr = ' '.join(terms) + ' +' * delay + f' 2 * N {delay} min 1 + + N {delay} min 1 + 2 * / floor'
-    return core.akarin.Expr(shifted, expr)
+    return _expr(shifted, expr)
 
 
 def _shift(c: vs.VideoNode, k: int) -> vs.VideoNode:

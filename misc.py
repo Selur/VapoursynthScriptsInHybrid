@@ -54,6 +54,10 @@ def Overlay(
         if mask.width != overlay.width or mask.height != overlay.height or mask.format.bits_per_sample != overlay.format.bits_per_sample :
             raise vs.Error('Overlay: mask must have the same dimensions and bit depth as overlay')
 
+    if x >= base.width or y >= base.height or x + overlay.width <= 0 or y + overlay.height <= 0:
+        warnings.warn(f'Overlay: the {overlay.width}x{overlay.height} overlay at {x},{y} lies outside the {base.width}x{base.height} base clip, returning base unchanged')
+        return base
+
     if base.format.sample_type == vs.INTEGER:
         bits = base.format.bits_per_sample 
         neutral = 1 << (bits - 1)

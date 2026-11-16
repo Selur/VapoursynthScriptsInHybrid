@@ -1,11 +1,12 @@
 from __future__ import annotations
 import vapoursynth as vs
+import os
 import sys
 from vapoursynth import core
 from typing import List
 
 try:
-  from vsgan import ESRGAN
+  from vsgan import EGVSR, ESRGAN
 except:
   pass
 
@@ -62,14 +63,17 @@ class DAResizer:
     if self.method == 'VSGAN':
       self.upscaled = self.vsganResize()
 
-  # VSGAN network over the whole clip, set up once; frames are only computed when requested
+  # VSGAN networks over the whole clip, set up once; frames are only computed when requested
   def vsganResize(self) -> vs.VideoNode:
     inFormat = self.clip.format.id
-    vsgan = ESRGAN(clip=self.clip, device=f"cuda:{self.device_index}")
+    resized = self.clip
     for model in self.models:
+      # each model gets its own network on the previous output: EGVSR when the file name says so, else ESRGAN
+      network = EGVSR if 'EGVSR' in os.path.basename(model) else ESRGAN
+      vsgan = network(clip=resized, device=f"cuda:{self.device_index}")
       vsgan.load(model)
       vsgan.apply()
-    resized = vsgan.clip
+      resized = vsgan.clip
     if inFormat == vs.RGBH:
       resized = core.resize.Bicubic(clip=resized, format=vs.RGBS)
     resized = core.fmtc.resample(clip=resized, w=self.tWidth, h=self.tHeight, kernel="spline64", interlaced=False, interlacedd=False)
