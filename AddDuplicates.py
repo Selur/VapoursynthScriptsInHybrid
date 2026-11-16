@@ -4,8 +4,8 @@ core = vs.core
 
 def addDup(clip: vs.VideoNode, thresh: float = 0.3, debug: bool = False) -> vs.VideoNode:
     """
-    Detects frames with low temporal difference compared to their predecessor and duplicates the previous frame
-    if the difference is below the given threshold. Optionally adds debug metadata.
+    Detects frames with low temporal difference compared to their predecessor and replaces them with a copy of the
+    previous frame if the difference is below the given threshold. Frame count stays the same. Optionally adds debug metadata.
 
     Parameters:
         clip (vs.VideoNode): Input video clip.
@@ -13,7 +13,7 @@ def addDup(clip: vs.VideoNode, thresh: float = 0.3, debug: bool = False) -> vs.V
         debug (bool): If True, adds debug props to output frames.
 
     Returns:
-        vs.VideoNode: Modified clip with duplicates inserted when differences are below threshold.
+        vs.VideoNode: Modified clip with frames replaced by copies of their predecessor when differences are below threshold.
     """
     if clip.format.color_family != vs.YUV and clip.format.color_family != vs.GRAY:
         raise ValueError("addDup: Only YUV or GRAY input clips are supported.")
@@ -43,14 +43,14 @@ def addDup(clip: vs.VideoNode, thresh: float = 0.3, debug: bool = False) -> vs.V
 
 def addingDups(clip: vs.VideoNode, insert_at: int) -> vs.VideoNode:
     """
-    Duplicates the frame just before `insert_at` and inserts it at `insert_at`, pushing the rest forward.
+    Replaces the frame at `insert_at` with a copy of the frame before it; frame count stays the same.
 
     Parameters:
         clip (vs.VideoNode): Input clip.
-        insert_at (int): Index at which to insert a duplicate of the previous frame.
+        insert_at (int): Index of the frame that is replaced by a copy of the previous frame.
 
     Returns:
-        vs.VideoNode: Clip with duplicate frame inserted.
+        vs.VideoNode: Clip with that frame replaced.
     """
     if insert_at <= 0 or insert_at >= clip.num_frames:
         return clip
@@ -64,16 +64,17 @@ def addingDups(clip: vs.VideoNode, insert_at: int) -> vs.VideoNode:
 
 def addingMultipleDups(clip: vs.VideoNode, positions: list[int]) -> vs.VideoNode:
     """
-    Inserts duplicate frames after specified positions. Duplicated frames are copies of the preceding frame.
+    Repeats the frames at the specified positions: frame pos+1 is replaced by a copy of frame pos.
+    Frame count and frame rate stay the same.
 
     Parameters:
         clip (vs.VideoNode): Input clip.
-        positions (list[int]): Frame indices after which to insert duplicates.
+        positions (list[int]): Frame indices whose following frame is replaced by a copy of them.
 
     Returns:
-        vs.VideoNode: Modified clip with duplicates inserted.
+        vs.VideoNode: Modified clip with the following frames replaced.
     """
-    # Sort descending to avoid shifting issues while inserting
+    # Sort descending so every copy is taken from an unchanged frame
     positions = sorted(set(positions), reverse=True)
 
     for pos in positions:

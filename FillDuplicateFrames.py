@@ -14,6 +14,14 @@ fdf = FillDuplicateFrames(clip, debug=True, thresh=0.001, method='SVP')
 clip = fdf.out
 
 Replaces duplicate frames with interpolations.
+mode:
+ 'FillDuplicate': replaces every run of duplicates (PlaneStatsDiff to the previous frame <= thresh) with frames interpolated
+                  between the last unique frame before and the first unique frame after the run
+ 'FillDrops': replaces a single duplicate n (n-1 and n+1 unique) with a frame interpolated between n-1 and n+1;
+              nothing is replaced when n+1 is a scene change (PlaneStatsDiff > sceneThr), so thresh must stay below sceneThr
+ 'Replace': replaces every frame listed in 'frames' (not the first or last frame) with a frame interpolated between its neighbours;
+            thresh and sceneThr are not used
+Replaced frames keep the frame properties of the frame they replace (_DurationNum/_DurationDen, ...).
 0.0.4 removed and added back RGBH support or RIFE
 0.0.3 allow to set device_index for RIFE and support RGBH input for RIFE
 0.0.4 removed RGBH since RIFE ncnn does not support it
@@ -30,7 +38,8 @@ class FillDuplicateFrames:
       self.thresh = thresh
       self.debug = debug
       self.method = method
-      self.smooth = None
+      # (interpolated clip, start, end) of the last interpolation, replaced as a whole so FrameEval threads never see a mixed state
+      self.cache = None
       self.sceneThr = sceneThr
       self.device_index = device_index
       self.rifeModel = rifeModel
@@ -40,8 +49,8 @@ class FillDuplicateFrames:
       self.mode = mode
       self.frames = frames
 
-      if method == 'Replace' and not frames:
-        raise ValueError(f'FillDuplicateFrames: "frames" needs to be set when using \'{self.method}\'!')
+      if mode == 'Replace' and not frames:
+        raise ValueError(f'FillDuplicateFrames: "frames" needs to be set when using mode \'{self.mode}\'!')
 
   def interpolate(self, n: int, f: vs.VideoFrame) -> vs.VideoNode:
     if self.mode == 'FillDuplicate':
@@ -57,16 +66,29 @@ class FillDuplicateFrames:
       return out.text.Text(text="avg: "+str(f.props['PlaneStatsDiff']),alignment=8)            
     return out
 
+  # frame n of an interpolated clip starting at start, with the frame properties of the frame it replaces
+  def from_smooth(self, smooth: vs.VideoNode, n: int, start: int) -> vs.VideoNode:
+    return core.std.CopyFrameProps(smooth[n-start], self.clip[n])
+
+  # cached interpolated frame n if the cached clip covers start..end, else None
+  def cached(self, n: int, start: int, end: int) -> Optional[vs.VideoNode]:
+    cache = self.cache
+    if cache is None or start < cache[1] or end > cache[2]:
+      return None
+    out = self.from_smooth(cache[0], n, cache[1])
+    if self.debug:
+      return out.text.Text(text=self.method, alignment=9)
+    return out
+
   def interpolateWithRIFE(self, clip: vs.VideoNode, n: int, start: int, end: int) -> vs.VideoNode:
     if clip.format.id != vs.RGBS:
       raise ValueError(f'FillDuplicateFrames: "clip" needs to be RGBS when using \'{self.method}\'!')     
         
     num = end - start
     
-    self.smooth = core.rife.RIFE(clip, model=self.rifeModel, factor_num=num, tta=self.rifeTTA,uhd=self.rifeUHD,gpu_id=self.device_index)
-    self.smooth_start = start
-    self.smooth_end   = end
-    return self.smooth[n-start]
+    smooth = core.rife.RIFE(clip, model=self.rifeModel, factor_num=num, tta=self.rifeTTA,uhd=self.rifeUHD,gpu_id=self.device_index)
+    self.cache = (smooth, start, end)
+    return self.from_smooth(smooth, n, start)
    
   def interpolateWithMV(self, clip: vs.VideoNode, n: int, start: int, end: int) -> vs.VideoNode:   
     num = end - start
@@ -74,10 +96,9 @@ class FillDuplicateFrames:
     sup = MV.Super(clip, pel=2, hpad=0, vpad=0, blksize=16, overlap=0)
     bvec = MV.Analyse(sup, blksize=16, isb=True, chroma=True, search=3, searchparam=1)
     fvec = MV.Analyse(sup, blksize=16, isb=False, chroma=True, search=3, searchparam=1)
-    self.smooth = MV.FlowFPS(clip, sup, bvec, fvec, num=num, den=1, mask=2)
-    self.smooth_start = start
-    self.smooth_end   = end
-    out = self.smooth[n-start]
+    smooth = MV.FlowFPS(clip, sup, bvec, fvec, num=num, den=1, mask=2)
+    self.cache = (smooth, start, end)
+    out = self.from_smooth(smooth, n, start)
     if self.debug:
       return out.text.Text(text="MV",alignment=9)
     return out
@@ -91,10 +112,9 @@ class FillDuplicateFrames:
       super = core.svp1.Super(clip,"{gpu:0}")
     vectors = core.svp1.Analyse(super["clip"],super["data"],clip,"{}")
     num = end - start
-    self.smooth = core.svp2.SmoothFps(clip,super["clip"],super["data"],vectors["clip"],vectors["data"],f"{{rate:{{num:{num},den:1,abs:true}}}}")
-    self.smooth_start = start
-    self.smooth_end   = end
-    out = self.smooth[n-start]
+    smooth = core.svp2.SmoothFps(clip,super["clip"],super["data"],vectors["clip"],vectors["data"],f"{{rate:{{num:{num},den:1,abs:true}}}}")
+    self.cache = (smooth, start, end)
+    out = self.from_smooth(smooth, n, start)
     if self.debug:
       return out.text.Text(text="SVP",alignment=9)
     return out
@@ -133,10 +153,9 @@ class FillDuplicateFrames:
       return self.clip[n]
 
     #does interpolated smooth clip exist for requested n frame? Use n frame from it.
-    if self.smooth is not None and start >= self.smooth_start and end <= self.smooth_end:
-      if self.debug:
-        return self.smooth[n-start].text.Text(text=self.method, alignment=9)
-      return self.smooth[n-start]
+    out = self.cached(n, start, end)
+    if out is not None:
+      return out
 
     #interpolating two frame clip  into end-start+1 fps
     clip = self.clip[start] + self.clip[end]
@@ -170,29 +189,23 @@ class FillDuplicateFrames:
       if self.debug:
         return self.clip[n].text.Text(text="Input (2)", alignment=9)
       return self.clip[n]
-    # previous frame is scene change => nothing can be done
-    if self.potential_scene_change(start):        
-      if self.debug:
-        return self.clip[n].text.Text(text="Input(before scene change)", alignment=9)
-      return self.clip[n]
         
     end = n+1
-    # next frame is duplicate => nothing can be done
-    if not self.is_not_duplicate(start):
+    # next frame is duplicate => no single drop, nothing can be done
+    if not self.is_not_duplicate(end):
       if self.debug:
-        return self.clip[n].text.Text(text="Input (2)", alignment=9)
+        return self.clip[n].text.Text(text="Input (3)", alignment=9)
       return self.clip[n]
-    # nex frame is scene change => nothing can be done
-    if self.potential_scene_change(start):        
+    # next frame is scene change => nothing can be done
+    if self.potential_scene_change(end):
       if self.debug:
         return self.clip[n].text.Text(text="Input(before scene change)", alignment=9)
       return self.clip[n]
 
     #does interpolated smooth clip exist for requested n frame? Use n frame from it.
-    if self.smooth is not None and start >= self.smooth_start and end <= self.smooth_end:
-      if self.debug:
-        return self.smooth[n-start].text.Text(text=self.method, alignment=9)
-      return self.smooth[n-start]
+    out = self.cached(n, start, end)
+    if out is not None:
+      return out
 
     #interpolating two frame clip  into end-start+1 fps
     clip = self.clip[start] + self.clip[end]
@@ -213,35 +226,14 @@ class FillDuplicateFrames:
           return self.clip[n].text.Text(text="Input (0)", alignment=9)
       return self.clip[n]
       
+    # listed frames are always replaced, whatever their neighbours look like
     start = n-1
-    # previous frame is duplicate => nothing can be done
-    if not self.is_not_duplicate(start):
-      if self.debug:
-        return self.clip[n].text.Text(text="Input (1)", alignment=9)
-      return self.clip[n]
-    # previous frame is scene change => nothing can be done
-    if self.potential_scene_change(start):        
-      if self.debug:
-        return self.clip[n].text.Text(text="Input(before scene change)", alignment=9)
-      return self.clip[n]
-        
     end = n+1
-    # next frame is duplicate => nothing can be done
-    if not self.is_not_duplicate(start):
-      if self.debug:
-        return self.clip[n].text.Text(text="Input (2)", alignment=9)
-      return self.clip[n]
-    # nex frame is scene change => nothing can be done
-    if self.potential_scene_change(start):        
-      if self.debug:
-        return self.clip[n].text.Text(text="Input(before scene change)", alignment=9)
-      return self.clip[n]
 
     #does interpolated smooth clip exist for requested n frame? Use n frame from it.
-    if self.smooth is not None and start >= self.smooth_start and end <= self.smooth_end:
-      if self.debug:
-        return self.smooth[n-start].text.Text(text=self.method, alignment=9)
-      return self.smooth[n-start]
+    out = self.cached(n, start, end)
+    if out is not None:
+      return out
 
     #interpolating two frame clip  into end-start+1 fps
     clip = self.clip[start] + self.clip[end]

@@ -65,7 +65,7 @@ class DAResizer:
   # VSGAN network over the whole clip, set up once; frames are only computed when requested
   def vsganResize(self) -> vs.VideoNode:
     inFormat = self.clip.format.id
-    vsgan = ESRGAN(clip=self.clip, device="cuda")
+    vsgan = ESRGAN(clip=self.clip, device=f"cuda:{self.device_index}")
     for model in self.models:
       vsgan.load(model)
       vsgan.apply()

@@ -11,7 +11,7 @@ class ReplaceMultipleFrames:
         Args:
             clip: Input video clip
             intervals: List of frame intervals to replace (each as [start, end])
-            method: Interpolation method ('SVP', 'RIFE', or 'MV')
+            method: Interpolation method ('svp' (SVP on the CPU), 'svp_gpu' (SVP on the GPU), 'rife' or 'mv'; case-insensitive)
             rifeModel: Model to use for RIFE interpolation
             rifeTTA: Whether to use test-time augmentation for RIFE
             rifeUHD: Whether to use UHD mode for RIFE
@@ -27,9 +27,8 @@ class ReplaceMultipleFrames:
         self.rifeModel = rifeModel
         self.rifeTTA = rifeTTA
         self.rifeUHD = rifeUHD
-        self.smooth: Optional[vs.VideoNode] = None  # Cache for interpolated frames
-        self.smooth_start = -1  # Start frame of cached interpolation
-        self.smooth_end = -1  # End frame of cached interpolation
+        # (interpolated clip, start, end) of the last interpolation, replaced as a whole so FrameEval threads never see a mixed state
+        self.cache: Optional[Tuple[vs.VideoNode, int, int]] = None
         self.debug = debug
 
     def validate_intervals(self, intervals: Sequence[Sequence[int]]) -> List[Tuple[int, int]]:
@@ -91,28 +90,29 @@ class ReplaceMultipleFrames:
             num: Total number of frames to interpolate between start and end
             
         Returns:
-            The requested interpolated frame
+            The requested interpolated frame, with the frame properties of the frame it replaces
         """
-        clip = self.clip[start] + self.clip[end]
-        clip = clip.std.AssumeFPS(fpsnum=1, fpsden=1)
-        if self.smooth is None or self.smooth_start != start or self.smooth_end != end:
-            if self.method.lower() == 'svp':
-                self.smooth = self.interpolateWithSVP(clip, num+1)  # Note: num+1
+        cache = self.cache
+        if cache is None or cache[1] != start or cache[2] != end:
+            clip = self.clip[start] + self.clip[end]
+            clip = clip.std.AssumeFPS(fpsnum=1, fpsden=1)
+            if self.method.lower() in ('svp', 'svp_gpu'):
+                smooth = self.interpolateWithSVP(clip, num+1)  # Note: num+1
             elif self.method.lower() == 'rife':
-                self.smooth = self.interpolateWithRIFE(clip, num+1)  # Note: num+1
+                smooth = self.interpolateWithRIFE(clip, num+1)  # Note: num+1
             elif self.method.lower() == 'mv':
-                self.smooth = self.interpolateWithMV(clip, num+1)  # Note: num+1
+                smooth = self.interpolateWithMV(clip, num+1)  # Note: num+1
             else:
                 raise ValueError(f"Unsupported method: {self.method}")
             
             if self.debug:
-                self.smooth = core.text.Text(self.smooth, f"{self.method} {start}", alignment=8)
+                smooth = core.text.Text(smooth, f"{self.method} {start}", alignment=8)
             
-            self.smooth_start = start
-            self.smooth_end = end
+            cache = (smooth, start, end)
+            self.cache = cache
         
         # Return the correct interpolated frame
-        return self.smooth[index]
+        return core.std.CopyFrameProps(cache[0][index], self.clip[start + index])
 
     def interpolateWithSVP(self, clip: vs.VideoNode, num: int) -> vs.VideoNode:
         """Interpolate frames using SVP (SmoothVideo Project) method.
@@ -126,7 +126,7 @@ class ReplaceMultipleFrames:
         """
         if clip.format.id != vs.YUV420P8:
             raise ValueError("SVP requires YUV420P8 format")
-        super = core.svp1.Super(clip, f"{{gpu:{1 if self.method.lower() == 'svp' else 0}}}")
+        super = core.svp1.Super(clip, f"{{gpu:{1 if self.method.lower() == 'svp_gpu' else 0}}}")
         vectors = core.svp1.Analyse(super["clip"], super["data"], clip, "{}")
         return core.svp2.SmoothFps(
             clip, super["clip"], super["data"], vectors["clip"], vectors["data"],

@@ -587,7 +587,7 @@ def SecondOrderDehalo(
 def BlindDeHalo3(clp: vs.VideoNode, rx: float = 3.0, ry: float = 3.0, strength: float = 125,
                  lodamp: float = 0, hidamp: float = 0, sharpness: float = 0, tweaker: float = 0,
                  PPmode: int = 0, PPlimit: Optional[int] = None, interlaced: bool = False,
-                 tools: Optional[Mapping[str, str]] = None) -> vs.VideoNode:
+                 tools: Optional[Mapping[str, str]] = None, tff: bool = True) -> vs.VideoNode:
     """Avisynth's BlindDeHalo3() version: 3_MT2
 
     This script removes the light & dark halos from too strong "Edge Enhancement".
@@ -640,6 +640,9 @@ def BlindDeHalo3(clp: vs.VideoNode, rx: float = 3.0, ry: float = 3.0, strength: 
             It aims in particular at clips that made their way through Restore24.
             Default is False.
 
+        tff: (bool) Field order used to separate and reweave the fields when interlaced is True.
+            Default is True (top field first).
+
     """
 
     funcName = 'BlindDeHalo3'
@@ -674,7 +677,7 @@ def BlindDeHalo3(clp: vs.VideoNode, rx: float = 3.0, ry: float = 3.0, strength: 
         '{neutral} {TWK} - {j} / dup * {neutral} {TWK} - {j} / dup * {HD} + / * {neutral} + ?'.format(
             i=1 << (bits-8), neutral=neutral, TWK=TWK, TWK0=TWK0, LD=LD, j=scale_value(20, 8, bits), HD=HD))
 
-    i = clp if not interlaced else core.std.SeparateFields(clp, tff=True)
+    i = clp if not interlaced else core.std.SeparateFields(clp, tff=tff)
     oxi = i.width
     oyi = i.height
     sm = core.resize.Bicubic(i, m4(oxi/rx), m4(oyi/ry), filter_param_a=1/3, filter_param_b=1/3)
@@ -717,7 +720,7 @@ def BlindDeHalo3(clp: vs.VideoNode, rx: float = 3.0, ry: float = 3.0, strength: 
     else:
         postclean = clean
 
-    last = core.std.DoubleWeave(postclean, tff=True)[::2] if interlaced else postclean
+    last = core.std.DoubleWeave(postclean, tff=tff)[::2] if interlaced else postclean
 
     if not isGray:
         last = core.std.ShufflePlanes([last, clp_src], list(range(clp_src.format.num_planes)), clp_src.format.color_family)

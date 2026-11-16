@@ -8,16 +8,24 @@ from helpers import GetPlane, get_expr, pick_tool, scale
 # Taken form old havsfunc
 # Vinverse: a small, but effective function against (residual) combing, by Didée
 # sstr: strength of contra sharpening
-# amnt: change no pixel by more than this (default=255: unrestricted)
+# amnt: change no pixel by more than this, on the 8-bit scale for every bit depth (default=255: unrestricted, <= 0: no change)
 # chroma: chroma mode, True=process chroma, False=pass chroma through
 # scl: scale factor for vshrpD*vblurD < 0
+
+# amnt of the 8-bit scale in the plugin's native units (1 .. peak of the clip)
+def _plugin_amnt(clp: vs.VideoNode, amnt: int) -> int:
+    peak = (1 << clp.format.bits_per_sample) - 1
+    return peak if amnt >= 255 else max(1, min(peak, int(scale(amnt, peak))))
+
 def Vinverse(clp: vs.VideoNode, sstr: float = 2.7, amnt: int = 255, chroma: bool = True, scl: float = 0.25, tools: Optional[Mapping[str, str]] = None) -> vs.VideoNode:
     if not isinstance(clp, vs.VideoNode):
         raise vs.Error('Vinverse: this is not a clip')
 
     if pick_tool(tools, 'vinverse', ('vinverse', 'std')) == 'vinverse':
+        if amnt <= 0:
+            return clp
         uv=3 if chroma else 2
-        return core.vinverse.vinverse(clip=clp, sstr=sstr, amnt=amnt, scl=scl, uv=uv)
+        return core.vinverse.vinverse(clip=clp, sstr=sstr, amnt=_plugin_amnt(clp, amnt), scl=scl, uv=uv)
 
     if clp.format.sample_type == vs.INTEGER:
         neutral = 1 << (clp.format.bits_per_sample - 1)
@@ -55,8 +63,10 @@ def Vinverse2(clp: vs.VideoNode, sstr: float = 2.7, amnt: int = 255, chroma: boo
         raise vs.Error('Vinverse2: this is not a clip')
         
     if pick_tool(tools, 'vinverse', ('vinverse', 'std')) == 'vinverse':
+        if amnt <= 0:
+            return clp
         uv= 3 if chroma else 2
-        return core.vinverse.vinverse2(clip=clp, sstr=sstr, amnt=amnt, scl=scl, uv=uv)
+        return core.vinverse.vinverse2(clip=clp, sstr=sstr, amnt=_plugin_amnt(clp, amnt), scl=scl, uv=uv)
         
     if clp.format.sample_type == vs.INTEGER:
         neutral = 1 << (clp.format.bits_per_sample - 1)

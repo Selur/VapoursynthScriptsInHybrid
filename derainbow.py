@@ -914,7 +914,8 @@ def ChubbyRain2(c: vs.VideoNode, th: int = 10, radius: int = 10, show: bool = Fa
     for _ in range(3):
         rainbow = core.std.Maximum(rainbow)
 
-    output = core.std.MaskedMerge(c, cc, rainbow)
+    # like the original only chroma is replaced; luma stays untouched
+    output = core.std.MaskedMerge(c, cc, rainbow, planes=[1, 2])
 
     if show:
         # hand the mask back in the source format, so the caller's chain keeps its

@@ -14,6 +14,12 @@ import vapoursynth as vs
 # changes:                                                                     #
 #  20201108 - added  overwriteSuper, overwriteVectors, overwriteSmooth  (Selur)#
 #------------------------------------------------------------------------------#
+def _analyseClip(clip: vs.VideoNode) -> vs.VideoNode:
+    if clip.format.sample_type == vs.INTEGER and clip.format.bits_per_sample == 8:
+        return clip
+    return core.resize.Point(clip, format=clip.format.replace(sample_type=vs.INTEGER, bits_per_sample=8), dither_type='none')
+
+
 def InterFrameCustom(Input: vs.VideoNode, Preset: str = 'Medium', Tuning: str = 'Film', NewNum: Optional[int] = None, NewDen: int = 1, GPU: bool = False, InputType: str = '2D', OverrideAlgo: Optional[int] = None, OverrideArea: Optional[int] = None, FrameDouble: bool = False, overwriteSuper: str = '', overwriteVectors: str = '', overwriteSmooth: str = '', AreaBlend: Optional[float] = None) -> vs.VideoNode:
     if not isinstance(Input, vs.VideoNode):
         raise vs.Error('InterFrame: This is not a clip')
@@ -120,8 +126,10 @@ def InterFrameCustom(Input: vs.VideoNode, Preset: str = 'Medium', Tuning: str = 
           SmoothString = overwriteSmooth
 
         # Make interpolation vector clip
-        Super = clip.svp1.Super(SuperString)
-        Vectors = core.svp1.Analyse(Super['clip'], Super['data'], clip, VectorsString)
+        # SVSuper/SVAnalyse need 8-bit input; SVSmoothFps renders the 10/16-bit source itself
+        analyse = _analyseClip(clip)
+        Super = analyse.svp1.Super(SuperString)
+        Vectors = core.svp1.Analyse(Super['clip'], Super['data'], analyse, VectorsString)
 
         # Put it together
         return core.svp2.SmoothFps(clip, Super['clip'], Super['data'], Vectors['clip'], Vectors['data'], SmoothString)
@@ -253,8 +261,10 @@ def InterFrame(Input: vs.VideoNode, Preset: str = 'Medium', Tuning: str = 'Film'
             SmoothString += '},scene:{blend:true,mode:0}}'
 
         # Make interpolation vector clip
-        Super = clip.svp1.Super(SuperString)
-        Vectors = core.svp1.Analyse(Super['clip'], Super['data'], clip, VectorsString)
+        # SVSuper/SVAnalyse need 8-bit input; SVSmoothFps renders the 10/16-bit source itself
+        analyse = _analyseClip(clip)
+        Super = analyse.svp1.Super(SuperString)
+        Vectors = core.svp1.Analyse(Super['clip'], Super['data'], analyse, VectorsString)
 
         # Put it together
         return core.svp2.SmoothFps(clip, Super['clip'], Super['data'], Vectors['clip'], Vectors['data'], SmoothString)

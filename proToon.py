@@ -15,16 +15,16 @@ from __future__ import annotations
 #   Bright limit for line detection, 0-255 (255 = no limit). 
 # int  threshold = 4
 #   Threshold to disable slight darkening (of noise) 0-255. 
-# int  thinning = 24
-#   Line thinning amount, 0-255. 
+# int  thinning = 0
+#   Line thinning amount, 0-255.
 # bool  sharpen = true
 #   Sharpening on/off. 
 # bool  mask = true
 #   Masking on/off. 
 # int  ssw = 4
-#   Supersample factor horizontally, 0-inf. 
+#   Supersample factor horizontally, 1-inf.
 # int  ssh = 4
-#   Supersample factor vertically, 0-inf. 
+#   Supersample factor vertically, 1-inf.
 # int  xstren = 255
 #   xsharpening strength, 0-255. 
 # int  xstresh = 255
@@ -48,17 +48,22 @@ def mf_min(a: str, b: str) -> str:
 def mf_max(a: str, b: str) -> str:
     return f"{a} {b} max"
 
+# AviSynth Levels with coring (8-bit units scaled to the bit depth): 16..235 stretched to full range, in_low..in_high mapped to out_low..out_high, result squeezed into 16..235
 def mf_str_level(x: str, in_low: int, in_high: int, out_low: int, out_high: int, bits: int) -> str:
-    scale = (1 << bits) - 1
-    in_low = in_low * scale // 255
-    in_high = in_high * scale // 255
-    out_low = out_low * scale // 255
-    out_high = out_high * scale // 255
-    return mf_max(mf_min(f"{x} {scale} * {in_low} - {in_high - in_low} / {out_high - out_low} * {out_low} +", f"{235 * scale // 255}"), f"{16 * scale // 255}")
+    factor = ((1 << bits) - 1) / 255
+    lo, hi = 16 * factor, 235 * factor
+    in_low = in_low * factor
+    in_high = in_high * factor
+    out_low = out_low * factor
+    out_high = out_high * factor
+    cored = f"{mf_max(mf_min(x, str(hi)), str(lo))} {lo} - {255 / 219} *"
+    leveled = mf_max(mf_min(f"{cored} {in_low} - {in_high - in_low} / {out_high - out_low} * {out_low} +", f"{out_high}"), f"{out_low}")
+    return f"{leveled} {219 / 255} * {lo} +"
 
 # Xsharpen function based on WarpSharpSupport
 def Xsharpen(clip: vs.VideoNode, strength: int = 128, threshold: int = 8, tools: Optional[Mapping[str, str]] = None) -> vs.VideoNode:
     bits = clip.format.bits_per_sample
+    threshold = threshold * ((1 << bits) - 1) / 255
     expr = f"y x - x z - min {threshold} < x z - y x - < z y ? {strength / 256} * x {(256 - strength) / 256} * + x ?"
     EXPR = get_expr(tools)
     return EXPR([clip, clip.std.Maximum(planes=0), clip.std.Minimum(planes=0)], [expr, ""])
@@ -85,7 +90,7 @@ def proToon(input: vs.VideoNode,
     RG = tool_function(tools, 'rg', 'RemoveGrain')
     edgemask = EXPR(RG(EXPR(
         [input, RG(input, 12)],
-        expr=[mf_str_level("x y - abs 128 +", 132, 145, 0, 255, bits)]
+        expr=[mf_str_level(f"x y - abs {128 * scale / 255} +", 132, 145, 0, 255, bits)]
     ), 12), expr=[mf_str_level("x", 0, 64, 0, 255, bits)])
 
     exin = core.std.Maximum(input).std.Minimum()
@@ -124,11 +129,12 @@ def proToon(input: vs.VideoNode,
     # Apply scaling limit based on pcScale
     if not pcScale:
         minV = 16 * scale // 255
-        maxV = max=235 * scale // 255 
+        maxY = 235 * scale // 255
+        maxC = 240 * scale // 255
         if pick_tool(tools, 'limiter', ('vszip', 'std'), lambda name: name == 'std' or hasattr(core, 'vszip')) == 'vszip':
-          output = core.vszip.Limiter(output, min=[minV,minV,minV], max=[maxV,maxV,maxV])
+          output = core.vszip.Limiter(output, min=[minV,minV,minV], max=[maxY,maxC,maxC])
         else:
-          output = core.std.Limiter(output, min=minV, max=maxV)
+          output = core.std.Limiter(output, min=[minV,minV,minV], max=[maxY,maxC,maxC])
     return output
 
 

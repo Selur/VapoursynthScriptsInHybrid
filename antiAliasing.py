@@ -102,15 +102,20 @@ def maa(input: vs.VideoNode) -> vs.VideoNode:
 
     w = input.width
     h = input.height
-    bits = input.format.bits_per_sample
+    isFloat = input.format.sample_type == vs.FLOAT
+    peak = 1.0 if isFloat else (1 << input.format.bits_per_sample) - 1
+    # Edge threshold "> 7" in 8-bit units
+    threshold = scale(8, peak) if isFloat else scale(7, peak) + 1
 
+    if input.format.color_family == vs.RGB:
+        raise vs.Error('maa: RGB input is not supported, use YUV or GRAY')
     if input.format.color_family != vs.GRAY:
         input_src = input # type: Optional[vs.VideoNode]
         input = GetPlane(input, 0)
     else:
         input_src = None
 
-    mask = core.std.Convolution(input, [0, -1, 0, -1, 0, 1, 0, 1, 0], divisor=2, saturate=False).std.Binarize(scale(7, bits) + 1)
+    mask = core.std.Convolution(input, [0, -1, 0, -1, 0, 1, 0, 1, 0], divisor=2, saturate=False).std.Binarize(threshold)
     aa_clip = core.resize.Spline36(input, w * 2, h * 2)
     aa_clip = core.sangnom.SangNom(aa_clip).std.Transpose()
     aa_clip = core.sangnom.SangNom(aa_clip).std.Transpose()
@@ -278,12 +283,18 @@ def santiag(
     opencl: bool = False,
     device: Optional[int] = None,
     tools: Optional[Mapping[str, str]] = None,
+    sclip_nsize: Optional[int] = None,
+    sclip_nns: Optional[int] = None,
+    sclip_qual: Optional[int] = None,
+    sclip_pscrn: Optional[int] = None,
 ) -> vs.VideoNode:
     '''
     santiag v1.6
     Simple antialiasing
 
     type = "nnedi3", "eedi2", "eedi3" or "sangnom"
+    sclip_nsize/sclip_nns/sclip_qual/sclip_pscrn: nnedi3 settings of the helper clip for type eedi3, independent of the
+    nnedi3 type settings (None = the nnedi3 default)
     '''
 
     def santiag_dir(c: vs.VideoNode, strength: int, type: str, fw: Optional[int] = None, fh: Optional[int] = None) -> vs.VideoNode:
@@ -324,7 +335,8 @@ def santiag(
                 return getattr(core, eedi2).EEDI2(c, field=field)
             raise vs.Error('santiag: type "eedi2" needs the eedi2 or eedi2cuda plugin')
         elif type == 'eedi3':
-            sclip = nnedi3(c, field=field, dh=dh)
+            sclip = _NNEDI3(c, field=field, dh=dh, gpu=opencl, device=device, nsize=sclip_nsize, nns=sclip_nns, qual=sclip_qual,
+                            pscrn=sclip_pscrn, tools=tools)
             return get_eedi3()(c, field=field, dh=dh, sclip=sclip)
         elif type == 'sangnom':
             if dh:

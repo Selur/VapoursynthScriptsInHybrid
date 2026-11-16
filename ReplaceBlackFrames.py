@@ -18,7 +18,9 @@ method:
  'interpolateSVPCPU': replace black frames whit interpolatied frames using SVP (CPU)
  'interpolateRIFE': replace black frames whit interpolatied frames using RIFE (https://github.com/styler00dollar/VapourSynth-RIFE-ncnn-Vulkan)
 
-rifeSC: scene change threshld when RIFE is use for interpolation
+rifeSC: scene change threshold when RIFE is used for interpolation: when the last frame before and the first frame after the black
+        frames differ by more than this (misc.SCDetect), RIFE repeats the frame before instead of interpolating; 0 = off
+Replaced frames keep the frame properties of the frame they replace (_DurationNum/_DurationDen, ...).
 
 When SVP is used input need to be YUV420P8.
 When RIFE is used input need to be RGBS or RGBH.
@@ -32,8 +34,12 @@ class ReplaceBlackFrames:
       self.thresh = thresh
       self.debug = debug
       self.method = method
-      self.smooth = None
+      # (interpolated clip, start, end) of the last interpolation, replaced as a whole so FrameEval threads never see a mixed state
+      self.cache = None
       self.rifeSC = rifeSC
+      self.scd_thscd1 = scd_thscd1
+      self.scd_thscd2 = scd_thscd2
+      self.tools = tools
       if thresh <= 0.001 or thresh >= 1:
         raise ValueError(f'ReplaceBlackFrames: "tresh" needs to fullfill: 0.001 < tresh < 1')  
       if rifeSC <0 or rifeSC > 1:
@@ -42,8 +48,6 @@ class ReplaceBlackFrames:
         raise ValueError(f'ReplaceBlackFrames: "clip" color format need to be YUV420P8 when SVP is used!\n{clip.format}')
       if (method == 'interpolateRIFE') and clip.format.id not in (vs.RGBS, vs.RGBH):
         raise ValueError(f'ReplaceBlackFrames: "clip" color format need to be RGBS or RGBH when RIFE is used!\n{clip.format}')
-      if (method == 'interpolateRIFE') and rifeSC != 0:
-        clip = SCDetect(clip=clip, threshold=rifeSC, scd_thscd1=scd_thscd1, scd_thscd2=scd_thscd2, tools=tools)
       self.clip = core.std.PlaneStats(clip)
 
   def previous(self, n: int, f: vs.VideoFrame) -> vs.VideoNode:
@@ -61,18 +65,25 @@ class ReplaceBlackFrames:
   def get_current_or_previous(self, n: int) -> vs.VideoNode:
     for i in reversed(range(n+1)):
       if self.is_not_black(i):
-        return self.clip[i]
+        return self.clip[i] if i == n else core.std.CopyFrameProps(self.clip[i], self.clip[n])
     else:
       #all previous are black, return current n frame
       return self.clip[n]
 
+  # frame n of an interpolated clip starting at start, with the frame properties of the frame it replaces
+  def from_smooth(self, smooth: vs.VideoNode, n: int, start: int) -> vs.VideoNode:
+    return core.std.CopyFrameProps(smooth[n-start], self.clip[n])
+
+  # the scene change test runs on the two-frame clip, so it compares the frames left and right of the black frames
   def interpolateWithRIFE(self, clip: vs.VideoNode, n: int, start: int, end: int, rifeModel: int = 22, rifeTTA: bool = False, rifeUHD: bool = False, rifeThresh: float = 0) -> vs.VideoNode:
     
     num = end - start
-    self.smooth = core.rife.RIFE(clip, model=rifeModel, factor_num=num, tta=rifeTTA,uhd=rifeUHD)
-    self.smooth_start = start
-    self.smooth_end   = end
-    return self.smooth[n-start]
+    sc = rifeThresh > 0
+    if sc:
+      clip = SCDetect(clip=clip, threshold=rifeThresh, scd_thscd1=self.scd_thscd1, scd_thscd2=self.scd_thscd2, tools=self.tools)
+    smooth = core.rife.RIFE(clip, model=rifeModel, factor_num=num, tta=rifeTTA, uhd=rifeUHD, sc=sc)
+    self.cache = (smooth, start, end)
+    return self.from_smooth(smooth, n, start)
 
   def interpolateWithSVP(self, clip: vs.VideoNode, n: int, start: int, end: int) -> vs.VideoNode:   
       if self.method == 'interpolateSVP':
@@ -81,10 +92,9 @@ class ReplaceBlackFrames:
         super = core.svp1.Super(clip,"{gpu:0}")
       vectors = core.svp1.Analyse(super["clip"],super["data"],clip,"{}")
       num = end - start
-      self.smooth = core.svp2.SmoothFps(clip,super["clip"],super["data"],vectors["clip"],vectors["data"],f"{{rate:{{num:{num},den:1,abs:true}}}}")
-      self.smooth_start = start
-      self.smooth_end   = end
-      return self.smooth[n-start]
+      smooth = core.svp2.SmoothFps(clip,super["clip"],super["data"],vectors["clip"],vectors["data"],f"{{rate:{{num:{num},den:1,abs:true}}}}")
+      self.cache = (smooth, start, end)
+      return self.from_smooth(smooth, n, start)
       
   def get_current_or_interpolate(self, n: int) -> vs.VideoNode:
     if self.is_not_black(n):
@@ -106,8 +116,9 @@ class ReplaceBlackFrames:
       return self.clip[n]
 
     #does interpolated smooth clip exist for requested n frame? Use n frame from it.
-    if self.smooth is not None and start >= self.smooth_start and end <= self.smooth_end:
-      return self.smooth[n-start]
+    cache = self.cache
+    if cache is not None and start >= cache[1] and end <= cache[2]:
+      return self.from_smooth(cache[0], n, cache[1])
 
     #interpolating two frame clip  into end-start+1 fps
     if self.method == 'interpolateSVP' or self.method == 'interpolateCPU':

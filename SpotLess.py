@@ -656,7 +656,7 @@ def SpotDelta(
 
     # DeltaRestore tuning
     dark2_brt: float = 0.85,
-    dark2_brt_limit: float = 0.86,
+    dark2_brt_limit: float = 0.85,
 
     # S-Log / washed-out footage
     slog: bool = False,
@@ -716,7 +716,7 @@ tools: Optional[Mapping[str, str]] = None) -> vs.VideoNode:
     usharp_radius   Unsharp radius in pixels (1–20). Default 5.
     usharp_th       Unsharp threshold (0–255, 8-bit scale). Default 1.
     dark2_brt       Secondary dark-mask brightness ratio (0.5–1.0). Default 0.85.
-    dark2_brt_limit Secondary dark-mask brightness limit (0.3–dark2_brt). Default 0.86.
+    dark2_brt_limit Secondary dark-mask brightness limit (0.3–dark2_brt). Default 0.85 (= dark2_brt, no limit step); above dark2_brt the secondary dark mask stays empty.
     slog            Auto-level for mask generation (S-Log / washed-out).
     rgr             Restore film grain after cleaning. Default False.
     rgr1            Grain restoration upper difference threshold (1–50, 8-bit scale). Default 10.

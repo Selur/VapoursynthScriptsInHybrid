@@ -25,8 +25,9 @@ def _nlmeans_gray(clip: vs.VideoNode, d: int, a: int, s: int, h: float, tools: O
 # "low frequency" stripes/bands removal filter
 # optional: https://github.com/AkarinVS/vapoursynth-plugin/releases
 #
-# int rad: search radius (default: 1, range: 1-5)
-# int thr: blur threshold, wil be scaled by bit depth (default: 256, range: 1-256)
+# int rad: search radius (default: 2, range: 1-5)
+# int offset: skips the nearest kernel taps (default: 0, range: 0 <= offset < rad)
+# int thr: blur threshold in 8-bit units, scaled to the bit depth (default: 256, range: 1-256)
 # boolean vertical: transposes the source for the filtering, to handle vertical lines instead of horizontal ones. (default: False)
 # str hvmode: whether to use vertival or hoizontal convolution
 # std.Expr has neither relative pixel access nor sortN: every term on its own clip, the median from a min/max sorting network
@@ -55,9 +56,10 @@ def DeStripe(clip: vs.VideoNode, rad: int=2, offset: int=0, thr: int=256, vertic
     if (hvmode != 'v' and hvmode != 'h'):
         raise vs.Error("hvmode must be either 'h' or 'v'")
 
-    # Scale threshold and neutral level to current bit depth
+    # The soft threshold sqrt(thr) and the +1 terms are 8-bit pixel units, scaled linearly so every bit depth gives the same result
     shift = clip.format.bits_per_sample - 8
-    thr = thr << shift
+    unit = 1 << shift
+    soft = (math.sqrt(thr) if thr >= 1 else thr) * unit
     mid = 128 << shift
 
     if vertical:
@@ -74,13 +76,14 @@ def DeStripe(clip: vs.VideoNode, rad: int=2, offset: int=0, thr: int=256, vertic
     blurred = clip.std.Convolution(matrix=MAP[rad][offset], mode=hvmode, planes=[0])
     diff = core.std.MakeDiff(clip, blurred)
 
-    thr_s = str(thr)
+    soft_s = repr(soft)
+    unit_s = str(unit)
     mid_s = str(mid)
 
     partial_expr = lambda M, N: (
-        f" x x[{M},{N}] - x x[{M},{N}] - x x[{M},{N}] - abs 1 + * "
-        f"x x[{M},{N}] - abs 1 + {thr_s} 1 >= {thr_s} 0.5 pow {thr_s} ? + / - "
-        f"{mid_s} + "   # <--- scaled neutral
+        f" x x[{M},{N}] - x x[{M},{N}] - x x[{M},{N}] - abs {unit_s} + * "
+        f"x x[{M},{N}] - abs {unit_s} + {soft_s} + / - "
+        f"{mid_s} + "
     )
 
     matrix_length = len(MAP[rad][offset])
@@ -364,13 +367,15 @@ def sharpen(clip: vs.VideoNode, amount: float=0.5) -> vs.VideoNode:
     raise vs.Error('sharpen: amount must be in the range -1.58 to 1.0')
   return _adjust_focus(clip, amount)
 
-def VHSClean(clip: vs.VideoNode, ths: int=100, blur_sharp: bool = True, tools: Optional[Mapping[str, str]] = None) -> vs.VideoNode:
+def VHSClean(clip: vs.VideoNode, ths: int=100, blur_sharp: bool = True, searchparam: int = 2, blur_amount: float = 0.6, tools: Optional[Mapping[str, str]] = None) -> vs.VideoNode:
+  # searchparam: motion search range of every Analyse (the author recommends 8 or more for UHD)
+  # blur_amount: Blur/Sharpen amount of phase 3 (0.1 to 1.0, Sharpen allows at most 1.0)
   MV = get_mv(tools)
  
   lambda_      = 40000
   pel         =  2
   tm          = False
-  srhp        = 2
+  srhp        = searchparam
   srch        = 4
   badsad      = 2000
   chroma =True
@@ -378,8 +383,8 @@ def VHSClean(clip: vs.VideoNode, ths: int=100, blur_sharp: bool = True, tools: O
   ths1=  ths * 4
   thsc1= ths1* 2
   bs = 8
-  bblur  = 0.6
-  csharp = 0.6
+  bblur  = blur_amount
+  csharp = blur_amount
 
   
   sx = MV.Super(clip=clip, pel=pel, sharp=1,blksize=16,blksizev=8,overlap=8,overlapv=4)

@@ -21,8 +21,8 @@ def TFMBobN(clip: vs.VideoNode,
     field = 0
   else:
    field = 1
-  odd = core.tivtc.TFM(clip=clip, field=field, clip2=n[::2], PP=pp, cthresh=cthresh, MI=MI)
-  even = core.tivtc.TFM(clip=clip, field=field, clip2=n[1::2], PP=pp, cthresh=cthresh, MI=MI)
+  odd = core.tivtc.TFM(clip=clip, field=field, clip2=n[::2], PP=pp, cthresh=cthresh, MI=MI, chroma=chroma)
+  even = core.tivtc.TFM(clip=clip, field=field, clip2=n[1::2], PP=pp, cthresh=cthresh, MI=MI, chroma=chroma)
   return core.std.Interleave([odd,even])
 
 def TFMBobQ(clip: vs.VideoNode,

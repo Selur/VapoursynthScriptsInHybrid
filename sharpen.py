@@ -8,7 +8,7 @@ from functools import partial
 from typing import Optional, Union, Sequence, Dict, List, Mapping
 
 from misc import MinBlur, mt_clamp, AverageFrames
-from helpers import GetPlane, cround, scale, clamp, Padding, DFTTest, get_expr, get_rg, pick_tool, zsmooth_namespace, tool_function, tool_loaded, m4
+from helpers import GetPlane, cround, scale, clamp, Padding, DFTTest, get_expr, get_rg, pick_tool, zsmooth_namespace, tool_function, tool_loaded, m4, relative_expr, expr_backend, shift_clip
 from color import LimitFilter
 
 ################################################################################################
@@ -550,7 +550,8 @@ def FineSharp(clip: vs.VideoNode, mode: int = 1, sstr: float = 2.5, cstr: Option
     
     Args:
         mode  (int)  - 1 to 3, weakest to strongest. When negative -1 to -3,
-                       a broader kernel for equalisation is used.
+                       a broader kernel for equalisation is used. 0 skips the pre-blur,
+                       so the non-linear sharpening does nothing and only XSharpen remains.
         sstr (float) - strength of sharpening.
         cstr (float) - strength of equalisation (recommended 0.5 to 1.25)
         xstr (float) - strength of XSharpen-style final sharpening, 0.0 to 1.0.
@@ -597,7 +598,10 @@ def FineSharp(clip: vs.VideoNode, mode: int = 1, sstr: float = 2.5, cstr: Option
 
     tmp = core.std.ShufflePlanes(clip, [0], vs.GRAY) if color in [vs.YUV] else clip
     EXPR = get_expr(tools)
-    if abs(mode) == 1:
+    if mode == 0:
+        # like the AviSynth original: no pre-blur, so only the equalisation and XSharpen stages change the clip
+        c2 = tmp
+    elif abs(mode) == 1:
         c2 = getattr(core.std.Convolution(tmp, matrix=mat1), has_zsmooth).Median() if has_zsmooth else core.std.Convolution(tmp, matrix=mat1).std.Median()
     else:
         c2 = getattr(core, has_zsmooth).Median(tmp).std.Convolution(matrix=mat1) if has_zsmooth else core.std.Median(tmp).std.Convolution(matrix=mat1)
@@ -909,19 +913,76 @@ def UnsharpMask(clip: vs.VideoNode, strength: int = 64, radius: int = 3, thresho
     # Apply the sharpening expression using the selected Expr function
     return expr_func(clips=[clip, blurclip], expr=expressions)
 
-# experimental aWarpSharp2 replacement based on vapoursynth-awarp
-import math
+# aWarpSharp2 emulation on top of vapoursynth-awarp: ASobel and ABlur of the warp plugin rebuilt with Expr
+class _MaskOps:
+    """Warp plugin arithmetic as one relative-pixel expression (akarin, cranexpr) or, for std.Expr (no floor), as rounded shifted clips."""
 
-def _gauss_kernel(sigma: float, max_radius: int = 12) -> list[float]:
-    """Discrete 1D Gaussian kernel, odd-length, up to 25 taps (std.Convolution's limit)."""
-    radius = min(max_radius, max(1, int(round(sigma * 3))))
-    return [math.exp(-(x * x) / (2 * sigma * sigma)) for x in range(-radius, radius + 1)]
+    def __init__(self, clip: vs.VideoNode, tools: Optional[Mapping[str, str]]):
+        self.clip = clip
+        self.tools = tools
+        self.std = expr_backend(tools) == 'std'
 
-def _gauss_blur(clip: vs.VideoNode, sigma: float, planes: list[int] | None = None) -> vs.VideoNode:
-    """Separable Gaussian blur via two std.Convolution passes. divisor=0 -> auto-normalized."""
-    kernel = _gauss_kernel(sigma)
-    clip = core.std.Convolution(clip, kernel, planes=planes, mode='h')
-    clip = core.std.Convolution(clip, kernel, planes=planes, mode='v')
+    def px(self, dx: int, dy: int) -> Union[str, vs.VideoNode]:
+        if self.std:
+            return self.clip if (dx, dy) == (0, 0) else shift_clip(self.clip, dx, dy)
+        return f'x[{dx},{dy}]'
+
+    def avg(self, a: Union[str, vs.VideoNode], b: Union[str, vs.VideoNode]) -> Union[str, vs.VideoNode]:
+        if self.std:
+            return core.std.Expr([a, b], 'x y + 2 / 0.25 +')
+        return f'{a} {b} + 1 + 2 / floor'
+
+    def op(self, template: str, a: Union[str, vs.VideoNode], b: Union[str, vs.VideoNode]) -> Union[str, vs.VideoNode]:
+        if self.std:
+            return core.std.Expr([a, b], template.format(a='x', b='y'))
+        return template.format(a=a, b=b)
+
+    def result(self, value: Union[str, vs.VideoNode]) -> vs.VideoNode:
+        return value if self.std else relative_expr(self.clip, value, tools=self.tools)
+
+
+def _asobel(clip: vs.VideoNode, thresh: int, tools: Optional[Mapping[str, str]] = None) -> vs.VideoNode:
+    """Edge mask like warp.ASobel: averaged Sobel differences, amplified and capped at thresh (8-bit scale)."""
+    bits = clip.format.bits_per_sample
+    peak = (1 << bits) - 1
+    cap = min(thresh << (bits - 8), peak)
+    o = _MaskOps(clip, tools)
+    up = o.avg(o.px(0, -1), o.avg(o.px(-1, -1), o.px(1, -1)))
+    down = o.avg(o.px(0, 1), o.avg(o.px(-1, 1), o.px(1, 1)))
+    left = o.avg(o.px(-1, 0), o.avg(o.px(-1, 1), o.px(-1, -1)))
+    right = o.avg(o.px(1, 0), o.avg(o.px(1, 1), o.px(1, -1)))
+    v = o.op('{a} {b} - abs', up, down)
+    h = o.op('{a} {b} - abs', left, right)
+    # min(min(2a, peak) + a, peak) of the plugin equals min(3a, peak)
+    amplify = '{a} {b} + P min {a} {b} max + P min 3 * P min 2 * P min C min'
+    mask = o.result(o.op(amplify.replace('P', str(peak)).replace('C', str(cap)), v, h))
+    if mask.width < 3 or mask.height < 3:
+        return mask
+    # the plugin copies the second row/column into the border instead of computing it
+    inner = core.std.Crop(mask, 1, 1, 1, 1)
+    rows = core.std.StackHorizontal([core.std.Crop(inner, right=inner.width - 1), inner, core.std.Crop(inner, left=inner.width - 1)])
+    return core.std.StackVertical([core.std.Crop(rows, bottom=rows.height - 1), rows, core.std.Crop(rows, top=rows.height - 1)])
+
+
+def _ablur_pass(clip: vs.VideoNode, type: int, horizontal: bool, tools: Optional[Mapping[str, str]] = None) -> vs.VideoNode:
+    """One direction of warp.ABlur: the 13-tap (type 0) or 5-tap (type 1) cascade of rounded means."""
+    o = _MaskOps(clip, tools)
+
+    def px(k: int) -> Union[str, vs.VideoNode]:
+        return o.px(k, 0) if horizontal else o.px(0, k)
+    if type == 1:
+        a = o.avg(o.avg(o.avg(px(-2), px(2)), px(0)), px(0))
+        return o.result(o.avg(a, o.avg(px(-1), px(1))))
+    pairs = {k: o.avg(px(-k), px(k)) for k in range(1, 7)}
+    avg012 = o.avg(px(0), o.avg(pairs[1], pairs[2]))
+    avg3456 = o.avg(o.avg(pairs[3], pairs[4]), o.avg(pairs[5], pairs[6]))
+    return o.result(o.avg(avg012, o.avg(avg012, avg3456)))
+
+
+def _ablur(clip: vs.VideoNode, passes: int, type: int, tools: Optional[Mapping[str, str]] = None) -> vs.VideoNode:
+    """Mask blur like warp.ABlur: passes of a horizontal and a vertical blur."""
+    for _ in range(passes):
+        clip = _ablur_pass(_ablur_pass(clip, type, True, tools), type, False, tools)
     return clip
 
 
@@ -947,44 +1008,35 @@ def AWarpSharp2(
 
     if isinstance(depth, int):
         depth = [depth, depth // 2, depth // 2]
+    depth = list(depth)
     while len(depth) < 3:
         depth.append(depth[-1])
+    # awarp.AWarp takes the depth on the same scale as warp.AWarpSharp2 (measured)
+    depth = [max(-128, min(127, d)) for d in depth]
 
-    def _scale_depth(d: int) -> int:
-        scaled = int(round(d * 3 / 16))
-        return max(-128, min(128, scaled))
-    depth_scaled = [_scale_depth(d) for d in depth]
-
-    # --- Edge detection
+    # --- Luma mask: ASobel capped at thresh, then the blur passes
     luma = core.std.ShufflePlanes(clip, planes=0, colorfamily=vs.GRAY) if not is_gray else clip
-    luma8 = core.resize.Point(luma, format=vs.GRAY8)
-    mask_gray = core.std.Sobel(luma8)
-    if thresh < 255:
-        mask_gray = core.std.Binarize(mask_gray, threshold=thresh)
-    mask_gray = core.resize.Point(mask_gray, format=luma.format)
+    mask_y = _ablur(_asobel(luma, thresh, tools), blur, type, tools)
+    if is_gray:
+        return core.awarp.AWarp(clip, mask=mask_y, depth_h=depth[0], mask_first_plane=True, planes=planes)
 
-    # --- Gaussian blur via std.Convolution
-    sigma = (blur ** 0.5) if type == 1 else (blur ** 0.5) * 2
-    mask_gray = _gauss_blur(mask_gray, sigma)
-
-    if not is_gray:
-        mask = core.std.ShufflePlanes(
-            [mask_gray, mask_gray, mask_gray],
-            planes=[0, 0, 0],
-            colorfamily=clip.format.color_family
-        )
-        if mask.format.id != clip.format.id:
-            mask = core.resize.Point(mask, format=clip.format.id)
+    cw = clip.width >> clip.format.subsampling_w
+    ch = clip.height >> clip.format.subsampling_h
+    if chroma == 0:
+        # chroma follows the luma mask, scaled down to the chroma size like the plugin's bilinear downscale
+        mask_c = mask_y if (cw, ch) == (clip.width, clip.height) else core.resize.Bilinear(mask_y, cw, ch)
+        mask_u = mask_v = mask_c
     else:
-        mask = mask_gray
-
-    mask_first_plane = (chroma == 0)
-    depth_h = depth_scaled[0] if is_gray else depth_scaled
+        # each chroma plane gets its own mask with half the blur passes, like the plugin
+        cblur = (blur + 1) // 2
+        mask_u = _ablur(_asobel(core.std.ShufflePlanes(clip, 1, vs.GRAY), thresh, tools), cblur, type, tools)
+        mask_v = _ablur(_asobel(core.std.ShufflePlanes(clip, 2, vs.GRAY), thresh, tools), cblur, type, tools)
+    mask = core.std.ShufflePlanes([mask_y, mask_u, mask_v], planes=[0, 0, 0], colorfamily=clip.format.color_family)
 
     return core.awarp.AWarp(
         clip,
         mask=mask,
-        depth_h=depth_h,
-        mask_first_plane=mask_first_plane,
+        depth_h=depth,
+        mask_first_plane=False,
         planes=planes,
     )
