@@ -3,7 +3,7 @@ import vapoursynth as vs
 from vapoursynth import core
 from typing import List, Mapping, Optional
 
-from helpers import Depth, GetPlane, NNEDI3, get_expr, pick_tool
+from helpers import Depth, GetPlane, NNEDI3, get_expr, pick_tool, tcanny_plugin
 import masked
 
 
@@ -19,7 +19,7 @@ def RainbowSmooth(clip: vs.VideoNode, radius: int = 3, lthresh: int = 0, hthresh
             SOBEL = core.edgemasks.Sobel if pick_tool(tools, 'edgemasks', ('edgemasks', 'std')) == 'edgemasks' else core.std.Sobel
             mask = SOBEL(clip, planes=0)
         elif mask == "tcanny":
-            mask = core.tcanny.TCanny(clip)
+            mask = tcanny_plugin(tools)(clip)
         elif mask == "fast_sobel":
             mask = masked.fast_sobel(clip, tools=tools)
         elif mask == "kirsch":

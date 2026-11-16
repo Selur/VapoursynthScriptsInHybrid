@@ -44,7 +44,7 @@ TOOLS: Dict[str, Dict[str, tuple]] = {
     'dctfilter':      {'neo_smo': ('neo_smo', 'DCTFilter'), 'oxidctf': ('oxidctf', None), 'zsmooth': ('zsmooth', 'DCTFilter'), 'dctf': ('dctf', None)},
     'warp':           {'warp': ('warp', None), 'awarp': ('awarp', None)},
     'edgemasks':      {'edgemasks': ('edgemasks', None), 'std': ('std', None)},
-    'tcanny':         {'tcanny': ('tcanny', None), 'std': ('std', None)},
+    'tcanny':         {'tcanny': ('tcanny', None), 'tcannyx': ('tcannyx', None), 'std': ('std', None)},
     'fft3d':          {'neo_fft': ('neo_fft', 'FFT3D'), 'neo_fft3d': ('neo_fft3d', None), 'fft3dfilter': ('fft3dfilter', None)},
     'f3kdb':          {'neo_smo': ('neo_smo', 'F3kdb'), 'vszip': ('vszip', 'Deband'), 'neo_f3kdb': ('neo_f3kdb', None), 'f3kdb': ('f3kdb', None)},
     'scd':            {'scd': ('scd', None), 'misc': ('misc', 'SCDetect'), 'std': ('std', None), 'mv': ('mv', 'SCDetection')},
@@ -566,6 +566,18 @@ def get_rg(is_float: bool = False, tools: Optional[Mapping[str, str]] = None) ->
     '''Return the RemoveGrain implementation: tools['rg'], else zsmooth, rgsf (float only), rgvs.'''
     name = pick_tool(tools, 'rg', _with_neo_smo('rg', ('zsmooth', 'rgsf', 'rgvs') if is_float else ('zsmooth', 'rgvs')))
     return getattr(core, tool_namespace('rg', name or 'rgvs')).RemoveGrain
+
+def get_tcanny(tools: Optional[Mapping[str, str]] = None) -> Optional[Callable[..., vs.VideoNode]]:
+    '''TCanny of tools['tcanny'], else tcannyx, tcanny (same arguments and output); None for the std fallback.'''
+    name = pick_tool(tools, 'tcanny', ('tcannyx', 'tcanny', 'std'))
+    return None if name in (None, 'std') else getattr(core, tool_namespace('tcanny', name)).TCanny
+
+def tcanny_plugin(tools: Optional[Mapping[str, str]] = None) -> Callable[..., vs.VideoNode]:
+    '''TCanny for calls without a std stand-in: tools['tcanny'] if it names a loaded plugin, else tcannyx, tcanny.'''
+    wanted = (tools or {}).get('tcanny')
+    if wanted in ('tcanny', 'tcannyx') and tool_loaded('tcanny', wanted):
+        return getattr(core, wanted).TCanny
+    return getattr(core, 'tcannyx' if tool_loaded('tcanny', 'tcannyx') else 'tcanny').TCanny
 
 def BoxFilter(input: vs.VideoNode, radius: int = 16, radius_v: Optional[int] = None, planes: Optional[Union[int, Sequence[int]]] = None,
               fmtc_conv: int = 0, radius_thr: Optional[int] = None,

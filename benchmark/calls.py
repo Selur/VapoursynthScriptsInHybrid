@@ -138,8 +138,8 @@ def _edgemasks(clip, tools, device):
 def _tcanny(clip, tools, device):
     # TCanny as the Gaussian blur most scripts use it for; std: their stand-in, three box blur passes of radius round(1.5 * sigma)
     sigma = 1.5
-    if helpers.pick_tool(tools, 'tcanny', ('tcanny', 'std')) == 'tcanny':
-        return core.tcanny.TCanny(clip, sigma=sigma, mode=-1)
+    if (TCANNY := helpers.get_tcanny(tools)) is not None:
+        return TCANNY(clip, sigma=sigma, mode=-1)
     radius = max(1, round(sigma * 1.5))
     return helpers.tool_function(None, 'boxblur', 'BoxBlur')(clip, hradius=radius, hpasses=3, vradius=radius, vpasses=3)
 

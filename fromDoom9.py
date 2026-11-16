@@ -11,7 +11,7 @@ except ImportError:
 
 from misc import get_mv, SCDetect
 from color import LimitFilter
-from helpers import NLMeans, expr_backend, get_expr, pick_tool, shift_clip, tool_function, zsmooth_namespace
+from helpers import NLMeans, expr_backend, get_expr, pick_tool, shift_clip, tool_function, zsmooth_namespace, get_tcanny
 
 def _boxblur_fn(tools: Optional[Mapping[str, str]] = None) -> Callable[..., vs.VideoNode]:
     """Pick the BoxBlur: tools['boxblur'], else vszip, else std."""
@@ -489,8 +489,8 @@ def ContrastMask(clip: vs.VideoNode, gblur: float = 20.0, enhance: float = 10.0,
 
     # Gaussian blur like VariableBlur's GaussianBlur(50.0, ...): luma variance 50
     sigma = math.sqrt(50.0)
-    if pick_tool(tools, 'tcanny', ('tcanny', 'std')) == 'tcanny':
-      v2 = core.tcanny.TCanny(v2, sigma=sigma, mode=-1)
+    if (TCANNY := get_tcanny(tools)) is not None:
+      v2 = TCANNY(v2, sigma=sigma, mode=-1)
     elif GaussBlur is not None:
       v2 = GaussBlur(v2, sigma=sigma, tools=tools)
     else:
@@ -523,8 +523,8 @@ def HaloBuster(input: vs.VideoNode, a: int = 32, h: float = 6.4, thr: float = 1.
     clean = _nlmeans_gray(gray, d=0, a=a, s=0, h=h, tools=tools)
     
     # Apply TCanny for edge detection
-    if pick_tool(tools, 'tcanny', ('tcanny', 'std')) == 'tcanny':
-        mask = core.tcanny.TCanny(clean, sigma=1.5, mode=1)
+    if (TCANNY := get_tcanny(tools)) is not None:
+        mask = TCANNY(clean, sigma=1.5, mode=1)
     else:
         blurred = _boxblur_fn(tools)(clean, hradius=2, hpasses=3, vradius=2, vpasses=3)
         if pick_tool(tools, 'edgemasks', ('edgemasks', 'std')) == 'edgemasks':

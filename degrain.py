@@ -6,7 +6,7 @@ from vapoursynth import core
 import math
 
 from typing import Any, Callable, Dict, Mapping, Optional, Sequence, Union
-from helpers import scale_value, cround, m4, DitherLumaRebuild, KNLMeansCL, NLMeans, DFTTest, get_expr, get_rg, pick_tool, zsmooth_namespace, tool_function
+from helpers import scale_value, cround, m4, DitherLumaRebuild, KNLMeansCL, NLMeans, DFTTest, get_expr, get_rg, pick_tool, zsmooth_namespace, tool_function, get_tcanny
 from misc import get_mv, MinBlur
 from color import LimitFilter
 from sharpen import ContraSharpening
@@ -621,8 +621,8 @@ def TemporalDegrain2(clip: vs.VideoNode, degrainTR: int = 1, degrainPlane: int =
     if SrchClipPP == 1:
         spatialBlur = core.resize.Bilinear(clip, m4(w/2), m4(h/2)).std.Convolution(matrix=mat, planes=CMplanes).resize.Bilinear(w, h)
     elif SrchClipPP > 1:
-        if pick_tool(tools, 'tcanny', ('tcanny', 'std')) == 'tcanny':
-          spatialBlur = core.tcanny.TCanny(clip, sigma=2, mode=-1, planes=CMplanes)
+        if (TCANNY := get_tcanny(tools)) is not None:
+          spatialBlur = TCANNY(clip, sigma=2, mode=-1, planes=CMplanes)
         else:
           spatialBlur = _boxblur_fn(tools)(clip, planes=CMplanes, hradius=2, hpasses=3, vradius=2, vpasses=3)
         spatialBlur = core.std.Merge(spatialBlur, clip, [0.1] if ChromaMotion or isGRAY else [0.1, 0])
@@ -738,8 +738,8 @@ def TemporalDegrain2(clip: vs.VideoNode, degrainTR: int = 1, degrainPlane: int =
 
 def _sharpen(clip: vs.VideoNode, strength: float, planes: Optional[Union[int, Sequence[int]]], tools: Optional[Mapping[str, str]] = None) -> vs.VideoNode:
     core = vs.core
-    if pick_tool(tools, 'tcanny', ('tcanny', 'std')) == 'tcanny':
-      blur = core.tcanny.TCanny(clip, sigma=strength, mode=-1, planes=planes)
+    if (TCANNY := get_tcanny(tools)) is not None:
+      blur = TCANNY(clip, sigma=strength, mode=-1, planes=planes)
     else:
       radius = max(1, round(strength * 1.5))
       blur = _boxblur_fn(tools)(clip, planes=planes, hradius=radius, hpasses=3, vradius=radius, vpasses=3)
@@ -791,8 +791,8 @@ def mcdegrainsharp(clip: vs.VideoNode, frames: int = 2, bblur: float = 0.3, csha
     else:
         planes = plane
 
-    if pick_tool(tools, 'tcanny', ('tcanny', 'std')) == 'tcanny':
-        c2 = core.tcanny.TCanny(clip, sigma=bblur, mode=-1, planes=planes)
+    if (TCANNY := get_tcanny(tools)) is not None:
+        c2 = TCANNY(clip, sigma=bblur, mode=-1, planes=planes)
     else:
         radius = max(1, round(bblur * 1.5))
         c2 = _boxblur_fn(tools)(clip, planes=planes, hradius=radius, hpasses=3, vradius=radius, vpasses=3)

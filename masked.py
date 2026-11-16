@@ -4,7 +4,7 @@ from math import sqrt
 
 from typing import Union, List, Mapping, Optional, Sequence
 import misc
-from helpers import GetPlane, Depth, BoxFilter, get_expr, get_rg, pick_tool, tool_function
+from helpers import GetPlane, Depth, BoxFilter, get_expr, get_rg, pick_tool, tool_function, get_tcanny, tcanny_plugin
 
 core = vs.core
 
@@ -27,8 +27,8 @@ def retinex_edgemask(src: vs.VideoNode, sigma: int = 1, draft: bool = False, too
     else:
         ret = core.retinex.MSRCP(luma, sigma=[50, 200, 350], upper_thr=0.005)
     k = kirsch(luma, tools=tools)
-    if pick_tool(tools, 'tcanny', ('tcanny', 'std')) == 'tcanny':
-        edges = ret.tcanny.TCanny(mode=1, sigma=sigma)
+    if (TCANNY := get_tcanny(tools)) is not None:
+        edges = TCANNY(ret, mode=1, sigma=sigma)
     else:
         # without TCanny: Gaussian-like box blur of about the same sigma, then a Sobel edge mask (edgemasks or std)
         radius = max(1, round(sigma * 1.5))
@@ -53,7 +53,7 @@ def clahe_edgemask(src: vs.VideoNode, tcanny_sigma: float = 1.0, clahe_limit: in
     EXPR = get_expr(tools)
     luma16 = Depth(GetPlane(src, 0), 16)
     clahe = core.vszip.CLAHE(luma16, limit=clahe_limit, tiles=clahe_tile)
-    tc = clahe.tcanny.TCanny(mode=1, sigma=tcanny_sigma).std.Minimum(coordinates=[1, 0, 1, 0, 0, 1, 0, 1])
+    tc = tcanny_plugin(tools)(clahe, mode=1, sigma=tcanny_sigma).std.Minimum(coordinates=[1, 0, 1, 0, 0, 1, 0, 1])
     k1 = luma16.std.Convolution(matrix=[5, 5, 5, -3, 0, -3, -3, -3, -3], saturate=False)
     k2 = luma16.std.Convolution(matrix=[-3, 5, 5, -3, 0, 5, -3, -3, -3], saturate=False)
     k3 = luma16.std.Convolution(matrix=[-3, -3, 5, -3, 0, 5, -3, -3, 5], saturate=False)
@@ -149,8 +149,8 @@ def dehalo_mask(src: vs.VideoNode, expand: float = 0.5, iterations: int = 2, brz
     EXPR = get_expr(tools)
     edge = EXPR([luma, luma.std.Maximum().std.Maximum()], [f"y x - {shift} - 128 *"])
 
-    if pick_tool(tools, 'tcanny', ('tcanny', 'std')) == 'tcanny':
-        mask1 = EXPR(edge.tcanny.TCanny(sigma=sqrt(expand * 2), mode=-1), ["x 16 *"])
+    if (TCANNY := get_tcanny(tools)) is not None:
+        mask1 = EXPR(TCANNY(edge, sigma=sqrt(expand * 2), mode=-1), ["x 16 *"])
     else:
         radius = max(1, round(sqrt(expand * 2) * 1.5))
         mask1 = EXPR(BoxFilter(edge, radius, 3, tools=tools), ["x 16 *"])

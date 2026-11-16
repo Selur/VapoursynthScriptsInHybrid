@@ -7,7 +7,7 @@ import warnings
 
 from typing import Any, Dict, List, Mapping, Optional, Sequence, Union
 
-from helpers import GetPlane, scale_value, scale, cround, DitherLumaRebuild, KNLMeansCL, DFTTest, BoxFilter, get_expr, get_rg, pick_tool, f3kdb_usable, f3kdb_function, zsmooth_namespace, tool_function, tool_loaded, _bm3d_first, _bm3d_order
+from helpers import GetPlane, scale_value, scale, cround, DitherLumaRebuild, KNLMeansCL, DFTTest, BoxFilter, get_expr, get_rg, pick_tool, f3kdb_usable, f3kdb_function, zsmooth_namespace, tool_function, tool_loaded, _bm3d_first, _bm3d_order, get_tcanny
 
 from misc import get_mv, MinBlur, SCDetect, mt_expand_multi
         
@@ -699,8 +699,8 @@ def mClean(clip: vs.VideoNode, thSAD: int = 400, chroma: bool = True, sharp: flo
         if sharp <= 50:
             clsharp = core.std.MakeDiff(clean, Blur(clean2, amountH=0.08+0.03*sharp))
         else:
-            if pick_tool(tools, 'tcanny', ('tcanny', 'std')) == 'tcanny':
-                clsharp = core.std.MakeDiff(clean, clean2.tcanny.TCanny(sigma=(sharp-46)/4, mode=-1))
+            if (TCANNY := get_tcanny(tools)) is not None:
+                clsharp = core.std.MakeDiff(clean, TCANNY(clean2, sigma=(sharp-46)/4, mode=-1))
             else:
                 radius = max(1, round(((sharp-46)/4) * 1.5))
 

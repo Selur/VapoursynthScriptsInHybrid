@@ -5,7 +5,7 @@ import math
 import functools
 from typing import Union, Optional, Callable, Dict, Any, Sequence, Mapping
 
-from helpers import Depth, BoxFilter, NNEDI3, get_expr, pick_tool
+from helpers import Depth, BoxFilter, NNEDI3, get_expr, pick_tool, get_tcanny
 
 # --- shim to preserve color.Depth's range/dither defaults on top of helpers.Depth ---
 def _range(full: Optional[bool]) -> str:
@@ -646,8 +646,8 @@ def SSIM_downsample(clip: vs.VideoNode, w: int, h: int,
     elif isinstance(smooth, int):
         Filter = functools.partial(BoxFilter, radius=smooth + 1, tools=tools)
     elif isinstance(smooth, float):
-        if pick_tool(tools, 'tcanny', ('tcanny', 'std')) == 'tcanny':
-            Filter = functools.partial(core.tcanny.TCanny, sigma=smooth, mode=-1)
+        if (TCANNY := get_tcanny(tools)) is not None:
+            Filter = functools.partial(TCANNY, sigma=smooth, mode=-1)
         else:
             radius = max(1, round(smooth * 1.5))
 
