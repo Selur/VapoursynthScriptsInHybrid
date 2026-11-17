@@ -103,6 +103,10 @@ def analyse(clip: vs.VideoNode, log: str, segments: int = 5, length: int = 300) 
   if clip.format.color_family != vs.YUV or clip.format.bits_per_sample != 8 or clip.format.sample_type != vs.INTEGER:
     work = core.resize.Point(clip, format=vs.YUV420P8, matrix_s='709' if clip.format.color_family == vs.RGB else None,
                              dither_type='none')
+  # bobbing needs whole chroma lines per field; dropping bottom lines keeps the field parity
+  mod = 2 << work.format.subsampling_h
+  if work.height % mod:
+    work = core.std.Crop(work, bottom=work.height % mod)
 
   topMatched, topDecimated = _matching(work, 1)
   bottomMatched, bottomDecimated = _matching(work, 0)
