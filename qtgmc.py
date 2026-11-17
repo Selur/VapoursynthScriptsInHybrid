@@ -805,29 +805,28 @@ def QTGMC(
                 ]
             )
         if Denoiser == 'bm3d':
-            # Build sigma array for plane processing
-            sigma_list = [Sigma if 0 in CNplanes else 0,
-                         Sigma if 1 in CNplanes else 0, 
-                         Sigma if 2 in CNplanes else 0]
-            
             # Ensure float32 input for bm3d
             if noiseWindow.format.sample_type != vs.FLOAT:
                 bm3d_input = Depth(noiseWindow, 32)
             else:
                 bm3d_input = noiseWindow
-            
-            # Apply BM3D basic + final estimate (equivalent to mvsfunc refine=1)
-            if NoiseTR <= 0:
-                # Spatial-only BM3D
-                basic = core.bm3d.Basic(bm3d_input, sigma=sigma_list, profile="fast")
-                dnWindow = core.bm3d.Final(bm3d_input, ref=basic, sigma=sigma_list, profile="fast")
+
+            def _bm3d(c: vs.VideoNode, sigma: Union[float, list[float]]) -> vs.VideoNode:
+                # BM3D basic + final estimate (equivalent to mvsfunc refine=1)
+                if NoiseTR <= 0:
+                    basic = core.bm3d.Basic(c, sigma=sigma, profile="fast")
+                    return core.bm3d.Final(c, ref=basic, sigma=sigma, profile="fast")
+                basic = core.bm3d.VAggregate(core.bm3d.VBasic(c, sigma=sigma, radius=NoiseTR, profile="fast"), radius=NoiseTR, sample=1)
+                return core.bm3d.VAggregate(core.bm3d.VFinal(c, ref=basic, sigma=sigma, radius=NoiseTR, profile="fast"), radius=NoiseTR, sample=1)
+
+            fmt = bm3d_input.format
+            if fmt.num_planes == 3 and CNplanes == [0, 1, 2] and fmt.subsampling_w == 0 and fmt.subsampling_h == 0:
+                dnWindow = _bm3d(bm3d_input, [Sigma, Sigma, Sigma])
             else:
-                # V-BM3D with temporal processing
-                basic_v = core.bm3d.VBasic(bm3d_input, sigma=sigma_list, radius=NoiseTR, profile="fast")
-                basic = core.bm3d.VAggregate(basic_v, radius=NoiseTR, sample=1)
-                final_v = core.bm3d.VFinal(bm3d_input, ref=basic, sigma=sigma_list, radius=NoiseTR, profile="fast")
-                dnWindow = core.bm3d.VAggregate(final_v, radius=NoiseTR, sample=1)
-            
+                # VAggregate leaves planes with sigma 0 uninitialized and bm3d rejects subsampled chroma, so planes are denoised one by one
+                planes = [_bm3d(core.std.ShufflePlanes(bm3d_input, p, vs.GRAY), Sigma) if p in CNplanes else bm3d_input for p in range(fmt.num_planes)]
+                dnWindow = planes[0] if fmt.num_planes == 1 else core.std.ShufflePlanes(planes, [0, 0 if 1 in CNplanes else 1, 0 if 2 in CNplanes else 2], fmt.color_family)
+
             # Restore original format
             if dnWindow.format.id != noiseWindow.format.id:
                 dnWindow = Depth(dnWindow, noiseWindow.format.bits_per_sample)
