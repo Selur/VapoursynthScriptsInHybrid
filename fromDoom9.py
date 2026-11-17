@@ -512,8 +512,8 @@ def ContrastMask(clip: vs.VideoNode, gblur: float = 20.0, enhance: float = 10.0,
 
 
 def HaloBuster(input: vs.VideoNode, a: int = 32, h: float = 6.4, thr: float = 1.0, elast: float = 1.5, tools: Optional[Mapping[str, str]] = None) -> vs.VideoNode:
-    # Convert to grayscale format if not already
-    gray_format = vs.GRAY16 if input.format.bits_per_sample > 8 else vs.GRAY8
+    # Luma as gray at the input bit depth, so ShufflePlanes can put the input chroma back
+    gray_format = core.query_video_format(vs.GRAY, vs.INTEGER, input.format.bits_per_sample, 0, 0)
     gray = input.resize.Point(format=gray_format)
     
     # Add borders for padding
