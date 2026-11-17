@@ -267,7 +267,7 @@ def TemporalDegrain(          \
 
     # First MV-denoising stage. Usually here's some temporal-medianfiltering
     # going on. For simplicity, we just use MVDegrain.
-    inpSuper = MV.Super(inpClip, pel=2, levels=1, blksize=8, overlap=0)
+    inpSuper = MV.Super(inpClip, pel=2, levels=1, blksize=blockSize, overlap=overlapValue)
     if degrain == 3:
         nr1 = MV.Degrain3(inpClip, inpSuper, bvec1, fvec1, bvec2, fvec2\
             , bvec3, fvec3, thsad=thrDegrain1, limit=maxPxChange)
@@ -285,7 +285,7 @@ def TemporalDegrain(          \
     nr1X = core.std.MakeDiff(inpClip, dd, planes=0)
 
     # Second MV-denoising stage
-    nr1x_super = MV.Super(nr1X, pel=2, levels=1, blksize=8, overlap=0)
+    nr1x_super = MV.Super(nr1X, pel=2, levels=1, blksize=blockSize, overlap=overlapValue)
 
     if degrain == 3:
         nr2 = MV.Degrain3(nr1X, nr1x_super, bvec1, fvec1, bvec2, fvec2\
