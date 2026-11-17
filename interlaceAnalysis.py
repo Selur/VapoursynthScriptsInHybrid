@@ -5,9 +5,10 @@ import vapoursynth as vs
 
 # field matching and bob motion statistics for an interlace check
 # analyse() returns the analysed frames unchanged and writes two lines per requested frame to 'log':
-#   <frame> <match tff> <combed tff> <drop tff> <match bff> <combed bff> <drop bff>
+#   <frame> <match tff> <combed tff> <drop tff> <diff tff> <match bff> <combed bff> <drop bff> <diff bff>
 #   b <frame> <move across> <move inside> <reverse across> <reverse inside> for tff, the same four for bff
-# match: VFM VFMMatch (0 = p, 1 = c, 2 = n), combed: VFM _Combed (0/1), drop: VDecimate dry run VDecimateDrop (0/1)
+# match: VFM VFMMatch (0 = p, 1 = c, 2 = n), combed: VFM _Combed (0/1), drop: VDecimate dry run VDecimateDrop (0/1),
+# diff: VDecimateMaxBlockDiff, the largest block difference to the previous matched frame (near 0 for a repeated frame)
 # bob steps: 'across' goes from the second field of the previous frame to the first field of the frame, 'inside' between its fields
 # move: per mille of the blocks moving in that step; reverse: per mille of the blocks moving in that step and the next one whose motion turns back
 # -1 where the step has no motion vectors, reverse also where fewer than 1% of the blocks move in both steps
@@ -114,8 +115,8 @@ def analyse(clip: vs.VideoNode, log: str, segments: int = 5, length: int = 300) 
     pass
 
   def _row(match: vs.VideoFrame, drop: vs.VideoFrame) -> str:
-    return '%d %d %d' % (int(match.props.get('VFMMatch', 1)), int(match.props.get('_Combed', 0)),
-                         int(drop.props.get('VDecimateDrop', 0)))
+    return '%d %d %d %d' % (int(match.props.get('VFMMatch', 1)), int(match.props.get('_Combed', 0)),
+                            int(drop.props.get('VDecimateDrop', 0)), int(drop.props.get('VDecimateMaxBlockDiff', -1)))
 
   def _log(n: int, f: list[vs.VideoFrame]) -> vs.VideoFrame:
     lines = '%d %s %s\nb %d %s %s\n' % (n, _row(f[1], f[2]), _row(f[3], f[4]), n, _bobRow(f[5:14]), _bobRow(f[14:23]))
