@@ -240,9 +240,9 @@ def DescratchHighPass(clip: vs.VideoNode, gain: float = 6.0, hradius: int = 8, p
         lim = limit * level
         corr = f'y z - {level} * {gain} / {-lim} max {lim} min'
         if tr > 0:
-            # weight = tfactor * (distance to the temporal reference a in the direction of the correction) / |correction|, clamped to 0..1
+            # weight = tfactor * (distance to reference a in the correction's direction) / |correction|, 0..1; a == x means all neighbours were rejected (cut), so weight 1
             ref = _dshp_temporal_reference(luma, tr, thsad, tools)
-            weight = f'a x - {tfactor} * {corr} 0 > 1 -1 ? * {corr} abs 0.000001 max / 0 max 1 min'
+            weight = f'a x = 1 a x - {tfactor} * {corr} 0 > 1 -1 ? * {corr} abs 0.000001 max / 0 max 1 min ?'
             out = expr([luma, fixed, amp, ref], f'{weight} {corr} * x +')
         else:
             out = expr([luma, fixed, amp], f'{corr} x +')
