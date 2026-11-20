@@ -132,11 +132,14 @@ def Stab(clp: vs.VideoNode, dxmax: int = 8, dymax: int = 8, mirror: int = 5, scd
 
 def _vbd_shift(clip: vs.VideoNode, d: int) -> vs.VideoNode:
     # frame n shows frame n + d; beyond the clip ends the first/last frame is repeated with _VBDPad=1 (set on every frame: akarin does not read a missing prop as NaN)
-    last = clip.num_frames - 1
+    n = clip.num_frames
+    k = min(abs(d), n)
     body = core.std.SetFrameProps(clip, _VBDPad=0)
     if d < 0:
-        return core.std.Splice([core.std.SetFrameProps(clip[0], _VBDPad=1) * -d, body[:last + 1 + d]])
-    return core.std.Splice([body[d:], core.std.SetFrameProps(clip[last], _VBDPad=1) * d])
+        pad = core.std.SetFrameProps(clip[0], _VBDPad=1) * k
+        return pad if k == n else core.std.Splice([pad, body[:n - k]])
+    pad = core.std.SetFrameProps(clip[n - 1], _VBDPad=1) * k
+    return pad if k == n else core.std.Splice([body[k:], pad])
 
 
 def _vbd_neighbour_median(clip: vs.VideoNode, radius: int, step: int, mc: bool, thsad: int, tools: Optional[Mapping[str, str]]) -> vs.VideoNode:
@@ -204,7 +207,9 @@ def VerticalBandDeflicker(clip: vs.VideoNode, radius: int = 12, width: int = 480
     height = max(16, round(clip.height * width / clip.width / 2) * 2)
     luma = core.std.ShufflePlanes(clip, 0, vs.GRAY) if fmt.color_family == vs.YUV else clip
     small = core.resize.Bilinear(luma, width, height, format=vs.GRAYS)
-    small = misc.SCDetect(small, threshold=scthresh, tools=tools)
+    # scene detection on an 8-bit copy: scd.Detect takes integer clips only
+    scenes = misc.SCDetect(core.resize.Point(small, format=vs.GRAY8), threshold=scthresh, tools=tools)
+    small = core.std.CopyFrameProps(small, scenes, props=['_SceneChangePrev', '_SceneChangeNext'])
     ref = _vbd_neighbour_median(small, radius, step, mc, thsad, tools)
     # difference to the reference and a mask of the pixels that do not move
     diff = expr([small, ref], 'x y - 255 *')
