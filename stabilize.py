@@ -5,7 +5,7 @@ import math
 import vapoursynth as vs
 
 import misc
-from helpers import pick_tool, tool_function, zsmooth_namespace
+from helpers import _EXPR_VARIABLES, expr_backend, get_expr, pick_tool, tool_function, zsmooth_namespace
 
 def _stab_expand_luma(clip: vs.VideoNode, luma_exp: int) -> vs.VideoNode:
     # luma expansion for the motion estimation only (Stab3s Luma_Exp): 1 = limited -> full levels, 2 = AutoAdjust
@@ -129,3 +129,83 @@ def Stab(clp: vs.VideoNode, dxmax: int = 8, dymax: int = 8, mirror: int = 5, scd
     return result
 
     
+
+def _vbd_shift(clip: vs.VideoNode, d: int) -> vs.VideoNode:
+    # frame n shows frame n + d, the first/last frame repeated at the clip ends
+    last = clip.num_frames - 1
+    if d < 0:
+        return core.std.Splice([clip[0] * -d, clip[:last + 1 + d]])
+    return core.std.Splice([clip[d:], clip[last] * d])
+
+
+def _vbd_neighbour_median(clip: vs.VideoNode, radius: int, mc: bool, thsad: int, tools: Optional[Mapping[str, str]]) -> vs.VideoNode:
+    # median of frames n-radius..n+radius without n; a neighbour behind a scene change of the SCDetect props counts as frame n
+    if mc:
+        MV = misc.get_mv(tools)
+        c16 = core.resize.Point(clip, format=vs.GRAY16)
+        geometry = dict(blksize=16, overlap=8)
+        search = MV.Super(c16, pel=2, sharp=2, chroma=False, **geometry)
+        render = MV.Super(c16, pel=2, sharp=2, levels=1, chroma=False, **geometry)
+
+        def neighbour(d: int) -> vs.VideoNode:
+            vectors = MV.Analyse(search, isb=d > 0, delta=abs(d), search=4, dct=5, chroma=False, **geometry)
+            comp = core.resize.Point(MV.Compensate(c16, render, vectors, thsad=thsad), format=vs.GRAYS)
+            return core.std.CopyFrameProps(comp, _vbd_shift(clip, d))
+    else:
+        def neighbour(d: int) -> vs.VideoNode:
+            return _vbd_shift(clip, d)
+    clips, terms = [clip], []
+    for direction, prop in ((-1, '_SceneChangePrev'), (1, '_SceneChangeNext')):
+        cut = f'x.{prop} 0.5 >'
+        for k in range(1, radius + 1):
+            clips.append(neighbour(direction * k))
+            v = _EXPR_VARIABLES[len(clips) - 1]
+            terms.append(f'{cut} x {v} ?')
+            cut = f'{cut} {v}.{prop} 0.5 > or'
+    expr = ' '.join(terms) + f' sort{2 * radius}'
+    if radius > 1:
+        expr += f' drop{radius - 1}'
+    expr += ' + 2 /'
+    if radius > 1:
+        expr += f' swap{radius - 1} drop{radius - 1}'
+    return get_expr(tools)(clips, expr)
+
+
+def VerticalBandDeflicker(clip: vs.VideoNode, radius: int = 10, width: int = 480, motion: float = 10.0, smooth: int = 2,
+                          maxwidth: int = 150, limit: float = 8.0, strength: float = 1.0, scthresh: float = 0.1, strips: int = 6,
+                          mc: bool = True, thsad: int = 400, tools: Optional[Mapping[str, str]] = None) -> vs.VideoNode:
+    # removes vertical luma bands that change over time (film density flicker in columns); levels are on the 8-bit scale, widths in analysis pixels
+    fmt = clip.format
+    if fmt.color_family not in (vs.YUV, vs.GRAY):
+        raise vs.Error('VerticalBandDeflicker: YUV or GRAY input required')
+    if not 1 <= radius <= 12:
+        raise vs.Error('VerticalBandDeflicker: radius must be 1..12')
+    if strips < 1 or width < 16:
+        raise vs.Error('VerticalBandDeflicker: strips must be >= 1 and width >= 16')
+    if expr_backend(tools) not in ('akarin', 'cranexpr'):
+        raise vs.Error('VerticalBandDeflicker: needs akarin or cranexpr as tools["expr"] (sort and frame properties)')
+    expr = get_expr(tools)
+    height = max(16, round(clip.height * width / clip.width / 2) * 2)
+    luma = core.std.ShufflePlanes(clip, 0, vs.GRAY) if fmt.color_family == vs.YUV else clip
+    small = core.resize.Bilinear(luma, width, height, format=vs.GRAYS)
+    small = misc.SCDetect(small, threshold=scthresh, tools=tools)
+    ref = _vbd_neighbour_median(small, radius, mc, thsad, tools)
+    # difference to the reference and a mask of the pixels that do not move
+    diff = expr([small, ref], 'x y - 255 *')
+    still = expr([diff], f'x abs {motion} < 1 0 ?')
+    # masked mean per column and strip: downscaling to `strips` rows averages each strip
+    msum = core.resize.Bilinear(expr([diff, still], 'x y *'), width, strips)
+    mcnt = core.resize.Bilinear(still, width, strips)
+    prof = expr([msum, mcnt], 'y 0.333 > x y / 0 ?')
+    if smooth > 0:
+        prof = core.std.BoxBlur(prof, hradius=smooth, vradius=0)
+    wide = core.std.BoxBlur(prof, hradius=maxwidth // 2, hpasses=2, vradius=0)
+    corr = core.resize.Bilinear(expr([prof, wide], f'x y - {strength} * {-limit} max {limit} min'), clip.width, clip.height)
+    if fmt.sample_type == vs.INTEGER:
+        scale, peak = 1 << (fmt.bits_per_sample - 8), (1 << fmt.bits_per_sample) - 1
+        fixed = expr([luma, corr], f'x y {scale} * - 0 max {peak} min', format=luma.format.id)
+    else:
+        fixed = expr([luma, corr], 'x y 255 / -', format=luma.format.id)
+    if fmt.color_family == vs.GRAY:
+        return fixed
+    return core.std.ShufflePlanes([fixed, clip], [0, 1, 2], vs.YUV)
