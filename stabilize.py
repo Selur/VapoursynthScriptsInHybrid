@@ -131,15 +131,16 @@ def Stab(clp: vs.VideoNode, dxmax: int = 8, dymax: int = 8, mirror: int = 5, scd
     
 
 def _vbd_shift(clip: vs.VideoNode, d: int) -> vs.VideoNode:
-    # frame n shows frame n + d, the first/last frame repeated at the clip ends
+    # frame n shows frame n + d; beyond the clip ends the first/last frame is repeated with _VBDPad=1 (set on every frame: akarin does not read a missing prop as NaN)
     last = clip.num_frames - 1
+    body = core.std.SetFrameProps(clip, _VBDPad=0)
     if d < 0:
-        return core.std.Splice([clip[0] * -d, clip[:last + 1 + d]])
-    return core.std.Splice([clip[d:], clip[last] * d])
+        return core.std.Splice([core.std.SetFrameProps(clip[0], _VBDPad=1) * -d, body[:last + 1 + d]])
+    return core.std.Splice([body[d:], core.std.SetFrameProps(clip[last], _VBDPad=1) * d])
 
 
-def _vbd_neighbour_median(clip: vs.VideoNode, radius: int, mc: bool, thsad: int, tools: Optional[Mapping[str, str]]) -> vs.VideoNode:
-    # median of frames n-radius..n+radius without n; a neighbour behind a scene change of the SCDetect props counts as frame n
+def _vbd_neighbour_median(clip: vs.VideoNode, radius: int, step: int, mc: bool, thsad: int, tools: Optional[Mapping[str, str]]) -> vs.VideoNode:
+    # median of the frames n +- k*step (k = 1..radius); one outside the clip or behind a scene change takes its counterpart on the other side, or frame n if that is unusable too
     if mc:
         MV = misc.get_mv(tools)
         c16 = core.resize.Point(clip, format=vs.GRAY16)
@@ -154,14 +155,27 @@ def _vbd_neighbour_median(clip: vs.VideoNode, radius: int, mc: bool, thsad: int,
     else:
         def neighbour(d: int) -> vs.VideoNode:
             return _vbd_shift(clip, d)
-    clips, terms = [clip], []
-    for direction, prop in ((-1, '_SceneChangePrev'), (1, '_SceneChangeNext')):
-        cut = f'x.{prop} 0.5 >'
+    clips = [clip]
+    names: Dict[int, List[str]] = {-1: [], 1: []}
+    bad: Dict[int, List[str]] = {-1: [], 1: []}
+    for direction, toward, away in ((-1, '_SceneChangePrev', '_SceneChangeNext'), (1, '_SceneChangeNext', '_SceneChangePrev')):
+        # a scene change between n and the k-th neighbour: the toward-prop of the previous neighbour (x for k=1), and with step 2 also the away-prop of the neighbour itself
+        cut, inner = None, 'x'
         for k in range(1, radius + 1):
-            clips.append(neighbour(direction * k))
+            clips.append(neighbour(direction * k * step))
             v = _EXPR_VARIABLES[len(clips) - 1]
-            terms.append(f'{cut} x {v} ?')
-            cut = f'{cut} {v}.{prop} 0.5 > or'
+            hit = f'{inner}.{toward} 0.5 >'
+            if step == 2:
+                hit = f'{hit} {v}.{away} 0.5 > or'
+            cut = hit if cut is None else f'{cut} {hit} or'
+            names[direction].append(v)
+            bad[direction].append(f'{cut} {v}._VBDPad 0.5 > or')
+            inner = v
+    terms = []
+    for k in range(radius):
+        for side in (-1, 1):
+            own, other = names[side][k], names[-side][k]
+            terms.append(f'{bad[side][k]} {bad[-side][k]} x {other} ? {own} ?')
     expr = ' '.join(terms) + f' sort{2 * radius}'
     if radius > 1:
         expr += f' drop{radius - 1}'
@@ -171,15 +185,17 @@ def _vbd_neighbour_median(clip: vs.VideoNode, radius: int, mc: bool, thsad: int,
     return get_expr(tools)(clips, expr)
 
 
-def VerticalBandDeflicker(clip: vs.VideoNode, radius: int = 10, width: int = 480, motion: float = 10.0, smooth: int = 2,
+def VerticalBandDeflicker(clip: vs.VideoNode, radius: int = 12, width: int = 480, motion: float = 10.0, smooth: int = 2,
                           maxwidth: int = 150, limit: float = 8.0, strength: float = 1.0, scthresh: float = 0.1, strips: int = 6,
-                          mc: bool = True, thsad: int = 400, tools: Optional[Mapping[str, str]] = None) -> vs.VideoNode:
-    # removes vertical luma bands that change over time (film density flicker in columns); levels are on the 8-bit scale, widths in analysis pixels
+                          mc: bool = True, thsad: int = 2000, step: int = 2, tools: Optional[Mapping[str, str]] = None) -> vs.VideoNode:
+    # removes vertical luma bands that change over time (film density flicker in columns); levels are on the 8-bit scale, widths in analysis pixels, the reference reaches radius*step frames
     fmt = clip.format
     if fmt.color_family not in (vs.YUV, vs.GRAY):
         raise vs.Error('VerticalBandDeflicker: YUV or GRAY input required')
     if not 1 <= radius <= 12:
         raise vs.Error('VerticalBandDeflicker: radius must be 1..12')
+    if step not in (1, 2):
+        raise vs.Error('VerticalBandDeflicker: step must be 1 or 2')
     if strips < 1 or width < 16:
         raise vs.Error('VerticalBandDeflicker: strips must be >= 1 and width >= 16')
     if expr_backend(tools) not in ('akarin', 'cranexpr'):
@@ -189,7 +205,7 @@ def VerticalBandDeflicker(clip: vs.VideoNode, radius: int = 10, width: int = 480
     luma = core.std.ShufflePlanes(clip, 0, vs.GRAY) if fmt.color_family == vs.YUV else clip
     small = core.resize.Bilinear(luma, width, height, format=vs.GRAYS)
     small = misc.SCDetect(small, threshold=scthresh, tools=tools)
-    ref = _vbd_neighbour_median(small, radius, mc, thsad, tools)
+    ref = _vbd_neighbour_median(small, radius, step, mc, thsad, tools)
     # difference to the reference and a mask of the pixels that do not move
     diff = expr([small, ref], 'x y - 255 *')
     still = expr([diff], f'x abs {motion} < 1 0 ?')
