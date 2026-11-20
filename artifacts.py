@@ -1,10 +1,10 @@
 from __future__ import annotations
-from typing import Mapping, Optional
+from typing import Mapping, Optional, Sequence, Tuple
 from vapoursynth import core
 import vapoursynth as vs
 
 from misc import get_mv
-from helpers import pick_tool, tool_function
+from helpers import get_expr, pick_tool, tool_function
 
 # VS port of a script by Didée http://forum.doom9.net/showthread.php?p=1402690#post1402690
 # In my experience this filter works very good as a prefilter for SMDegrain(). 
@@ -175,3 +175,39 @@ def RemoveSpotsMCX(clip: vs.VideoNode, limit: int = 6, grey: bool = False, runs:
     # Extract only the source frames (offset 1 in each 3-frame cycle)
     clp = core.std.SelectEvery(clp, cycle=3, offsets=[1])
     return clp
+
+# DeScratch on an amplified horizontal high-pass of the luma: finds faint vertical scratches below the grain; the repair is scaled back and added at full depth.
+def DescratchHighPass(clip: vs.VideoNode, gain: float = 6.0, hradius: int = 8, passes: Sequence[Tuple[int, int, int]] = ((4, 3, 3), (4, 7, 3)),
+                      limit: float = 4.0, blurlen: int = 100, minlen: int = 300, maxlen: Optional[int] = None, maxgap: Optional[int] = None,
+                      maxangle: Optional[float] = None, asym: Optional[int] = None, keep: Optional[int] = None, border: Optional[int] = None,
+                      minwidth: Optional[int] = None, mark: bool = False, tools: Optional[Mapping[str, str]] = None) -> vs.VideoNode:
+    # passes: (mindif, maxwidth, modey) per DeScratch call on the amplified copy, modey 1 dark, 2 light, 3 both; limit: largest correction in 8-bit levels; mark: luma shows the amplified copy with the detections drawn in, format unchanged
+    fmt = clip.format
+    if fmt.color_family not in (vs.YUV, vs.GRAY):
+        raise vs.Error('DescratchHighPass: YUV or GRAY input required')
+    if gain <= 0 or hradius < 1 or not passes:
+        raise vs.Error('DescratchHighPass: gain > 0, hradius >= 1 and at least one pass required')
+    if not hasattr(core, 'descratch'):
+        raise vs.Error('DescratchHighPass: needs the DeScratch plugin')
+    expr = get_expr(tools)
+    boxblur = tool_function(tools, 'boxblur', 'BoxBlur')
+    # one 8-bit level in the units of the clip
+    level = 1.0 / 255 if fmt.sample_type == vs.FLOAT else float(1 << (fmt.bits_per_sample - 8))
+    luma = core.std.ShufflePlanes(clip, 0, vs.GRAY) if fmt.color_family == vs.YUV else clip
+    low = boxblur(luma, hradius=hradius, hpasses=2, vradius=0)
+    amp = expr([luma, low], f'x y - {gain} * {level} / 128 +', format=vs.GRAY8)
+    fixed = core.std.ShufflePlanes([amp, amp, amp], [0, 0, 0], vs.YUV)
+    optional = {'maxlen': maxlen, 'maxgap': maxgap, 'maxangle': maxangle, 'asym': asym, 'keep': keep, 'border': border, 'minwidth': minwidth}
+    args = {k: v for k, v in optional.items() if v is not None}
+    for mindif, maxwidth, modey in passes:
+        fixed = core.descratch.DeScratch(fixed, mindif=mindif, maxwidth=maxwidth, modey=modey, modeu=0, modev=0, blurlen=blurlen,
+                                         minlen=minlen, mark=int(mark), **args)
+    fixed = core.std.ShufflePlanes(fixed, 0, vs.GRAY)
+    if mark:
+        out = core.resize.Point(fixed, format=luma.format.id, range_in=0, range=0)
+    else:
+        lim = limit * level
+        out = expr([luma, fixed, amp], f'x y z - {level} * {gain} / {-lim} max {lim} min +')
+    if fmt.color_family == vs.GRAY:
+        return out
+    return core.std.ShufflePlanes([out, clip], [0, 1, 2], vs.YUV)
