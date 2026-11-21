@@ -188,21 +188,20 @@ def _vbd_neighbour_median(clip: vs.VideoNode, radius: int, step: int, mc: bool, 
     return get_expr(tools)(clips, expr)
 
 
-def VerticalBandDeflicker(clip: vs.VideoNode, radius: int = 12, width: int = 480, motion: float = 10.0, smooth: int = 2,
-                          maxwidth: int = 150, limit: float = 8.0, strength: float = 1.0, scthresh: float = 0.1, strips: int = 6,
-                          mc: bool = True, thsad: int = 2000, step: int = 2, tools: Optional[Mapping[str, str]] = None) -> vs.VideoNode:
-    # removes vertical luma bands that change over time (film density flicker in columns); levels are on the 8-bit scale, widths in analysis pixels, the reference reaches radius*step frames
+def _vbd_analyse(clip: vs.VideoNode, radius: int, width: int, motion: float, smooth: int, maxwidth: int, limit: float, strength: float,
+                 scthresh: float, strips: int, mc: bool, thsad: int, step: int, tools: Optional[Mapping[str, str]], name: str) -> Dict[str, Any]:
+    # shared analysis of VerticalBandDeflicker and its mask: analysis-size difference to the reference and still mask, full-size correction (8-bit levels)
     fmt = clip.format
     if fmt.color_family not in (vs.YUV, vs.GRAY):
-        raise vs.Error('VerticalBandDeflicker: YUV or GRAY input required')
+        raise vs.Error(f'{name}: YUV or GRAY input required')
     if not 1 <= radius <= 12:
-        raise vs.Error('VerticalBandDeflicker: radius must be 1..12')
+        raise vs.Error(f'{name}: radius must be 1..12')
     if step not in (1, 2):
-        raise vs.Error('VerticalBandDeflicker: step must be 1 or 2')
+        raise vs.Error(f'{name}: step must be 1 or 2')
     if strips < 1 or width < 16:
-        raise vs.Error('VerticalBandDeflicker: strips must be >= 1 and width >= 16')
+        raise vs.Error(f'{name}: strips must be >= 1 and width >= 16')
     if expr_backend(tools) not in ('akarin', 'cranexpr'):
-        raise vs.Error('VerticalBandDeflicker: needs akarin or cranexpr as tools["expr"] (sort and frame properties)')
+        raise vs.Error(f'{name}: needs akarin or cranexpr as tools["expr"] (sort and frame properties)')
     expr = get_expr(tools)
     height = max(16, round(clip.height * width / clip.width / 2) * 2)
     luma = core.std.ShufflePlanes(clip, 0, vs.GRAY) if fmt.color_family == vs.YUV else clip
@@ -222,6 +221,47 @@ def VerticalBandDeflicker(clip: vs.VideoNode, radius: int = 12, width: int = 480
         prof = core.std.BoxBlur(prof, hradius=smooth, vradius=0)
     wide = core.std.BoxBlur(prof, hradius=maxwidth // 2, hpasses=2, vradius=0)
     corr = core.resize.Bilinear(expr([prof, wide], f'x y - {strength} * {-limit} max {limit} min'), clip.width, clip.height)
+    return {'luma': luma, 'diff': diff, 'still': still, 'corr': corr, 'expr': expr}
+
+
+def VerticalBandDeflickerMask(clip: vs.VideoNode, mode: int = 1, scale: float = 10.0, radius: int = 12, width: int = 480, motion: float = 10.0,
+                              smooth: int = 2, maxwidth: int = 150, limit: float = 8.0, strength: float = 1.0, scthresh: float = 0.1, strips: int = 6,
+                              mc: bool = True, thsad: int = 2000, step: int = 2, tools: Optional[Mapping[str, str]] = None) -> vs.VideoNode:
+    # debug view of VerticalBandDeflicker in the input format, chroma neutral: mode 1 correction, 2 measurement mask (white = measured, black = motion), 3 difference to the temporal reference; 1 and 3 are mid gray +- value * scale
+    if mode not in (1, 2, 3):
+        raise vs.Error('VerticalBandDeflickerMask: mode must be 1, 2 or 3')
+    parts = _vbd_analyse(clip, radius, width, motion, smooth, maxwidth, limit, strength, scthresh, strips, mc, thsad, step, tools, 'VerticalBandDeflickerMask')
+    expr, luma = parts['expr'], parts['luma']
+    full = lambda c: core.resize.Point(c, clip.width, clip.height) if mode == 2 else core.resize.Bilinear(c, clip.width, clip.height)
+    # value on the 8-bit scale (0..255) for the visible image
+    if mode == 1:
+        view, value = parts['corr'], f'x {scale} * 128 +'
+    elif mode == 2:
+        view, value = full(parts['still']), 'x 255 *'
+    else:
+        view, value = full(parts['diff']), f'x {scale} * 128 +'
+    fmt = luma.format
+    if fmt.sample_type == vs.INTEGER:
+        level, peak = 1 << (fmt.bits_per_sample - 8), (1 << fmt.bits_per_sample) - 1
+        shown = expr([view], f'{value} {level} * 0 max {peak} min', format=fmt.id)
+    else:
+        shown = expr([view], f'{value} 255 / 0 max 1 min', format=fmt.id)
+    if clip.format.color_family == vs.GRAY:
+        return shown
+    neutral = 0 if clip.format.sample_type == vs.FLOAT else 1 << (clip.format.bits_per_sample - 1)
+    return core.std.ShufflePlanes([shown, core.std.BlankClip(clip, color=[0, neutral, neutral], keep=True)], [0, 1, 2], vs.YUV)
+
+
+def VerticalBandDeflicker(clip: vs.VideoNode, radius: int = 12, width: int = 480, motion: float = 10.0, smooth: int = 2,
+                          maxwidth: int = 150, limit: float = 8.0, strength: float = 1.0, scthresh: float = 0.1, strips: int = 6,
+                          mc: bool = True, thsad: int = 2000, step: int = 2, debug: int = 0, tools: Optional[Mapping[str, str]] = None) -> vs.VideoNode:
+    # removes vertical luma bands that change over time (film density flicker in columns); levels are on the 8-bit scale, widths in analysis pixels, the reference reaches radius*step frames; debug 1..3 returns the VerticalBandDeflickerMask view of that mode
+    if debug:
+        return VerticalBandDeflickerMask(clip, mode=debug, radius=radius, width=width, motion=motion, smooth=smooth, maxwidth=maxwidth, limit=limit,
+                                         strength=strength, scthresh=scthresh, strips=strips, mc=mc, thsad=thsad, step=step, tools=tools)
+    fmt = clip.format
+    parts = _vbd_analyse(clip, radius, width, motion, smooth, maxwidth, limit, strength, scthresh, strips, mc, thsad, step, tools, 'VerticalBandDeflicker')
+    expr, luma, corr = parts['expr'], parts['luma'], parts['corr']
     if fmt.sample_type == vs.INTEGER:
         scale, peak = 1 << (fmt.bits_per_sample - 8), (1 << fmt.bits_per_sample) - 1
         fixed = expr([luma, corr], f'x y {scale} * - 0 max {peak} min', format=luma.format.id)
