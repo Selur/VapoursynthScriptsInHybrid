@@ -403,7 +403,6 @@ def HybridFuPP(input: vs.VideoNode, width: Optional[int] = None, height: Optiona
         raise vs.Error('HybridFuPP: Enh_Str must be 0-5')
 
     masks = _Masks(fmt.bits_per_sample, tools)
-    mv = get_mv(tools)
 
     def grain(clip: vs.VideoNode, var: float) -> vs.VideoNode:
         return tool_function(tools, 'grain', 'Add')(clip, var=var, uvar=0, hcorr=0, vcorr=0) if var else clip
@@ -461,8 +460,9 @@ def HybridFuPP(input: vs.VideoNode, width: Optional[int] = None, height: Optiona
     deblocked = core.deblock.Deblock(input, quant=p['DB_Q'], aoffset=p['DB_Off_a'], boffset=p['DB_Off_b']) \
         if p['Deblock'] else input
     basic = resize(deblocked, width, height, p['ME_Resizer'])
-    motion = _Motion(basic, max(1, p['M_TRadius']), p['Bl_Size'], mv) \
-        if m_process or db_m_only or n2_mdegrain else None
+    # only fetched when motion is used: a tools['mv'] choice that is not loaded raises in get_mv()
+    mv = get_mv(tools) if m_process or db_m_only or n2_mdegrain else None
+    motion = _Motion(basic, max(1, p['M_TRadius']), p['Bl_Size'], mv) if mv is not None else None
     dark = _dark_mask(basic, masks, p['D_Thr']) if 'D' in show or d_process or db_d_only else None
     dark_scene = _dark_scene_mask(basic, masks, p['DS_Enh_Thr'], p['D_Thr']) if d_process2 or db_d_only else None
     src = deblocked
