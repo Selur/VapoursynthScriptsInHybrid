@@ -29,6 +29,7 @@ from misc import get_mv
 # - Skin processing with edge processing uses skin areas without edges (the original combined edges without skin, which
 #   the later edge merge overwrote).
 # - Any 8-16 bit integer YUV clip is accepted; thresholds stay on the 8-bit scale.
+# - Grain uses a fixed seed (edge grain 1, enhancement 2) instead of a random one, so every run gives the same output.
 
 Chain = Optional[Union[Callable[[vs.VideoNode], vs.VideoNode], bool]]
 
@@ -404,8 +405,9 @@ def HybridFuPP(input: vs.VideoNode, width: Optional[int] = None, height: Optiona
 
     masks = _Masks(fmt.bits_per_sample, tools)
 
-    def grain(clip: vs.VideoNode, var: float) -> vs.VideoNode:
-        return tool_function(tools, 'grain', 'Add')(clip, var=var, uvar=0, hcorr=0, vcorr=0) if var else clip
+    # fixed seed per call: the same grain on every run and in every chunk
+    def grain(clip: vs.VideoNode, var: float, seed: int) -> vs.VideoNode:
+        return tool_function(tools, 'grain', 'Add')(clip, var=var, uvar=0, hcorr=0, vcorr=0, seed=seed) if var else clip
 
     def deen2d(radius: int, threshold: int) -> Callable[[vs.VideoNode], vs.VideoNode]:
         def run(clip: vs.VideoNode) -> vs.VideoNode:
@@ -427,7 +429,7 @@ def HybridFuPP(input: vs.VideoNode, width: Optional[int] = None, height: Optiona
         return default if value is None or value is True else value
 
     def default_e1(clip: vs.VideoNode) -> vs.VideoNode:
-        return grain(unfilter(clip, p['E_Str_X'], p['E_Str_Y']), p['E_Str_N'])
+        return grain(unfilter(clip, p['E_Str_X'], p['E_Str_Y']), p['E_Str_N'], 1)
 
     def default_e2(clip: vs.VideoNode) -> vs.VideoNode:
         return masks.expr(clip, [f'x {masks.scale(p["E_Str_B"])} +', '', '']) if p['E_Str_B'] else clip
@@ -515,7 +517,7 @@ def HybridFuPP(input: vs.VideoNode, width: Optional[int] = None, height: Optiona
     if b_process or d_process:
         area = masks.logic(dark, bright, 'or') if b_process and d_process else (dark if d_process else bright)
         final = core.std.MaskedMerge(final, lp(denoised), area, first_plane=True)
-    enhanced = resize(grain(sharpen(src, p['Enh_Str'] * 0.2), p['Enh_Str']), width, height, 6) \
+    enhanced = resize(grain(sharpen(src, p['Enh_Str'] * 0.2), p['Enh_Str'], 2), width, height, 6) \
         if p['Skin'] or d_process2 else None
     if d_process2:
         final = core.std.MaskedMerge(final, enhanced, dark_scene, first_plane=True)
