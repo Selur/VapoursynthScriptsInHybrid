@@ -193,13 +193,18 @@ def _vinverse(clip, tools, device):
     return residual.Vinverse(clip, tools=tools)
 
 
+def _deen(clip, tools, device):
+    # a3d (HybridFuPP's D_Mode=1), the mode every value can serve, with Deen's defaults
+    return helpers.Deen(clip, mode='a3d', tools=tools)
+
+
 CALLS: Dict[str, Callable[[vs.VideoNode, Dict[str, str], Optional[int]], vs.VideoNode]] = {
     'mv': _mv, 'expr': _expr, 'nnedi3': _nnedi3, 'eedi3': _eedi3, 'dfttest': _dfttest, 'nlmeans': _nlmeans,
     'bm3d': _bm3d, 'bilateral': _bilateral, 'wnnm': _wnnm, 'placebodeband': _placebodeband,
     'rg': _rg, 'median': _median, 'ttempsmooth': _ttempsmooth, 'temporalsoften': _temporalsoften,
     'boxblur': _boxblur, 'limiter': _limiter, 'planestats': _planestats, 'edgemasks': _edgemasks,
     'tcanny': _tcanny, 'scd': _scd, 'hysteresis': _hysteresis, 'dctfilter': _dctfilter, 'warp': _warp,
-    'cnr': _cnr, 'ccd': _ccd, 'f3kdb': _f3kdb, 'vinverse': _vinverse,
+    'cnr': _cnr, 'ccd': _ccd, 'f3kdb': _f3kdb, 'vinverse': _vinverse, 'deen': _deen,
 }
 
 

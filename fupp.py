@@ -1,22 +1,19 @@
 from __future__ import annotations
 
-import builtins
 import functools
-import math
-import struct
 from typing import Callable, Dict, List, Mapping, Optional, Sequence, Tuple, Union
 
 import vapoursynth as vs
 from vapoursynth import core
 
-from helpers import expr_backend, get_expr, pick_tool, relative_expr, tool_function
+from helpers import Deen, get_expr, pick_tool, tool_function
 from misc import get_mv
 
 # HybridFuPP 0.992b by FuPP, ported from AviSynth
 #
 # dependencies:
-# deen (https://github.com/Selur/Deen), namespace deen: Deen("a2d") and Deen("a3d") of the original; without it
-#   Deen() below (Expr): akarin or cranexpr (tools['expr']) give the exact 8-bit rounding, std.Expr rounds
+# deen (https://github.com/Selur/Deen), neo_smo or Expr, picked by tools['deen'] (helpers.Deen): Deen("a2d")
+#   and Deen("a3d") of the original
 # deblock (https://github.com/HomeOfVapourSynthEvolution/VapourSynth-Deblock), only with Deblock=True
 # mvutensils or MVTools, picked by tools['mv'], only with motion processing or D_Mode=2
 # neo_fft, neo_fft3d or fft3dfilter, picked by tools['fft3d'], only with D_Mode=3
@@ -25,8 +22,6 @@ from misc import get_mv
 # vszip or std BoxBlur, picked by tools['boxblur']
 #
 # Differences to the AviSynth original:
-# - Deen() (Expr, only without the deen plugin): edges use the nearest pixel like borderfix=True, planes with
-#   threshold 0 stay untouched.
 # - MaskTools logic on masks uses min/max instead of bitwise operations; all masks are binary or smoothed binary.
 # - UnFilter is the 3-tap kernel [-k, 1+2k, -k] with k = strength/400, strength limited to -100..100.
 # - The filter chains N1, N2, M, LP, DR, E1, E2 are callables clip -> clip instead of AviSynth strings; False disables one.
@@ -103,149 +98,6 @@ _SHOW_MASKS = {
     'S': ('Skin', 0xFF00C0, 0.2),
     'A': ('Auto Resizer Adjustment', 0xFFA0F0, 0.4),
 }
-
-
-def _deen_table(rad: int, thr: int, min_: float) -> Dict[Tuple[int, int], int]:
-    '''Threshold per window offset: thr at the centre, falling linearly with distance to about thr*min at the corners.'''
-    min_ = struct.unpack('f', struct.pack('f', min_))[0]  # min is a single precision float in Deen
-    inv = 1.0 / math.sqrt(float(rad * rad) + float(rad * rad))
-    table = {}
-    for dy in range(-rad, rad + 1):
-        for dx in range(-rad, rad + 1):
-            q = math.sqrt(float(dx * dx + dy * dy)) * inv
-            table[(dx, dy)] = (thr - (int(((1.0 - min_) * thr) * q) & 0xFF)) & 0xFF
-    return table
-
-
-def _deen_plane(planes: Sequence[vs.VideoNode], tables: Sequence[Dict[Tuple[int, int], int]], shift: int,
-                tools: Optional[Mapping[str, str]]) -> vs.VideoNode:
-    '''Average of the window samples within their threshold of the centre (x); planes: current, previous, next frame.'''
-    taps = [(letter, dx, dy, t << shift) for letter, table in zip('xyz', tables) for (dx, dy), t in table.items()]
-    backend = expr_backend(tools)
-    # std.Expr reads neighbours from shifted copies, at most 26 clips per Expr
-    group = len(taps) if backend != 'std' else 26 - len(planes)
-    gray = core.query_video_format(vs.GRAY, vs.FLOAT, 32, 0, 0).id
-    sums, counts = [], []
-    for start in range(0, len(taps), group):
-        chunk = taps[start:start + group]
-        cond = [f'{letter}[{dx},{dy}] x - abs {t} <=' for letter, dx, dy, t in chunk]
-        count = ' '.join(c if i == 0 else c + ' +' for i, c in enumerate(cond))
-        total = ' '.join(f'{c} {letter}[{dx},{dy}] 0 ?' + ('' if i == 0 else ' +')
-                         for i, (c, (letter, dx, dy, _)) in enumerate(zip(cond, chunk)))
-        sums.append(relative_expr(list(planes), total, tools, format=gray))
-        counts.append(relative_expr(list(planes), count, tools, format=gray))
-    letters = 'yzabcdefghijklmnopqrstuvw'  # clip 0 (x) is the plane, then the partial sums and counts
-    s = ' '.join(v if i == 0 else v + ' +' for i, v in enumerate(letters[:len(sums)]))
-    c = ' '.join(v if i == 0 else v + ' +' for i, v in enumerate(letters[len(sums):len(sums) + len(counts)]))
-    if backend == 'std':
-        expr = f'{s} {c} /'  # no floor in std.Expr: the store rounds to nearest
-    else:
-        numerator = f'{s} {c} 1 + 2 / floor +'  # sum + ceil(cnt/2)
-        if shift == 0:
-            # Deen's 8-bit division: numerator * floor(65536/cnt) >> 16, 65535 for cnt 1
-            recip = f'{c} 1 = 65535 {_exact_floor_div("65536", c)} ?'
-            expr = _exact_shift16(numerator, recip)
-        else:
-            expr = _exact_floor_div(numerator, c)
-    return get_expr(tools)([planes[0]] + sums + counts, expr, format=planes[0].format.id)
-
-
-def _exact_floor_div(a: str, b: str) -> str:
-    '''floor(a / b) for integers below 2^24 in float Expr: the quotient corrected by one with exact products.'''
-    q = f'{a} {b} / floor'
-    return f'{q} 1 + {b} * {a} <= {q} 1 + {q} {b} * {a} > {q} 1 - {q} ? ?'
-
-
-def _exact_shift16(a: str, r: str) -> str:
-    '''floor(a * r / 65536) for a, r below 2^16 without a product above 2^24: r split into its high and low byte.'''
-    high = f'{r} 256 / floor'
-    low = f'{r} {high} 256 * -'
-    q1 = f'{a} {high} * 256 / floor'
-    rest = f'{a} {high} * {q1} 256 * -'
-    return f'{q1} {rest} 256 * {a} {low} * + 65536 / floor +'
-
-
-def Deen(clip: vs.VideoNode, mode: str = 'a3d', rad: int = 1, thrY: int = 7, thrUV: int = 9, tthY: int = 4,
-         tthUV: int = 6, min: float = 0.5, scd: float = 9.0, tools: Optional[Mapping[str, str]] = None) -> vs.VideoNode:
-    """Deen 1.0 beta 1 modes a2d and a3d: adaptive spatial / spatio-temporal averaging.
-
-    Every sample of the (2*rad+1)^2 window (a3d: also in the previous and next frame) within its threshold of the centre
-    pixel is averaged. The threshold falls with the distance from the centre: thr - (1-min)*thr*dist/(rad*sqrt(2)).
-
-    mode:        'a2d' or 'a3d'
-    rad:         window radius, 1-7 (a2d) or 1-4 (a3d)
-    thrY, thrUV: spatial thresholds 0-255 (8-bit scale), 0 leaves the planes untouched
-    tthY, tthUV: thresholds for the previous and next frame (a3d)
-    min:         threshold at the window corners relative to the centre, 1.0 = no falloff, 0.0 = strongest
-    scd:         a3d: mean absolute difference (8-bit scale, average of the three planes) between neighbouring frames
-                 above which the two frames at the cut are filtered with a2d; frame 0 always is
-    tools:       {'expr'} picks the Expr implementation; akarin or cranexpr give Deen's exact 8-bit rounding
-    """
-    if not isinstance(clip, vs.VideoNode):
-        raise vs.Error('Deen: this is not a clip')
-    fmt = clip.format
-    if fmt.sample_type != vs.INTEGER or fmt.bits_per_sample > 16 or fmt.color_family not in (vs.YUV, vs.GRAY):
-        raise vs.Error('Deen: only 8-16 bit integer YUV or GRAY is supported')
-    if mode not in ('a2d', 'a3d'):
-        raise vs.Error('Deen: mode must be "a2d" or "a3d"')
-    if not 1 <= rad <= (7 if mode == 'a2d' else 4):
-        raise vs.Error(f'Deen: rad must be 1-{7 if mode == "a2d" else 4} for {mode}')
-    shift = fmt.bits_per_sample - 8
-    thr = [max(0, builtins.min(255, int(t))) for t in (thrY, thrUV, thrUV)]
-    tth = [max(0, builtins.min(255, int(t))) for t in (tthY, tthUV, tthUV)]
-
-    def filtered(three_d: bool) -> vs.VideoNode:
-        planes = []
-        for p in range(fmt.num_planes):
-            plane = core.std.ShufflePlanes(clip, p, vs.GRAY)
-            if thr[p] == 0 and (not three_d or tth[p] == 0):
-                planes.append(plane)
-                continue
-            sources, tables = [plane], [_deen_table(rad, thr[p], min)]
-            if three_d:
-                previous = plane[0] + plane[:-1]
-                following = plane[1:] + plane[-1]
-                temporal = _deen_table(rad, tth[p], min)
-                sources += [previous, following]
-                tables += [temporal, temporal]
-            planes.append(_deen_plane(sources, tables, shift, tools))
-        if fmt.num_planes == 1:
-            return planes[0]
-        return core.std.CopyFrameProps(core.std.ShufflePlanes(planes, [0, 0, 0], fmt.color_family), clip)
-
-    two_d = filtered(False)
-    if mode == 'a2d' or clip.num_frames < 2:
-        return two_d
-    three_d = filtered(True)
-    # mean absolute difference to the next frame, average of the planes; the last frame compares with itself
-    following = clip[1:] + clip[-1]
-    stats = clip
-    for p in range(fmt.num_planes):
-        stats = core.std.PlaneStats(stats, following, plane=p, prop=f'DeenP{p}')
-    keys = [f'DeenP{p}Diff' for p in range(fmt.num_planes)]
-    before = stats[0] + stats[:-1]
-
-    def pick(n: int, f: List[vs.VideoFrame]) -> vs.VideoNode:
-        if n == 0:
-            return two_d
-        cut_after = sum(f[0].props[k] for k in keys) * 255 / len(keys)
-        cut_before = sum(f[1].props[k] for k in keys) * 255 / len(keys)
-        return two_d if cut_after > scd or cut_before > scd else three_d
-
-    return core.std.FrameEval(three_d, pick, prop_src=[stats, before])
-
-
-def _deen(clip: vs.VideoNode, mode: str, rad: int, thrY: int, thrUV: int, tthY: int, tthUV: int, min_: float,
-          scd: float, tools: Optional[Mapping[str, str]]) -> vs.VideoNode:
-    '''A Deen call of the original script: the deen plugin when it is loaded, else Deen() above (Expr).'''
-    if not hasattr(core, 'deen'):
-        return Deen(clip, mode, rad, thrY, thrUV, tthY, tthUV, min_, scd, tools=tools)
-
-    def limit(value: float) -> int:
-        return max(0, min(255, int(value)))
-
-    return core.deen.Deen(clip, mode=mode, rad=rad, thrY=limit(thrY), thrUV=limit(thrUV), tthY=limit(tthY),
-                          tthUV=limit(tthUV), min=max(0.0, min(1.0, float(min_))), scd=scd)
 
 
 def resize(clip: vs.VideoNode, width: int, height: int, resizer: int) -> vs.VideoNode:
@@ -489,7 +341,7 @@ def HybridFuPP(input: vs.VideoNode, width: Optional[int] = None, height: Optiona
     N1, N2, M, LP, DR, E1, E2: filter chains clip -> clip replacing the defaults (N1 source denoiser before resizing,
                    N2 denoiser, M motion, LP dark/bright areas, DR deringing, E1 edges before, E2 after resizing);
                    False disables a chain
-    tools:         {'mv', 'expr', 'fft3d', 'grain', 'boxblur', 'text'} pick the implementations
+    tools:         {'deen', 'mv', 'expr', 'fft3d', 'grain', 'boxblur', 'text'} pick the implementations
     """
     if not isinstance(input, vs.VideoNode):
         raise vs.Error('HybridFuPP: this is not a clip')
@@ -558,13 +410,13 @@ def HybridFuPP(input: vs.VideoNode, width: Optional[int] = None, height: Optiona
 
     def deen2d(radius: int, threshold: int) -> Callable[[vs.VideoNode], vs.VideoNode]:
         def run(clip: vs.VideoNode) -> vs.VideoNode:
-            return _deen(clip, 'a2d', radius, threshold, 0, 0, 0, 0.0, 9.0, tools)
+            return Deen(clip, 'a2d', radius, threshold, 0, 0, 0, 0.0, tools=tools)
         run.__name__ = f'Deen("a2d", {radius}, {threshold}, 0, 0, 0, 0)'
         return run
 
     def deen3d(clip: vs.VideoNode) -> vs.VideoNode:
-        return _deen(clip, 'a3d', max(1, min(4, p['S_Radius'])), p['S_Str'], 3 * p['C_Str'], p['T_Str'],
-                     p['C_Str'], p['S_Dist'], 9.0, tools)
+        return Deen(clip, 'a3d', max(1, min(4, p['S_Radius'])), p['S_Str'], 3 * p['C_Str'], p['T_Str'],
+                    p['C_Str'], p['S_Dist'], 9.0, tools=tools)
 
     def fft3d(clip: vs.VideoNode) -> vs.VideoNode:
         return tool_function(tools, 'fft3d', 'FFT3D')(clip, sigma=p['S_Str'], bt=3, planes=[0, 1, 2])

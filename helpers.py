@@ -5,6 +5,8 @@ import vapoursynth as vs
 core = vs.core
 
 import math
+import struct
+import builtins
 import re
 import warnings
 from typing import Optional, Union, Sequence, Dict, Any, Mapping, Callable, Tuple, List
@@ -46,6 +48,7 @@ TOOLS: Dict[str, Dict[str, tuple]] = {
     'edgemasks':      {'edgemasks': ('edgemasks', None), 'std': ('std', None)},
     'tcanny':         {'tcanny': ('tcanny', None), 'tcannyx': ('tcannyx', None), 'std': ('std', None)},
     'fft3d':          {'neo_fft': ('neo_fft', 'FFT3D'), 'neo_fft3d': ('neo_fft3d', None), 'fft3dfilter': ('fft3dfilter', None)},
+    'deen':           {'deen': ('deen', 'Deen'), 'neo_smo': ('neo_smo', 'Deen'), 'std': ('std', None)},
     'f3kdb':          {'neo_smo': ('neo_smo', 'F3kdb'), 'vszip': ('vszip', 'Deband'), 'neo_f3kdb': ('neo_f3kdb', None), 'f3kdb': ('f3kdb', None)},
     'scd':            {'scd': ('scd', None), 'misc': ('misc', 'SCDetect'), 'std': ('std', None), 'mv': ('mv', 'SCDetection')},
     'hysteresis':     {'hysteresis': ('hysteresis', None), 'misc': ('misc', 'Hysteresis')},
@@ -1234,3 +1237,164 @@ def CCD(clip: vs.VideoNode, threshold: float = 8.0, planes: Optional[Union[int, 
     kwargs = {'threshold': threshold}
     if planes is not None: kwargs['planes'] = planes
     return func(clip, **kwargs)
+
+
+def _deen_table(rad: int, thr: int, min_: float) -> Dict[Tuple[int, int], int]:
+    '''Threshold per window offset: thr at the centre, falling linearly with distance to about thr*min at the corners.'''
+    min_ = struct.unpack('f', struct.pack('f', min_))[0]  # min is a single precision float in Deen
+    inv = 1.0 / math.sqrt(float(rad * rad) + float(rad * rad))
+    table = {}
+    for dy in range(-rad, rad + 1):
+        for dx in range(-rad, rad + 1):
+            q = math.sqrt(float(dx * dx + dy * dy)) * inv
+            table[(dx, dy)] = (thr - (int(((1.0 - min_) * thr) * q) & 0xFF)) & 0xFF
+    return table
+
+
+def _deen_plane(planes: Sequence[vs.VideoNode], tables: Sequence[Dict[Tuple[int, int], int]], shift: int,
+                tools: Optional[Mapping[str, str]]) -> vs.VideoNode:
+    '''Average of the window samples within their threshold of the centre (x); planes: current, previous, next frame.'''
+    taps = [(letter, dx, dy, t << shift) for letter, table in zip('xyz', tables) for (dx, dy), t in table.items()]
+    backend = expr_backend(tools)
+    # std.Expr reads neighbours from shifted copies, at most 26 clips per Expr
+    group = len(taps) if backend != 'std' else 26 - len(planes)
+    gray = core.query_video_format(vs.GRAY, vs.FLOAT, 32, 0, 0).id
+    sums, counts = [], []
+    for start in range(0, len(taps), group):
+        chunk = taps[start:start + group]
+        cond = [f'{letter}[{dx},{dy}] x - abs {t} <=' for letter, dx, dy, t in chunk]
+        count = ' '.join(c if i == 0 else c + ' +' for i, c in enumerate(cond))
+        total = ' '.join(f'{c} {letter}[{dx},{dy}] 0 ?' + ('' if i == 0 else ' +')
+                         for i, (c, (letter, dx, dy, _)) in enumerate(zip(cond, chunk)))
+        sums.append(relative_expr(list(planes), total, tools, format=gray))
+        counts.append(relative_expr(list(planes), count, tools, format=gray))
+    letters = 'yzabcdefghijklmnopqrstuvw'  # clip 0 (x) is the plane, then the partial sums and counts
+    s = ' '.join(v if i == 0 else v + ' +' for i, v in enumerate(letters[:len(sums)]))
+    c = ' '.join(v if i == 0 else v + ' +' for i, v in enumerate(letters[len(sums):len(sums) + len(counts)]))
+    if backend == 'std':
+        expr = f'{s} {c} /'  # no floor in std.Expr: the store rounds to nearest
+    else:
+        numerator = f'{s} {c} 1 + 2 / floor +'  # sum + ceil(cnt/2)
+        if shift == 0:
+            # Deen's 8-bit division: numerator * floor(65536/cnt) >> 16, 65535 for cnt 1
+            recip = f'{c} 1 = 65535 {_exact_floor_div("65536", c)} ?'
+            expr = _exact_shift16(numerator, recip)
+        else:
+            expr = _exact_floor_div(numerator, c)
+    return get_expr(tools)([planes[0]] + sums + counts, expr, format=planes[0].format.id)
+
+
+def _exact_floor_div(a: str, b: str) -> str:
+    '''floor(a / b) for integers below 2^24 in float Expr: the quotient corrected by one with exact products.'''
+    q = f'{a} {b} / floor'
+    return f'{q} 1 + {b} * {a} <= {q} 1 + {q} {b} * {a} > {q} 1 - {q} ? ?'
+
+
+def _exact_shift16(a: str, r: str) -> str:
+    '''floor(a * r / 65536) for a, r below 2^16 without a product above 2^24: r split into its high and low byte.'''
+    high = f'{r} 256 / floor'
+    low = f'{r} {high} 256 * -'
+    q1 = f'{a} {high} * 256 / floor'
+    rest = f'{a} {high} * {q1} 256 * -'
+    return f'{q1} {rest} 256 * {a} {low} * + 65536 / floor +'
+
+
+def _deen_expr(clip: vs.VideoNode, mode: str, rad: int, thrY: int, thrUV: int, tthY: int, tthUV: int, min: float,
+               scd: float, tools: Optional[Mapping[str, str]]) -> vs.VideoNode:
+    '''Deen's a2d/a3d with Expr: tools['expr'] akarin or cranexpr round exactly at 8 bit, std.Expr rounds.
+
+    Edges use the nearest pixel (like borderfix=True), planes with threshold 0 stay untouched.
+    '''
+    if not isinstance(clip, vs.VideoNode):
+        raise vs.Error('Deen: this is not a clip')
+    fmt = clip.format
+    if fmt.sample_type != vs.INTEGER or fmt.bits_per_sample > 16 or fmt.color_family not in (vs.YUV, vs.GRAY):
+        raise vs.Error('Deen: only 8-16 bit integer YUV or GRAY is supported')
+    if mode not in ('a2d', 'a3d'):
+        raise vs.Error('Deen: mode must be "a2d" or "a3d"')
+    if not 1 <= rad <= (7 if mode == 'a2d' else 4):
+        raise vs.Error(f'Deen: rad must be 1-{7 if mode == "a2d" else 4} for {mode}')
+    shift = fmt.bits_per_sample - 8
+    thr = [max(0, builtins.min(255, int(t))) for t in (thrY, thrUV, thrUV)]
+    tth = [max(0, builtins.min(255, int(t))) for t in (tthY, tthUV, tthUV)]
+
+    def filtered(three_d: bool) -> vs.VideoNode:
+        planes = []
+        for p in range(fmt.num_planes):
+            plane = core.std.ShufflePlanes(clip, p, vs.GRAY)
+            if thr[p] == 0 and (not three_d or tth[p] == 0):
+                planes.append(plane)
+                continue
+            sources, tables = [plane], [_deen_table(rad, thr[p], min)]
+            if three_d:
+                previous = plane[0] + plane[:-1]
+                following = plane[1:] + plane[-1]
+                temporal = _deen_table(rad, tth[p], min)
+                sources += [previous, following]
+                tables += [temporal, temporal]
+            planes.append(_deen_plane(sources, tables, shift, tools))
+        if fmt.num_planes == 1:
+            return planes[0]
+        return core.std.CopyFrameProps(core.std.ShufflePlanes(planes, [0, 0, 0], fmt.color_family), clip)
+
+    two_d = filtered(False)
+    if mode == 'a2d' or clip.num_frames < 2:
+        return two_d
+    three_d = filtered(True)
+    # mean absolute difference to the next frame, average of the planes; the last frame compares with itself
+    following = clip[1:] + clip[-1]
+    stats = clip
+    for p in range(fmt.num_planes):
+        stats = core.std.PlaneStats(stats, following, plane=p, prop=f'DeenP{p}')
+    keys = [f'DeenP{p}Diff' for p in range(fmt.num_planes)]
+    before = stats[0] + stats[:-1]
+
+    def pick(n: int, f: List[vs.VideoFrame]) -> vs.VideoNode:
+        if n == 0:
+            return two_d
+        cut_after = sum(f[0].props[k] for k in keys) * 255 / len(keys)
+        cut_before = sum(f[1].props[k] for k in keys) * 255 / len(keys)
+        return two_d if cut_after > scd or cut_before > scd else three_d
+
+    return core.std.FrameEval(three_d, pick, prop_src=[stats, before])
+
+
+def Deen(clip: vs.VideoNode, mode: str = 'c3d', rad: int = 1, thrY: float = 7, thrUV: float = 9, tthY: float = 4,
+         tthUV: float = 6, min: float = 0.5, scd: float = 9.0, tools: Optional[Mapping[str, str]] = None) -> vs.VideoNode:
+    """Deen 1.0 beta 1 (Marc FD): averaging of the window samples within a threshold of the centre pixel.
+
+    Arguments and defaults of the deen plugin (https://github.com/Selur/Deen); thresholds on the 8-bit scale, limited
+    to 0-255, min to 0-1. tools['deen'] picks the implementation:
+      'deen'     the deen plugin, computes like the original (every mode)
+      'neo_smo'  neo_smo.Deen, a different algorithm (every mode; scd becomes its 1..254 scenechange)
+      'std'      Deen with Expr (a2d and a3d only), see _deen_expr()
+    Default order: deen, neo_smo, std.
+
+    mode:        'c2d', 'c3d', 'a2d', 'a3d', 'w2d', 'w3d'
+    rad:         window radius, 1-7 (2d) or 1-4 (3d)
+    thrY, thrUV: spatial thresholds; tthY, tthUV: thresholds in the previous and next frame (3d)
+    min:         a and w modes: threshold / weight at the window corners relative to the centre
+    scd:         3d modes: mean absolute difference between neighbouring frames above which the frames at the cut run 2d
+    """
+    def limit(value: float) -> int:
+        return max(0, builtins.min(255, int(value)))
+
+    corner = max(0.0, builtins.min(1.0, float(min)))
+    name = pick_tool(tools, 'deen', ('deen', 'neo_smo', 'std'),
+                     lambda n: tool_loaded('deen', n) and (n != 'std' or mode in ('a2d', 'a3d')))
+    if name is None:
+        raise vs.Error(f'Deen: mode "{mode}" needs the deen or the neo_smo plugin')
+    if name == 'std':
+        return _deen_expr(clip, mode, rad, thrY, thrUV, tthY, tthUV, corner, scd, tools)
+    if name == 'neo_smo':
+        planes = clip.format.num_planes
+        args = dict(mode=mode, radius=rad, threshold=[limit(thrY), limit(thrUV), limit(thrUV)][:planes], scalep=True)
+        if mode.endswith('3d'):
+            # neo_smo counts the scene change threshold 1..254 (0 = off)
+            args.update(temporal_threshold=[limit(tthY), limit(tthUV), limit(tthUV)][:planes],
+                        scenechange=max(1, builtins.min(254, round(scd * 2.54))))
+        if mode[0] in 'aw':
+            args['minimum'] = corner
+        return core.neo_smo.Deen(clip, **args)
+    return core.deen.Deen(clip, mode=mode, rad=rad, thrY=limit(thrY), thrUV=limit(thrUV), tthY=limit(tthY),
+                          tthUV=limit(tthUV), min=corner, scd=scd)
