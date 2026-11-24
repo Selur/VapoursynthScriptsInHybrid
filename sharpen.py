@@ -986,6 +986,47 @@ def _ablur(clip: vs.VideoNode, passes: int, type: int, tools: Optional[Mapping[s
     return clip
 
 
+def _awarpsharp2_mt(clip: vs.VideoNode, thresh: int, blur: int, type: int, depth: Union[int, list[int]], chroma: int,
+                    planes: list[int] | None) -> vs.VideoNode:
+    '''The arguments of warp.AWarpSharp2 on awarpsharpmt.aWarpSharp2 (same 8-bit output as the warp plugin).
+
+    warp: depth per plane (a missing chroma depth is the luma depth / 2, rounded towards 0, the last one repeats),
+    chroma 0 = warp U/V along the luma mask, 1 = with their own masks, planes = the processed planes.
+    awarpsharpmt: one depthC for U and V, chroma 2 = copy U/V, 3/4 = own masks / luma mask, 5/6 = the same without luma.
+    '''
+    is_gray = clip.format.num_planes == 1
+    if planes is None:
+        planes = [0] if is_gray else [0, 1, 2]
+    depth = [depth] if isinstance(depth, int) else list(depth)
+    if len(depth) < 2:
+        depth.append(int(depth[0] / 2))
+    if len(depth) < 3:
+        depth.append(depth[1])
+    luma = 0 in planes
+    uv = [] if is_gray else [p for p in (1, 2) if p in planes]
+    if not luma and not uv:
+        return clip
+    if not uv:
+        mode = 2
+    elif chroma == 0:
+        mode = 4 if luma else 6
+    else:
+        mode = 3 if luma else 5
+
+    def run(depth_c: int) -> vs.VideoNode:
+        return core.awarpsharpmt.aWarpSharp2(clip, thresh=thresh, blur=blur, type=type, depth=depth[0], chroma=mode,
+                                             depthC=depth_c)
+
+    out = run(depth[1])
+    if is_gray:
+        return out
+    out_v = run(depth[2]) if 2 in uv and depth[2] != depth[1] else out
+    if uv != [1, 2] or out_v is not out:
+        out = core.std.ShufflePlanes([out, out if 1 in uv else clip, out_v if 2 in uv else clip], [0, 1, 2],
+                                     clip.format.color_family)
+    return out
+
+
 def AWarpSharp2(
     clip: vs.VideoNode,
     thresh: int = 128,
@@ -996,11 +1037,14 @@ def AWarpSharp2(
     planes: list[int] | None = None,
     tools: Optional[Mapping[str, str]] = None
 ) -> vs.VideoNode:
-    if pick_tool(tools, 'warp', ('warp', 'awarp')) == 'warp':
+    impl = pick_tool(tools, 'warp', ('awarpsharpmt', 'warp', 'awarp'))
+    if impl == 'awarpsharpmt':
+        return _awarpsharp2_mt(clip, thresh, blur, type, depth, chroma, planes)
+    if impl == 'warp':
         return core.warp.AWarpSharp2(clip, thresh, blur, type, depth, chroma, planes)
 
     if not tool_loaded('warp', 'awarp'):
-        raise ValueError("AWarpSharp2: neither the warp (vapoursynth-awarpsharp2) nor the awarp (vapoursynth-awarp) plugin is loaded")
+        raise ValueError("AWarpSharp2: none of the awarpsharpmt (aWarpSharpMT), warp (vapoursynth-awarpsharp2) and awarp (vapoursynth-awarp) plugins is loaded")
 
     is_gray = clip.format.color_family == vs.GRAY
     if planes is None:

@@ -128,7 +128,7 @@ def EdgeCleaner(c: vs.VideoNode, strength: int = 10, rep: bool = True, rmode: in
         strength += 4
     
     main = Padding(c, 6, 6, 6, 6)
-    if pick_tool(tools, 'warp', ('warp', 'awarp')) == 'warp':
+    if pick_tool(tools, 'warp', ('awarpsharpmt', 'warp', 'awarp')) == 'warp':
       main = core.warp.AWarpSharp2(main, blur=1, depth=cround(strength / 2))
     else:
       import sharpen
@@ -403,7 +403,7 @@ def YAHR(clp: vs.VideoNode, blur: int = 2, depth: int = 32, tools: Optional[Mapp
     b1D = core.std.MakeDiff(clp, b1)
     
     w1 = Padding(clp, 6, 6, 6, 6)
-    if pick_tool(tools, 'warp', ('warp', 'awarp')) == 'warp':
+    if pick_tool(tools, 'warp', ('awarpsharpmt', 'warp', 'awarp')) == 'warp':
       w1 = core.warp.AWarpSharp2(w1, blur=blur, depth=depth)
     else:
       import sharpen

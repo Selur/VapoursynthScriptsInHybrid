@@ -657,7 +657,10 @@ def SRFComb2(
         cle_y  = core.std.MergeDiff(cle_y, _expr([detail], "x 0.25 *", tools=tools))
     else:
         # ABlur(blur=2): two passes of a separable 1-4-6-4-1 blur; awarp has no ABlur, std.Convolution approximates it
-        if pick_tool(tools, 'warp', ('warp', 'awarp')) == 'warp':
+        warp_impl = pick_tool(tools, 'warp', ('awarpsharpmt', 'warp', 'awarp'))
+        if warp_impl == 'awarpsharpmt':
+            ablur = core.awarpsharpmt.aBlur(oY, blur=2, chroma=3)
+        elif warp_impl == 'warp':
             ablur = core.warp.ABlur(oY, blur=2)
         else:
             ablur = core.std.Convolution(oY, [1, 4, 6, 4, 1], mode='hv')
@@ -741,7 +744,7 @@ def SRFComb2(
     # ------------------------------------------------------------------
     # aWarpSharp2 chroma sharpening
     # ------------------------------------------------------------------
-    if pick_tool(tools, 'warp', ('warp', 'awarp')) == 'warp':
+    if pick_tool(tools, 'warp', ('awarpsharpmt', 'warp', 'awarp')) == 'warp':
         spati_comb_c = core.warp.AWarpSharp2(spati_comb_c, depth=[16, 8, 8], chroma=1, planes=[1, 2])
     else:
         import sharpen

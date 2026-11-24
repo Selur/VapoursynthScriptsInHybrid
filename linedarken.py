@@ -120,7 +120,7 @@ def Toon(input: vs.VideoNode, str: float = 1.0, l_thr: int = 2, u_thr: int = 12,
     
     
     sharpened = Padding(last, 6, 6, 6, 6)
-    if pick_tool(tools, 'warp', ('warp', 'awarp')) == 'warp':
+    if pick_tool(tools, 'warp', ('awarpsharpmt', 'warp', 'awarp')) == 'warp':
       sharpened = core.warp.AWarpSharp2(sharpened, blur=blur, depth=depth)
     else:
       import sharpen

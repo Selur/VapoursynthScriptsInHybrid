@@ -44,7 +44,7 @@ TOOLS: Dict[str, Dict[str, tuple]] = {
                        'vszipcl': ('vszipcl', 'Bilateral'), 'vszipcu': ('vszipcu', 'Bilateral'),
                        'vsfeel': ('vsfeel', 'Bilateral'), 'vszip': ('vszip', 'Bilateral'), 'bilateral': ('bilateral', None)},
     'dctfilter':      {'neo_smo': ('neo_smo', 'DCTFilter'), 'oxidctf': ('oxidctf', None), 'zsmooth': ('zsmooth', 'DCTFilter'), 'dctf': ('dctf', None)},
-    'warp':           {'warp': ('warp', None), 'awarp': ('awarp', None)},
+    'warp':           {'awarpsharpmt': ('awarpsharpmt', None), 'warp': ('warp', None), 'awarp': ('awarp', None)},
     'edgemasks':      {'edgemasks': ('edgemasks', None), 'std': ('std', None)},
     'tcanny':         {'tcanny': ('tcanny', None), 'tcannyx': ('tcannyx', None), 'std': ('std', None)},
     'fft3d':          {'neo_fft': ('neo_fft', 'FFT3D'), 'neo_fft3d': ('neo_fft3d', None), 'fft3dfilter': ('fft3dfilter', None)},

@@ -728,7 +728,7 @@ def mClean(clip: vs.VideoNode, thSAD: int = 400, chroma: bool = True, sharp: flo
     # Combining result of luma and chroma cleaning
     output = core.std.ShufflePlanes([clean2, filt], [0, 1, 2], vs.YUV)
     output = core.std.Merge(c, output, 0.2+0.04*strength) if strength < 20 else output
-    if pick_tool(tools, 'warp', ('warp', 'awarp')) == 'warp':
+    if pick_tool(tools, 'warp', ('awarpsharpmt', 'warp', 'awarp')) == 'warp':
        s1 = output.warp.AWarpSharp2(128, 3, 1, depth2, 1)
        s2 = output.warp.AWarpSharp2(128, 2, 1, depth, 1)
     else:
