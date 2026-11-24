@@ -946,7 +946,7 @@ def _bm3d_warn_ignored(name: str, given: Sequence[str]) -> None:
     elif name == 'bm3dvk':
         unknown = unknown + ('fast', 'device')
     elif name == 'vsfeel':
-        unknown = unknown + ('fast',)
+        unknown = tuple(key for key in unknown if key != 'matrix') + ('fast',)
     elif name != 'bm3d':
         unknown = unknown + (() if name in ('bm3dcuda', 'bm3dhip') else ('fast', 'extractor_exp'))
     ignored = [key for key in unknown if key in given]
@@ -974,9 +974,9 @@ def BM3D(clip: vs.VideoNode, sigma: Union[float, Sequence[float]] = 5.0,
     plugin). Planes with sigma 0 stay untouched; with luma only, the luma plane is filtered alone. sigma2, radius2 and
     profile2 default to the values of the basic estimate. Implementation as in helpers.BM3D(): tools['bm3d'], else the
     order bm3dcuda, bm3dhip, bm3dmetal, bm3dvk2, bm3dvk, vsfeel, bm3dcpu, bm3d, vszip; a GPU plugin that cannot create its filter is skipped with a warning.
-    Parameters the chosen plugin does not know are ignored with a warning. matrix, profile*, block_size*, group_size*,
-    bm_step*, ps_step*, th_mse* and hard_thr exist in bm3d and bm3dvk2 only, chroma (CBM3D, YUV444PS or RGB) in the BM3DCUDA ports,
-    bm3dvk, vsfeel and vszip (CPU, vszip 24+; RGB always with chroma), fast in bm3dcuda and bm3dhip, extractor_exp there and in bm3dvk and vsfeel,
+    Parameters the chosen plugin does not know are ignored with a warning. matrix exists in bm3d, bm3dvk2 and vsfeel (1.4+),
+    profile*, block_size*, group_size*, bm_step*, ps_step*, th_mse* and hard_thr in bm3d and bm3dvk2 only, chroma (CBM3D, YUV444PS or RGB) in the BM3DCUDA ports,
+    bm3dvk, vsfeel and vszip (CPU, vszip 24+; both RGB always with chroma), fast in bm3dcuda and bm3dhip, extractor_exp there and in bm3dvk and vsfeel,
     device in the GPU ports but bm3dvk.
     bm3dvk2 (Vulkan, R81) takes Gray, luma only or RGB, not YUV with chroma.
     '''
@@ -1070,7 +1070,8 @@ def BM3D(clip: vs.VideoNode, sigma: Union[float, Sequence[float]] = 5.0,
             if ref is not None:
                 options['ref'] = ref
             return core.vszip.BM3D(plane_clip, sigma=sig, radius=radius, **options)
-        if use_chroma:
+        # vsfeel matches the opponent colour planes on luma like core.bm3d only with chroma (measured: equal to 1e-6)
+        if use_chroma or (name == 'vsfeel' and rgb and planes == 3):
             options['chroma'] = True
         if name not in ('bm3dcpu', 'bm3dvk') and device_id is not None:
             options['device_id'] = device_id
@@ -1078,6 +1079,9 @@ def BM3D(clip: vs.VideoNode, sigma: Union[float, Sequence[float]] = 5.0,
             options['fast'] = int(fast)
         if name in ('bm3dcuda', 'bm3dhip', 'bm3dvk', 'vsfeel') and extractor_exp is not None:
             options['extractor_exp'] = extractor_exp
+        # vsfeel scales sigma by the matrix like core.bm3d; without it, it would take the opponent planes for YUV by resolution.
+        if name == 'vsfeel' and matrix_arg is not None:
+            options['matrix'] = matrix_arg
         if ref is not None:
             options['ref'] = ref
         function = getattr(core, name).BM3D if name == 'vsfeel' else getattr(core, name).BM3Dv2
