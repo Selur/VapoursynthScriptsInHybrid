@@ -1,4 +1,4 @@
-# vs-mlrt path (tensorrt, directml) of vs_temporalfix 2.4.1 by pifroggi https://github.com/pifroggi/vs_temporalfix (Apache-2.0)
+# vs-mlrt path (tensorrt, directml, coreml, cpu) of vs_temporalfix 2.4.1 by pifroggi https://github.com/pifroggi/vs_temporalfix (Apache-2.0)
 
 from __future__ import annotations
 
@@ -35,8 +35,11 @@ def _plugin_info(namespace: str) -> Mapping[str, Union[bytes, str]]:
 
 
 def _default_model_folder(namespace: str) -> str:
-    # <folder of vstrt/vsort>/models/temporalfix
+    # <vs-mlrt>/models/temporalfix; the plugin sits in <vs-mlrt> (Windows) or <vs-mlrt>/ort (macOS)
     plugin_dir = os.path.dirname(os.fsdecode(_plugin_info(namespace)["path"]))
+    for base in (plugin_dir, os.path.dirname(plugin_dir)):
+        if os.path.isdir(os.path.join(base, "models", "temporalfix")):
+            return os.path.join(base, "models", "temporalfix")
     return os.path.join(plugin_dir, "models", "temporalfix")
 
 
@@ -146,29 +149,37 @@ def _tensorrt_inference(input_clips: List[vs.VideoNode], model_dir: str, engine_
         return core.trt.Model(input_clips, **model_args)
 
 
-def _directml_inference(input_clips: List[vs.VideoNode], model_dir: str, strength: float, clip_w: int, clip_h: int, tiles: int, overlap: int, num_streams: int, gpu_id: int) -> vs.VideoNode:
-    import onnx
-
+def _ort_inference(input_clips: List[vs.VideoNode], model_dir: str, strength: float, clip_w: int, clip_h: int, tiles: int, overlap: int, num_streams: int, gpu_id: int, provider: str) -> vs.VideoNode:
     # DirectML GridSample loses exact addressing once the flattened grid exceeds 2^24 (batch 6, 2 flow planes)
     tile_w, tile_h, _, _ = get_tiles(clip_w=clip_w, clip_h=clip_h, tiles=tiles, overlap=overlap)
     max_pixels = 16777216
-    split = 6 * tile_h * tile_w * 2 > max_pixels
+    split = provider == "DML" and 6 * tile_h * tile_w * 2 > max_pixels
     if split and tile_h * tile_w * 2 > max_pixels:
         raise ValueError("vs_temporalfix_mlrt: The input dimensions are too large for the DirectML backend. Increase tiles or choose a different backend.")
 
     strength_lower = math.floor(strength)
     strength_upper = math.ceil(strength)
-    if strength_lower == strength_upper:
-        onnx_model = onnx.load(os.path.join(model_dir, MODEL_FILES[strength_lower]))
+    if strength_lower == strength_upper and not split:
+        # the model file as it is: needs no onnx module
+        network = dict(network_path=os.path.join(model_dir, MODEL_FILES[strength_lower]))
     else:
-        onnx_model = interpolate_onnx(onnx_path_lower=os.path.join(model_dir, MODEL_FILES[strength_lower]),
-                                      onnx_path_upper=os.path.join(model_dir, MODEL_FILES[strength_upper]), weighting=strength - strength_lower)
-    if split:
-        onnx_model = split_gridsample(onnx_model)
+        try:
+            import onnx
+        except ImportError as e:
+            raise RuntimeError("vs_temporalfix_mlrt: Fractional strengths need the Python module 'onnx'. Use a whole-number strength or install onnx.") from e
+        if strength_lower == strength_upper:
+            onnx_model = onnx.load(os.path.join(model_dir, MODEL_FILES[strength_lower]))
+        else:
+            onnx_model = interpolate_onnx(onnx_path_lower=os.path.join(model_dir, MODEL_FILES[strength_lower]),
+                                          onnx_path_upper=os.path.join(model_dir, MODEL_FILES[strength_upper]), weighting=strength - strength_lower)
+        if split:
+            onnx_model = split_gridsample(onnx_model)
+        network = dict(network_path=onnx_model.SerializeToString(), path_is_serialization=True)
 
-    out = core.ort.Model(input_clips, network_path=onnx_model.SerializeToString(), provider="DML", path_is_serialization=True, device_id=gpu_id, num_streams=num_streams,
+    provider_args = dict(device_id=gpu_id) if provider == "DML" else dict(ml_program=1) if provider == "COREML" else {}
+    out = core.ort.Model(input_clips, provider=provider, num_streams=num_streams, **network, **provider_args,
                          **(dict(tilesize=(tile_w, tile_h), overlap=(overlap, overlap)) if tiles > 1 else {}))
-    if num_streams > 1:
+    if provider == "DML" and num_streams > 1:
         # pre-initializing DirectML makes multi stream inference faster
         out.get_frame(0)
     return out
@@ -181,9 +192,9 @@ def model(clip: vs.VideoNode, strength: float = 2.0, exclude: Optional[str] = No
     clip: RGBH, even dimensions, at least 4 frames.
     strength: 0.0-3.0; fractional values interpolate the two neighbouring models.
     exclude: frame ranges to keep untouched, e.g. "[10 20] [600 900]".
-    backend: 'tensorrt' (vstrt) or 'directml' (vsort, Windows only).
+    backend: 'tensorrt' (vstrt), 'directml' (vsort, Windows), 'coreml' (vsort, macOS) or 'cpu' (vsort).
     tiles: 1, 2, 4, 6 or 8.
-    model_folder: folder with the temporalfix ONNX files; default <vs-mlrt plugin folder>/models/temporalfix.
+    model_folder: folder with the temporalfix ONNX files; default <vs-mlrt>/models/temporalfix.
     engine_folder: TensorRT engine folder; default <model_folder>/engines.
     """
     if not isinstance(clip, vs.VideoNode):
@@ -208,13 +219,19 @@ def model(clip: vs.VideoNode, strength: float = 2.0, exclude: Optional[str] = No
         raise TypeError("vs_temporalfix_mlrt: Backend must be a string.")
     backend = backend.lower()
     if backend in ("trt", "tensorrt"):
-        namespace = "trt"
+        namespace, provider = "trt", ""
     elif backend in ("dml", "directml"):
         if sys.platform != "win32":
             raise RuntimeError("vs_temporalfix_mlrt: The DirectML backend is only available on Windows.")
-        namespace = "ort"
+        namespace, provider = "ort", "DML"
+    elif backend == "coreml":
+        if sys.platform != "darwin":
+            raise RuntimeError("vs_temporalfix_mlrt: The CoreML backend is only available on macOS.")
+        namespace, provider = "ort", "COREML"
+    elif backend == "cpu":
+        namespace, provider = "ort", "CPU"
     else:
-        raise ValueError("vs_temporalfix_mlrt: Backend must be 'tensorrt' or 'directml'.")
+        raise ValueError("vs_temporalfix_mlrt: Backend must be 'tensorrt', 'directml', 'coreml' or 'cpu'.")
 
     orig_clip = clip
     strength = round(float(strength), 2)
@@ -231,7 +248,7 @@ def model(clip: vs.VideoNode, strength: float = 2.0, exclude: Optional[str] = No
     if namespace == "trt":
         out = _tensorrt_inference(input_clips, model_dir, engine_dir, strength, clip_w, clip_h, tiles, overlap, num_streams, gpu_id)
     else:
-        out = _directml_inference(input_clips, model_dir, strength, clip_w, clip_h, tiles, overlap, num_streams, gpu_id)
+        out = _ort_inference(input_clips, model_dir, strength, clip_w, clip_h, tiles, overlap, num_streams, gpu_id, provider)
 
     out = core.std.CopyFrameProps(out, clip)  # props of frame n, not of the shifted -3 clip
     return exclude_regions(out, orig_clip, exclude=exclude)
